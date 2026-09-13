@@ -184,3 +184,332 @@ fn segmented_roof_walls_render_without_slivers_or_drops() {
          the gate or the fallback moved and needs re-measuring, not re-pinning."
     );
 }
+
+/// Six times the boundary-area VECTOR of a triangle soup: `Σ (p1−p0)×(p2−p0)`
+/// over every triangle, in `f64`.
+///
+/// By Stokes' theorem this sum depends only on the mesh's boundary loop(s),
+/// not on the interior triangulation: every INTERNAL edge is walked once in
+/// each direction by its two incident triangles and cancels exactly, so only
+/// edges with no (or an unequal count of) opposite partner contribute. A
+/// CLOSED surface has no boundary, so this is the zero vector regardless of
+/// how many triangles it has (#4648's `6·V(o) = 6·V(0) − o·A` identity: a
+/// reference-independent volume forces `A = 0`). A boundary loop that is a
+/// hairline T-junction chain — the same edge walked out and back along a
+/// vertex inserted mid-edge — also nets to the zero vector: the loop encloses
+/// no area, forward and return segments cancelling exactly. Only a boundary
+/// loop that actually bounds a hole (real missing material) contributes a
+/// nonzero vector, equal to twice that hole's own (signed) area vector.
+///
+/// This is why `|A|` — not an open-boundary-EDGE COUNT — is the closure
+/// measure that matters for correctness: an edge count flags the hairline
+/// T-junctions the pipeline deliberately forgives (`csg::consolidate::conform`
+/// documents exactly this) as equally "open" as a genuine hole, while `|A|`
+/// reads zero for the former and nonzero for the latter.
+fn boundary_area_vector6(mesh: &ifc_lite_geometry::Mesh) -> [f64; 3] {
+    let mut a = [0.0f64; 3];
+    for tri in mesh.indices.chunks_exact(3) {
+        let v = |i: u32| {
+            let i = i as usize * 3;
+            [
+                mesh.positions[i] as f64,
+                mesh.positions[i + 1] as f64,
+                mesh.positions[i + 2] as f64,
+            ]
+        };
+        let p0 = v(tri[0]);
+        let p1 = v(tri[1]);
+        let p2 = v(tri[2]);
+        let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+        let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+        a[0] += e1[1] * e2[2] - e1[2] * e2[1];
+        a[1] += e1[2] * e2[0] - e1[0] * e2[2];
+        a[2] += e1[0] * e2[1] - e1[1] * e2[0];
+    }
+    a
+}
+
+/// Twice the mesh's own surface area (`Σ |(p1−p0)×(p2−p0)|`), the scale
+/// `boundary_area_vector6` is measured against below: `|A| / (2·area)` is the
+/// hole's area as a FRACTION of the mesh's own surface, independent of the
+/// wall's absolute size (a 1 mm² hole and a 1 mm² hole on a 10x bigger wall
+/// must not read as the same severity).
+fn twice_surface_area(mesh: &ifc_lite_geometry::Mesh) -> f64 {
+    let mut s = 0.0f64;
+    for tri in mesh.indices.chunks_exact(3) {
+        let v = |i: u32| {
+            let i = i as usize * 3;
+            [
+                mesh.positions[i] as f64,
+                mesh.positions[i + 1] as f64,
+                mesh.positions[i + 2] as f64,
+            ]
+        };
+        let p0 = v(tri[0]);
+        let p1 = v(tri[1]);
+        let p2 = v(tri[2]);
+        let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+        let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+        let cr = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        s += (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+    }
+    s
+}
+
+/// Verifies the #3980 cutter-union closure contract against the REAL
+/// accepted subtraction — the mesh production actually ships for these five
+/// walls — rather than against `build_cutter_union`'s own nonemptiness
+/// assumption.
+///
+/// #3997 measured that this union is exact-bit-closed on only 1 of 5 real
+/// chains, and the accepted subtraction on only 3 of 5, using an
+/// open-boundary-EDGE count. That count does not distinguish a genuine hole
+/// from the hairline T-junction openness the pipeline's own consolidation
+/// step (`csg::consolidate::conform`) is documented to forgive by design —
+/// so it could not say whether the open edges it found mean incorrectly
+/// retained/removed material, or just unmerged coincident boundaries with no
+/// missing area.
+///
+/// `boundary_area_vector6` answers that: it is the zero vector for both a
+/// closed mesh AND a hairline chain, and nonzero (twice the hole's own area
+/// vector) only for a genuine hole. Measuring it on the actual per-wall
+/// output mesh is a REFERENCE-INDEPENDENT, no-topology-walk closure read on
+/// exactly what ships.
+#[test]
+fn segmented_roof_walls_boundary_area_vector_is_negligible() {
+    let Some(content) = read_fixture() else {
+        return;
+    };
+    let void_index = build_void_index(&content);
+    let entity_index = build_entity_index(&content);
+
+    let cases = [
+        (2152u32, "2FzACFrWn78vGKEK4Md6ha"),
+        (4374, "2PDtSyZL10pweyEST_guOH"),
+        (4148, "0wFZS1FlX4uQG90eXr1foJ"),
+        (2797, "1NKEanv7HDEOdbfk8nuT6f"),
+        (5904, "2l9upSYxz4xfNDmVZnFjG3"),
+    ];
+
+    // The pipeline's own hairline tolerance (see `count_open_boundary_edges_at`
+    // and its 0.1 mm grid) is a LENGTH; `|A|` is an AREA fraction, so a real
+    // hole big enough to matter (say, larger than a 1 mm-wide hairline sliver
+    // running the height of one of these ~4-8 m walls) reads many orders of
+    // magnitude above float round-off. 1e-6 is generous headroom over the
+    // f32-position / f64-accumulation noise floor measured on the DEFAULT
+    // (no accept-gate feature) build below (worst case ~3e-8) while still
+    // catching anything a human would call a hole.
+    let max_hole_fraction = 1e-6_f64;
+
+    // MEASURED, not assumed: with `csg_topology_gate` alone (a CI-only,
+    // off-by-default-in-production accept gate — see its Cargo.toml doc
+    // comment), the #3919 accept-gate rejects wall #2152's unioned-cutter
+    // subtract and defers to the sequential per-cutter path, which here hits
+    // the `#635` AABB-fallback branch (`[issue-635] AABB fallback used`,
+    // printed below) for a full-cross-section cutter. That fallback's own
+    // result carries a genuine — not hairline — 63 mm² opening on this
+    // ~39 m² wall (`|A|` ~= 126.8, fraction ~= 1.63e-6): small enough that the
+    // existing 25 mm Z-bounds pin above cannot see it, but a real hole per
+    // this finer measure. It does NOT reproduce with `csg_manifold_gate`
+    // alone, nor with both gates together (both measured at ~4e-9, same as
+    // the default build) — so it is specific to `csg_topology_gate` alone
+    // choosing that fallback for this wall, not a property of the union path
+    // this issue is about. Since this gate combination never ships, this is
+    // recorded as a MEASURED, pinned exception (moving it means the gate,
+    // the fallback, or this wall's geometry moved and needs re-measuring),
+    // not silently widened tolerance for the default path above.
+    #[cfg(all(feature = "csg_topology_gate", not(feature = "csg_manifold_gate")))]
+    let gated_exception = |id: u32| if id == 2152 { Some(2e-6_f64) } else { None };
+    #[cfg(not(all(feature = "csg_topology_gate", not(feature = "csg_manifold_gate"))))]
+    let gated_exception = |_id: u32| None::<f64>;
+
+    for (id, gid) in cases {
+        let mut decoder = EntityDecoder::with_index(&content, entity_index.clone());
+        let entity = decoder.decode_by_id(id).expect("decode wall");
+        let router = GeometryRouter::with_scale(1.0);
+        let mesh = router
+            .process_element_with_voids(&entity, &mut decoder, &void_index)
+            .unwrap_or_default();
+        assert!(!mesh.is_empty(), "#{id} ({gid}) rendered as EMPTY");
+
+        let a = boundary_area_vector6(&mesh);
+        let a_mag = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        let twice_area = twice_surface_area(&mesh);
+        let fraction = if twice_area > 0.0 { a_mag / twice_area } else { 0.0 };
+
+        eprintln!(
+            "AUDIT3980-boundary-area #{id} ({gid}): tris={} |A|={a_mag:.6} mm^2 \
+             2*surface_area={twice_area:.3} mm^2 hole_fraction={fraction:e}",
+            mesh.indices.len() / 3,
+        );
+
+        let bound = gated_exception(id).unwrap_or(max_hole_fraction);
+        assert!(
+            fraction < bound,
+            "#{id} ({gid}): boundary-area-vector fraction {fraction:e} exceeds \
+             {bound:e} — this reads as a GENUINE hole (missing \
+             material), not a forgiven hairline T-junction. |A|={a_mag} mm^2 \
+             over 2*area={twice_area} mm^2.",
+        );
+        assert!(
+            gated_exception(id).is_none() || fraction >= max_hole_fraction,
+            "#{id} ({gid}) no longer needs its pinned gated exception \
+             ({fraction:e} is back under {max_hole_fraction:e}); remove the \
+             `gated_exception` entry rather than leaving it unexercised.",
+        );
+    }
+}
+
+/// Builds a unit cube (12 triangles, outward-wound) as a plain `(positions,
+/// indices)` pair — enough for `boundary_area_vector6`/`twice_surface_area`,
+/// which read only those two fields.
+fn unit_cube_mesh() -> ifc_lite_geometry::Mesh {
+    let corners: [[f32; 3]; 8] = [
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0],
+    ];
+    // Outward-wound quads (CCW seen from outside), split into two triangles.
+    let quads: [[u32; 4]; 6] = [
+        [0, 3, 2, 1], // bottom (z=0), normal -z
+        [4, 5, 6, 7], // top (z=1), normal +z
+        [0, 1, 5, 4], // front (y=0)
+        [2, 3, 7, 6], // back (y=1)
+        [1, 2, 6, 5], // right (x=1)
+        [3, 0, 4, 7], // left (x=0)
+    ];
+    let mut indices = Vec::new();
+    for q in &quads {
+        indices.extend_from_slice(&[q[0], q[1], q[2], q[0], q[2], q[3]]);
+    }
+    ifc_lite_geometry::Mesh {
+        positions: corners.into_iter().flatten().collect(),
+        normals: vec![0.0; 24],
+        indices,
+        ..Default::default()
+    }
+}
+
+/// Proof the metric itself discriminates real holes from forgiven hairline
+/// openness — the claim the production test above rests on. Each case is a
+/// MUTATION of the one before it: dropping a face is a genuine hole; folding
+/// two coincident interior triangles back on themselves is a hairline
+/// T-junction chain. If `boundary_area_vector6` could not tell them apart,
+/// `segmented_roof_walls_boundary_area_vector_is_negligible` above would be
+/// vacuous — passing on any mesh regardless of real defects.
+#[test]
+fn boundary_area_vector_discriminates_hole_from_hairline() {
+    // Closed cube: A must be exactly the zero vector (no boundary at all).
+    let cube = unit_cube_mesh();
+    let a_closed = boundary_area_vector6(&cube);
+    assert_eq!(a_closed, [0.0, 0.0, 0.0], "closed cube must read A = 0 exactly");
+
+    // MUTATION 1 — drop the top face (2 triangles): a genuine 1x1 hole. `A`
+    // must equal exactly twice that hole's own area vector, [0, 0, 2] (the
+    // dropped face's normal is +z, area 1, so 2x is [0,0,2]) — not merely
+    // "nonzero".
+    let mut holed = cube.clone();
+    holed.indices.drain(6..12); // the "top" quad is the second of the six (indices [6,12))
+    let a_hole = boundary_area_vector6(&holed);
+    let a_hole_mag = (a_hole[0] * a_hole[0] + a_hole[1] * a_hole[1] + a_hole[2] * a_hole[2]).sqrt();
+    assert!(
+        (a_hole[0]).abs() < 1e-9 && (a_hole[1]).abs() < 1e-9 && (a_hole[2].abs() - 2.0).abs() < 1e-9,
+        "dropping the top face must read A ~= [0,0,+-2] (twice its area vector, \
+         sign set by the loop's winding), got {a_hole:?}"
+    );
+    let twice_area_hole = twice_surface_area(&holed);
+    let fraction_hole = a_hole_mag / twice_area_hole;
+    assert!(
+        fraction_hole > 0.19,
+        "a 1x1 hole on a 5-face-remaining cube must read as a LARGE fraction \
+         (~0.2), got {fraction_hole}"
+    );
+
+    // MUTATION 2 — instead of dropping the top face, fold it: replace it with
+    // TWO triangles that trace the same quad out and immediately back
+    // (0,4,5 then 5,4,0 — the reverse winding of the same triangle), the
+    // hairline "walked out and back" shape #4648/#3980 describe. The mesh is
+    // still open (that folded pair is degenerate/non-manifold, not a real
+    // face), but it encloses NO area, so `A` must read ~0 despite being open.
+    let mut hairline = cube.clone();
+    hairline.indices.extend_from_slice(&[4, 5, 6, 4, 6, 5]); // triangle then its exact reverse
+    let a_hairline = boundary_area_vector6(&hairline);
+    let a_hairline_mag =
+        (a_hairline[0] * a_hairline[0] + a_hairline[1] * a_hairline[1] + a_hairline[2] * a_hairline[2])
+            .sqrt();
+    assert!(
+        a_hairline_mag < 1e-9,
+        "a degenerate out-and-back triangle pair encloses no area and must \
+         read A ~= 0 despite being open, got |A|={a_hairline_mag}"
+    );
+
+    // If the discriminator degenerated to "always ~0" (the failure mode that
+    // would make the production test above vacuous), MUTATION 1 above would
+    // already have failed its fraction_hole > 0.19 assertion — this final
+    // check makes that contrast explicit at the same scale.
+    assert!(
+        fraction_hole > 1000.0 * (a_hairline_mag / twice_surface_area(&hairline)).max(1e-15),
+        "the genuine hole must read orders of magnitude larger than the \
+         hairline case; hole={fraction_hole} hairline={}",
+        a_hairline_mag / twice_surface_area(&hairline),
+    );
+}
+
+/// Non-vacuousness proof for the PRODUCTION test above, on REAL data: take
+/// wall #4374's actual accepted-subtraction mesh and mutate it by dropping
+/// one triangle (the cheapest possible "the boolean under-removed / a real
+/// hole opened" defect), then confirm the SAME assertion the production test
+/// runs would catch it. This is the probe that proves a future regression
+/// this shape would actually redden the test above, not just the synthetic
+/// cube case.
+///
+/// Wall #4374, not #2152: #2152 carries the pinned, measured
+/// `csg_topology_gate`-alone exception in the production test above (its own
+/// doc comment there has the numbers), so asserting "starts under the gate"
+/// on #2152 would itself be gate-dependent. #4374 measures exactly 0 under
+/// every gate combination (see the `AUDIT3980-boundary-area` output above),
+/// so this probe is unconditional.
+#[test]
+fn dropping_one_triangle_from_the_real_wall_mesh_reddens_the_gate() {
+    let Some(content) = read_fixture() else {
+        return;
+    };
+    let void_index = build_void_index(&content);
+    let entity_index = build_entity_index(&content);
+    let mut decoder = EntityDecoder::with_index(&content, entity_index.clone());
+    let entity = decoder.decode_by_id(4374).expect("decode wall #4374");
+    let router = GeometryRouter::with_scale(1.0);
+    let mut mesh = router
+        .process_element_with_voids(&entity, &mut decoder, &void_index)
+        .unwrap_or_default();
+    assert!(!mesh.is_empty());
+
+    let max_hole_fraction = 1e-6_f64;
+    let before = {
+        let a_mag = {
+            let a = boundary_area_vector6(&mesh);
+            (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt()
+        };
+        a_mag / twice_surface_area(&mesh)
+    };
+    assert!(before < max_hole_fraction, "sanity: real mesh must start under the gate");
+
+    // Drop one interior triangle — a real hole exactly the size of that
+    // triangle. Removed from the middle of the index buffer so no boundary
+    // simplification could special-case "the last triangle".
+    let mid = mesh.indices.len() / 6 * 3; // a triangle-aligned offset near the middle
+    mesh.indices.drain(mid..mid + 3);
+
+    let a = boundary_area_vector6(&mesh);
+    let a_mag = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    let fraction = a_mag / twice_surface_area(&mesh);
+    assert!(
+        fraction >= max_hole_fraction,
+        "dropping a real triangle from wall #4374's shipped mesh must exceed \
+         the production gate's threshold ({max_hole_fraction:e}); got {fraction:e} \
+         — if this fails, the gate above would NOT catch this class of defect."
+    );
+}
