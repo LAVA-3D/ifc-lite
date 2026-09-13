@@ -121,6 +121,16 @@ export function opensLiteralOrComment(buf: Uint8Array, pos: number, len: number)
   return buf[pos] === QUOTE || opensComment(buf, pos, len);
 }
 
+// Whether an entity keyword may start with byte `b`: an ASCII letter of either
+// case. A keyword's case is not significant, so a lowercase lead byte is a
+// keyword too; the byte scanners then name the type in upper case, once, at
+// scan time (#4713). Rust's `EntityScanner` accepts the same letters
+// (rust/core/src/parser/scanner.rs). `scan-worker-lexing.ts` holds the worker's
+// copy as `isKeywordLeadByteAt`.
+export function isKeywordLeadByte(b: number): boolean {
+  return (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a);
+}
+
 // ASCII whitespace per ISO 10303-21. Not /\s/: that also matches U+00A0 and the
 // other Unicode space separators, which the byte scanners and the Rust half do
 // not treat as whitespace.

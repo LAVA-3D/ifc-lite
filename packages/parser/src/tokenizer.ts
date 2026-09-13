@@ -11,6 +11,7 @@ import { isIndexableExpressId } from './express-id.js';
 import { BalancedEntityScan, type ScannedEntityRef } from './scan-entities-balanced.js';
 import {
   countNewlines,
+  isKeywordLeadByte,
   isSpaceByte,
   opensComment,
   opensLiteralOrComment,
@@ -202,11 +203,12 @@ export class StepTokenizer {
           if (t.stop) { stopped = true; break; }
         }
 
-        // Read type name (inline). Must start A-Z; a bad start byte with
-        // buffer left clears declOpen for the same reason as the '=' check.
+        // Read type name (inline). Must start with a letter of either case
+        // (#4713); a bad start byte with buffer left clears declOpen for the
+        // same reason as the '=' check.
         const typeStart = pos;
         if (pos >= len) continue;
-        if (buf[pos] < 0x41 || buf[pos] > 0x5A) { declOpen = false; continue; }
+        if (!isKeywordLeadByte(buf[pos])) { declOpen = false; continue; }
 
         while (pos < len) {
           const c = buf[pos];
@@ -225,10 +227,18 @@ export class StepTokenizer {
         // Use a length+hash compound key and verify the decoded bytes on hit so a 32-bit
         // hash collision can't silently alias two distinct type names (a malformed/hostile
         // file could otherwise craft a collision and have one type misread as another).
+        //
+        // Case-folded (#4713): the keyword's case is not significant, so the
+        // cached name is upper case and every spelling of it shares one entry.
+        // The loop above accepts only [A-Za-z0-9_], and of those only a-z is
+        // at or above 0x61, so `c >= 0x61 ? c - 0x20 : c` is the upper-case
+        // byte: no allocation per byte, and an upper-case file hashes exactly
+        // as before.
         const typeLen = pos - typeStart;
         let typeHash = typeLen;
         for (let i = typeStart; i < pos; i++) {
-          typeHash = (typeHash * 31 + buf[i]) | 0;
+          const c = buf[i];
+          typeHash = (typeHash * 31 + (c >= 0x61 ? c - 0x20 : c)) | 0;
         }
         const cacheKey = `${typeLen}:${typeHash}`;
         let type = typeCache.get(cacheKey);
@@ -236,7 +246,8 @@ export class StepTokenizer {
         if (type !== undefined && type.length === typeLen) {
           cacheHitMatches = true;
           for (let i = 0; i < typeLen; i++) {
-            if (type.charCodeAt(i) !== buf[typeStart + i]) {
+            const c = buf[typeStart + i];
+            if (type.charCodeAt(i) !== (c >= 0x61 ? c - 0x20 : c)) {
               cacheHitMatches = false;
               break;
             }
@@ -245,7 +256,7 @@ export class StepTokenizer {
         // `type === undefined` is implied by !cacheHitMatches, but naming it
         // here lets TS narrow `type` to `string` on the fall-through path.
         if (type === undefined || !cacheHitMatches) {
-          type = String.fromCharCode(...buf.subarray(typeStart, pos));
+          type = String.fromCharCode(...buf.subarray(typeStart, pos)).toUpperCase();
           typeCache.set(cacheKey, type);
         }
 

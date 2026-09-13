@@ -55,8 +55,11 @@ export class EntityTypeByteInterner {
   }
 
   private readString(bytes: Uint8Array, start: number, end: number): string {
-    // Deliberately byte→char, matching the existing scanner's raw token
-    // spelling for mixed case, unknown names and non-ASCII bytes.
+    // Deliberately byte→char: the file's own spelling, unknown names and
+    // non-ASCII bytes included. Not case-folded, unlike the byte scanners in
+    // tokenizer.ts and scan-worker-source.ts, which name a type in upper case
+    // since #4713; consumers of this path upper-case it themselves
+    // (getTypeUpper in columnar-entity-preparation.ts).
     let value = '';
     for (let i = start; i < end; i++) value += String.fromCharCode(bytes[i]);
     return value;
