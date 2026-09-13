@@ -325,6 +325,19 @@ fn tri_volume6(tris: &[PTri]) -> f64 {
     tris.iter().map(PTri::vol6).sum()
 }
 
+/// Six times the signed divergence sum about a caller-selected reference.
+fn tri_volume6_about(tris: &[PTri], o: V3) -> f64 {
+    tris
+        .iter()
+        .map(|t| {
+            dot(
+                sub(t.p[0], o),
+                cross(sub(t.p[1], o), sub(t.p[2], o)),
+            )
+        })
+        .sum()
+}
+
 /// Promote a `Mesh` to the f64 triangle list, folding nothing (the mesh is
 /// taken in its own frame — `origin` semantics are preserved by the caller).
 fn ptris_from_mesh(mesh: &Mesh) -> Option<Vec<PTri>> {
@@ -1786,12 +1799,12 @@ fn area_vector(tris: &[PTri]) -> V3 {
 /// the reference — by exactly `δ · A / 6` for `A = A_inside − A_caps`
 /// ([`area_vector`]) — and reading it at one canonical point does not make that
 /// dependence go away, it only hides it. Bounds 2 and 3 are instead applied to
-/// the whole interval `vol_in ± drift`, `drift = |A| · radius / 6` over the
-/// removed region's own half-extent: the verdict is then the same for every
-/// reference the region admits, which is what "reference-independent" has to
-/// mean for a predicate that routes. A region that does close carries `A = 0` to
-/// roundoff and reads exactly as it did. Measured over this repo's census
-/// corpus, 2191 of 2483 cuts carry `|A| < 1e-12`.
+/// the whole interval around the reading at the removed region's AABB centre.
+/// Its half-width is the exact axis-wise support bound
+/// `Σ |A[k]| · half_extent[k] / 6`, covering every reference in that AABB. The
+/// verdict is therefore translation-invariant. A region that does close carries
+/// `A = 0` to roundoff and reads exactly as it did. Measured over this repo's
+/// census corpus, 2191 of 2483 cuts carry `|A| < 1e-12`.
 ///
 /// Reading 1 is left about the ORIGIN, where it has always been taken, and keeps
 /// its world-magnitude tolerance. It is an identity — `out ∪ inside` is a
@@ -1862,20 +1875,29 @@ fn partition_volumes_consistent(
     if !lo.iter().chain(hi.iter()).all(|c| c.is_finite()) {
         return None;
     }
-    let radius = (0..3).fold(0.0f64, |m, k| m.max(hi[k] - lo[k])) * 0.5;
+    let centre: V3 = std::array::from_fn(|k| (lo[k] + hi[k]) * 0.5);
+    let half_extent: V3 = std::array::from_fn(|k| (hi[k] - lo[k]) * 0.5);
+    let radius = half_extent.iter().copied().fold(0.0f64, f64::max);
     let tol = 1.0e-12 * (1.0 + radius).powi(3) + 1.0e-9;
 
-    // How far `vol_in` moves if its reference moves anywhere within the removed
-    // region. Zero exactly when the region closes; see `area_vector`.
-    let drift = norm(sub(area_vector(inside), area_vector(caps))) * radius / 6.0;
+    let vol_in_centre =
+        (tri_volume6_about(inside, centre) - tri_volume6_about(caps, centre)) / 6.0;
+    // Exact support of the AABB about `centre`: the largest possible |δ·A|/6
+    // for any reference displacement δ inside the removed region's bounds.
+    // Zero exactly when the region closes; see `area_vector`.
+    let area = sub(area_vector(inside), area_vector(caps));
+    let drift = (0..3)
+        .map(|k| area[k].abs() * half_extent[k])
+        .sum::<f64>()
+        / 6.0;
 
-    if vol_in - drift < 1.0e-9 {
+    if vol_in_centre - drift < 1.0e-9 {
         return None; // removed nothing measurable — leave to the exact path
     }
-    if vol_in + drift > pf.volume() * (1.0 + 1.0e-6) + tol {
+    if vol_in_centre + drift > pf.volume() * (1.0 + 1.0e-6) + tol {
         return None;
     }
-    Some(vol_in)
+    Some(vol_in_centre)
 }
 
 /// Subtract the stepped solid `pf` from the host triangle list. `Err(defer
