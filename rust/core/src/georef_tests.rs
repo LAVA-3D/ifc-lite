@@ -25,7 +25,7 @@ fn georef_discovery_does_not_retain_unrelated_property_sets() {
     let mut decoder = EntityDecoder::new(&source);
     let geo = GeoRefExtractor::extract(&mut decoder, &types).unwrap().unwrap();
     assert_eq!(geo.eastings, 42.0);
-    assert_eq!(geo.source, GeoRefSource::EPSetMapConversion);
+    assert_eq!(geo.source, Some(GeoRefSource::EPSetMapConversion));
     assert!(decoder.cache_size() <= 2, "only the selected set and its value should be retained");
     assert_eq!(decoder.decode_by_id(500).unwrap().get_string(2), Some("Unrelated"));
 }
@@ -156,7 +156,7 @@ END-ISO-10303-21;
         .expect("decode ok")
         .expect("legacy site georeference extracted");
 
-    assert_eq!(georef.source, GeoRefSource::SiteLocation);
+    assert_eq!(georef.source, Some(GeoRefSource::SiteLocation));
     assert!(
         (georef.northings - (-0.5)).abs() < 1e-9,
         "expected northings -0.5 (0°30'S), got {}",
@@ -339,7 +339,7 @@ fn scaled_map_conversion_typed_as_its_own_type_is_extracted() {
         IfcType::from_str("IFCMAPCONVERSIONSCALED"),
     )
     .expect("a scaled conversion typed as itself is a georeference");
-    assert_eq!(geo.source, GeoRefSource::MapConversion);
+    assert_eq!(geo.source, Some(GeoRefSource::MapConversion));
     let (e, _, _) = geo.local_to_map(10.0, 20.0, 5.0);
     assert!((e - 1003.048).abs() < 1e-9, "factors applied, e = {e}");
 }
@@ -399,7 +399,7 @@ fn map_conversion_with_a_non_finite_component_is_refused_whole() {
     let geo = GeoRefExtractor::extract(&mut decoder, &types)
         .expect("decode ok")
         .expect("with no CRS, the IfcSite fallback answers");
-    assert_eq!(geo.source, GeoRefSource::SiteLocation);
+    assert_eq!(geo.source, Some(GeoRefSource::SiteLocation));
 }
 
 /// An explicit `Scale` of 0 collapsed every local point onto

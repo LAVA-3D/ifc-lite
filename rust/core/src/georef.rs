@@ -68,8 +68,11 @@ pub struct GeoReference {
     /// `MapUnit` (0.001 for millimetres). `None` when no MapUnit is authored.
     pub map_unit_scale: Option<f64>,
     /// Where the data was authored (`IfcMapConversion`, ePSet fallback, or
-    /// legacy `IfcSite` lat/long).
-    pub source: GeoRefSource,
+    /// legacy `IfcSite` lat/long). `None` when only a named
+    /// `IfcProjectedCRS` was found: no conversion was authored, or the one
+    /// authored was refused, so nothing placed the model. The TS twin leaves
+    /// `source` unset in the same case.
+    pub source: Option<GeoRefSource>,
     /// False easting (X offset to map CRS)
     pub eastings: f64,
     /// False northing (Y offset to map CRS)
@@ -108,7 +111,7 @@ impl Default for GeoReference {
             map_zone: None,
             map_unit: None,
             map_unit_scale: None,
-            source: GeoRefSource::MapConversion,
+            source: None,
             eastings: 0.0,
             northings: 0.0,
             orthogonal_height: 0.0,
@@ -315,8 +318,11 @@ fn resolve_measure_with_unit(
 impl GeoRefExtractor {
     /// Extract georeferencing from decoder
     ///
-    /// Precedence (identical to the TS parser): `IfcMapConversion` →
-    /// `ePSet_MapConversion` (IFC2x3) → legacy `IfcSite` lat/long.
+    /// Precedence (identical to the TS parser): `IfcMapConversion` or a named
+    /// `IfcProjectedCRS` → `ePSet_MapConversion` (IFC2x3) → legacy `IfcSite`
+    /// lat/long. A refused conversion counts as no conversion, and an
+    /// `IfcProjectedCRS` whose mandatory `Name` is unset declares no CRS, so
+    /// neither holds back the fallbacks on its own.
     pub fn extract(
         decoder: &mut EntityDecoder,
         entity_types: &[(u32, IfcType)],
@@ -348,24 +354,14 @@ impl GeoRefExtractor {
         }
 
         let mut georef = GeoReference::new();
-        georef.source = GeoRefSource::MapConversion;
 
         // Parse IfcMapConversion
         // Attributes: SourceCRS, TargetCRS, Eastings, Northings, OrthogonalHeight,
         //             XAxisAbscissa, XAxisOrdinate, Scale
-        let parsed = match map_conversion_id {
-            Some(id) => Self::parse_map_conversion(&decoder.decode_by_id(id)?, &mut georef),
-            None => false,
-        };
-
-        // No map conversion, or a refused one that no IfcProjectedCRS stands in
-        // for: try the IFC2X3 property set fallback, then the legacy IfcSite
-        // lat/long fallback (TS parity).
-        if map_conversion_id.is_none() || (!parsed && projected_crs_id.is_none()) {
-            if let Some(georef) = Self::extract_from_pset(decoder, entity_types)? {
-                return Ok(Some(georef));
+        if let Some(id) = map_conversion_id {
+            if Self::parse_map_conversion(&decoder.decode_by_id(id)?, &mut georef) {
+                georef.source = Some(GeoRefSource::MapConversion);
             }
-            return Self::extract_from_site(decoder, entity_types);
         }
 
         // Parse IfcProjectedCRS
@@ -376,13 +372,21 @@ impl GeoRefExtractor {
             Self::parse_projected_crs(&entity, decoder, &mut georef);
         }
 
-        georef.sanitize_transform();
-
-        if georef.has_georef() {
-            Ok(Some(georef))
-        } else {
-            Ok(None)
+        // Neither a parsed conversion nor a named CRS: try the IFC2X3 property
+        // set fallback, then the legacy IfcSite lat/long fallback (TS parity).
+        // Gating on the conversion's id instead let a CRS-only file skip past
+        // its declared CRS to a site location the browser never reported, and
+        // a refused conversion next to a nameless CRS returned no georeference
+        // without trying either fallback (#4695).
+        if !georef.has_map_conversion && georef.crs_name.is_none() {
+            if let Some(georef) = Self::extract_from_pset(decoder, entity_types)? {
+                return Ok(Some(georef));
+            }
+            return Self::extract_from_site(decoder, entity_types);
         }
+
+        georef.sanitize_transform();
+        Ok(Some(georef))
     }
 
     /// Parse IfcMapConversion entity (and the IFC4X3 `IfcMapConversionScaled`
@@ -587,7 +591,7 @@ impl GeoRefExtractor {
             let elevation = site.get_float(11).unwrap_or(0.0);
 
             let mut georef = GeoReference::new();
-            georef.source = GeoRefSource::SiteLocation;
+            georef.source = Some(GeoRefSource::SiteLocation);
             georef.crs_name = Some("EPSG:4326".to_string());
             georef.crs_description = Some("Legacy IfcSite geolocation".to_string());
             georef.geodetic_datum = Some("WGS84".to_string());
