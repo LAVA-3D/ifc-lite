@@ -359,9 +359,7 @@ impl GeoRefExtractor {
         // Attributes: SourceCRS, TargetCRS, Eastings, Northings, OrthogonalHeight,
         //             XAxisAbscissa, XAxisOrdinate, Scale
         if let Some(id) = map_conversion_id {
-            if Self::parse_map_conversion(&decoder.decode_by_id(id)?, &mut georef) {
-                georef.source = Some(GeoRefSource::MapConversion);
-            }
+            Self::parse_map_conversion(&decoder.decode_by_id(id)?, &mut georef);
         }
 
         // Parse IfcProjectedCRS
@@ -373,12 +371,10 @@ impl GeoRefExtractor {
         }
 
         // Neither a parsed conversion nor a named CRS: try the IFC2X3 property
-        // set fallback, then the legacy IfcSite lat/long fallback (TS parity).
-        // Gating on the conversion's id instead let a CRS-only file skip past
-        // its declared CRS to a site location the browser never reported, and
-        // a refused conversion next to a nameless CRS returned no georeference
-        // without trying either fallback (#4695).
-        if !georef.has_map_conversion && georef.crs_name.is_none() {
+        // set fallback, then the legacy IfcSite lat/long fallback (TS parity,
+        // #4695). A refused conversion left `georef` untouched, so it counts as
+        // no conversion here.
+        if !georef.has_georef() {
             if let Some(georef) = Self::extract_from_pset(decoder, entity_types)? {
                 return Ok(Some(georef));
             }
@@ -392,15 +388,16 @@ impl GeoRefExtractor {
     /// Parse IfcMapConversion entity (and the IFC4X3 `IfcMapConversionScaled`
     /// subtype, whose first eight attributes have the same layout).
     ///
-    /// Returns false, leaving `georef` untouched, when Eastings through Scale
-    /// (attributes 2..=7) hold a number the double range cannot represent:
-    /// the whole conversion is refused rather than one component replaced
-    /// by its default, the rule the TS twin (`extractMapConversion`) applies.
-    fn parse_map_conversion(entity: &DecodedEntity, georef: &mut GeoReference) -> bool {
+    /// Leaves `georef` untouched when Eastings through Scale (attributes
+    /// 2..=7) hold a number the double range cannot represent: the whole
+    /// conversion is refused rather than one component replaced by its
+    /// default, the rule the TS twin (`extractMapConversion`) applies.
+    fn parse_map_conversion(entity: &DecodedEntity, georef: &mut GeoReference) {
         if (2..=10).any(|index| entity.get_float(index).is_some_and(|v| !v.is_finite())) {
-            return false;
+            return;
         }
         georef.has_map_conversion = true;
+        georef.source = Some(GeoRefSource::MapConversion);
         // Index 2: Eastings
         if let Some(e) = entity.get_float(2) {
             georef.eastings = e;
@@ -439,7 +436,6 @@ impl GeoRefExtractor {
                 *factor = f;
             }
         }
-        true
     }
 
     /// Parse IfcProjectedCRS entity
