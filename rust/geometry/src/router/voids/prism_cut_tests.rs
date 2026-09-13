@@ -1039,3 +1039,170 @@ fn tetrahedron_missing_face_fails_directed_closed() {
     m.indices.truncate(m.indices.len() - 3); // drop the last triangle
     assert!(!directed_closed(&m));
 }
+
+// ── The partition volume self-check (#4627) ─────────────────────────────────
+
+/// A native site well past any city-scale model but still under the RTC
+/// threshold. Every component is a short dyadic, so it survives the `f64 → f32`
+/// store in `framed_box_mesh` exactly and the twin below is a bit-exact
+/// translate of the far mesh rather than a re-rounded rebuild of it.
+const FAR_SITE_M: [f64; 3] = [9000.375, 5000.25, 300.125];
+
+/// Subtract `delta` from every position, in `f32`, so the result is the SAME
+/// geometry read about a different origin and not a differently-rounded one.
+/// Both operands sit in one binade here, so each subtraction is exact
+/// (Sterbenz), and any difference a test then sees between the two meshes comes
+/// from the reference point, never from the fixture.
+fn translated_to_origin(mesh: &Mesh, delta: [f64; 3]) -> Mesh {
+    let mut m = mesh.clone();
+    for (i, p) in m.positions.iter_mut().enumerate() {
+        *p -= delta[i % 3] as f32;
+    }
+    m
+}
+
+/// A 1 m³ axis-aligned unit cutter sitting on the host's min corner.
+fn unit_cutter_at(lo: [f64; 3], hi: [f64; 3]) -> PrismFrame {
+    PrismFrame {
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, 1.0, 0.0],
+        d: [0.0, 0.0, 1.0],
+        planes: vec![lo[2], lo[2] + 1.0],
+        profiles: vec![vec![
+            [lo[0], lo[1]],
+            [lo[0] + 1.0, lo[1]],
+            [lo[0] + 1.0, lo[1] + 1.0],
+            [lo[0], lo[1] + 1.0],
+        ]],
+        slab_area: vec![1.0],
+        slab_interior: vec![[lo[0] + 0.5, lo[1] + 0.5]],
+        bb: ([lo[0], lo[1]], [hi[0], hi[1]]),
+    }
+}
+
+fn host_bounds(tris: &[PTri]) -> ([f64; 3], [f64; 3]) {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for t in tris {
+        let (l, h) = t.aabb();
+        for k in 0..3 {
+            lo[k] = lo[k].min(l[k]);
+            hi[k] = hi[k].max(h[k]);
+        }
+    }
+    (lo, hi)
+}
+
+/// The partition self-check's tolerance used to scale with the host's WORLD
+/// magnitude cubed, because its four sums were taken about the frame origin and
+/// rounded at that scale. On native, host-local coordinates are absolute
+/// metres, and at 9 km that was 0.73 m³ of slack on `vol_in <= vol(cutter)`: a
+/// removed solid 10 % larger than a 1 m³ cutter passed. About the host's own
+/// centre the roundoff is at the solid's scale and the same over-cut is
+/// refused, as it always was at the origin.
+#[test]
+fn an_over_cut_9km_out_is_refused_like_one_at_the_origin() {
+    // Host = the removed solid = a 1.1 x 1.0 x 1.0 box turned 0.6 rad about Z;
+    // nothing survives (`out` empty), no caps: vol_in == vol_host == 1.1.
+    let far_mesh = framed_box_mesh(FAR_SITE_M, rot_z_frame(0.6), [0.55, 0.5, 0.5]);
+    for (label, mesh) in [
+        ("origin", translated_to_origin(&far_mesh, FAR_SITE_M)),
+        ("9 km out", far_mesh.clone()),
+    ] {
+        let tris = ptris_from_mesh(&mesh).expect("box");
+        let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
+        let (lo, hi) = host_bounds(&tris);
+        let pf = unit_cutter_at(lo, hi);
+        let verdict = partition_volumes_consistent(&tris, &[], &tris, &[], &pf, &aabbs);
+        assert!(
+            verdict.is_none(),
+            "{label}: removing 1.1 m³ with a 1 m³ cutter must be refused, got {verdict:?}"
+        );
+    }
+}
+
+/// The same host, cut so that `vol_in` is genuinely under the cutter's volume:
+/// the check must still ACCEPT. Guards the tightened tolerance against having
+/// simply refused everything, at both sites.
+#[test]
+fn a_legitimate_cut_9km_out_is_accepted_like_one_at_the_origin() {
+    let far_mesh = framed_box_mesh(FAR_SITE_M, rot_z_frame(0.6), [0.55, 0.5, 0.5]);
+    for (label, mesh) in [
+        ("origin", translated_to_origin(&far_mesh, FAR_SITE_M)),
+        ("9 km out", far_mesh.clone()),
+    ] {
+        let tris = ptris_from_mesh(&mesh).expect("box");
+        let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
+        let (lo, hi) = host_bounds(&tris);
+        // A 2 m³ cutter comfortably contains the 1.1 m³ removed solid.
+        let mut pf = unit_cutter_at(lo, hi);
+        pf.planes[1] = lo[2] + 2.0;
+        let removed = partition_volumes_consistent(&tris, &[], &tris, &[], &pf, &aabbs)
+            .unwrap_or_else(|| panic!("{label}: a 1.1 m³ cut by a 2 m³ cutter must be accepted"));
+        assert!(
+            (removed - 1.1).abs() < 1.0e-4,
+            "{label}: removed {removed}, expected 1.1"
+        );
+    }
+}
+
+/// `vol_in` is a divergence sum over `inside` and the reversed `caps`. When
+/// that surface does not CLOSE the sum is not a volume: it is `V(0) − o·ΣN`,
+/// so the reference point alone decides the number the two magnitude bounds
+/// then read.
+///
+/// The fixture makes the artefact explicit. The host is a 1.1 x 1.0 x 1.0 box
+/// turned 0.6 rad about Z, spanning z ∈ [0, 1]; the "cut" hands its flat top
+/// face (area 1.1, outward normal +z) to `out` and the other five faces to
+/// `inside`, with no caps. That is a legal PARTITION of the host surface, so
+/// `vol_out + vol_in == vol_host` holds exactly about every reference point —
+/// but `inside` is a five-sided open box, and about the world origin its sum
+/// reads `1.1 − 1.1·1/3 = 0.7333`, which the old check accepted as 0.73 m³
+/// removed by a 1 m³ cutter. Nothing was removed at all.
+///
+/// Deliberately asymmetric: the three edge lengths differ, the plan rotation is
+/// not a multiple of 90°, and the gap is on ONE face, so a transposed axis or a
+/// flipped winding does not reproduce the same numbers.
+#[test]
+fn an_open_removed_solid_is_refused_however_the_reference_point_flatters_it() {
+    let mesh = framed_box_mesh([1.3, 0.7, 0.5], rot_z_frame(0.6), [0.55, 0.5, 0.5]);
+    let tris = ptris_from_mesh(&mesh).expect("box");
+    let (lo, hi) = host_bounds(&tris);
+    assert!(
+        (hi[2] - 1.0).abs() < 1.0e-6 && lo[2].abs() < 1.0e-6,
+        "fixture must span z ∈ [0, 1], got [{}, {}]",
+        lo[2],
+        hi[2]
+    );
+
+    // Split off the two triangles of the +z face.
+    let (top, rest): (Vec<PTri>, Vec<PTri>) = tris
+        .iter()
+        .cloned()
+        .partition(|t| t.p.iter().all(|p| (p[2] - hi[2]).abs() < 1.0e-6));
+    assert_eq!(top.len(), 2, "expected the top face as two triangles");
+
+    let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
+    let pf = unit_cutter_at(lo, hi);
+
+    // What the old, origin-referenced check would have read off `inside`.
+    let about_origin = rest
+        .iter()
+        .map(|t| dot(t.p[0], cross(t.p[1], t.p[2])))
+        .sum::<f64>()
+        / 6.0;
+    assert!(
+        (about_origin - 0.7333333).abs() < 1.0e-4,
+        "fixture must present a plausible 0.7333 m³ about the origin, got {about_origin}"
+    );
+    assert!(
+        about_origin > 1.0e-9 && about_origin <= pf.volume() * (1.0 + 1.0e-6),
+        "fixture must pass the two magnitude bounds about the origin"
+    );
+
+    let verdict = partition_volumes_consistent(&tris, &top, &rest, &[], &pf, &aabbs);
+    assert!(
+        verdict.is_none(),
+        "an open removed solid must be refused, got {verdict:?}"
+    );
+}

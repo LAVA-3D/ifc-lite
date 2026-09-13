@@ -64,6 +64,7 @@ use std::sync::OnceLock;
 use super::geom::opening_mesh_thinnest_axis_dir;
 use super::{cutter_is_closed_manifold, GeometryRouter, OpeningType, VoidContext};
 use crate::cdt::triangulate_pslg;
+use crate::kernel::signed_volume::tetra_volume6;
 use crate::mesh::Mesh;
 use nalgebra::Point2;
 use rustc_hash::FxHashMap;
@@ -72,6 +73,19 @@ use rustc_hash::FxHashMap;
 /// kernel for every host). Default ON; read once.
 pub(crate) mod closure_checks;
 mod vertex_dedup;
+
+// Declared HERE, above the feature-gated `mod diag { … }` blocks, and not at
+// the foot of the file where a test module usually sits. The revert oracle
+// proves which cargo target owns a changed test file by matching `mod NAME;`
+// with its leading attributes; its attribute group spans anything between the
+// previous such declaration and this one, so from below `mod diag` it swallows
+// that block's `#[cfg(any(feature = …))]` and reads THIS declaration as
+// feature-conditional. Ownership then cannot be proven and every change to
+// `prism_cut_tests.rs` comes back as an oracle capability gap.
+#[cfg(test)]
+#[path = "prism_cut_tests.rs"]
+mod tests;
+
 use closure_checks::{closed_or_hairline, directed_closed};
 pub(crate) use vertex_dedup::dedup_cut_vertices;
 
@@ -286,11 +300,6 @@ struct PTri {
 }
 
 impl PTri {
-    /// Signed volume contribution about the origin (divergence theorem, ×6).
-    #[inline]
-    fn vol6(&self) -> f64 {
-        dot(self.p[0], cross(self.p[1], self.p[2]))
-    }
     #[inline]
     fn aabb(&self) -> (V3, V3) {
         let mut lo = self.p[0];
@@ -303,10 +312,6 @@ impl PTri {
         }
         (lo, hi)
     }
-}
-
-fn tri_volume6(tris: &[PTri]) -> f64 {
-    tris.iter().map(PTri::vol6).sum()
 }
 
 /// Promote a `Mesh` to the f64 triangle list, folding nothing (the mesh is
@@ -1710,6 +1715,129 @@ fn face_coords(pf: &PrismFrame, face: Face, p: V3) -> V2 {
     }
 }
 
+/// Six times the signed volume of `tris` about `o` (divergence theorem).
+///
+/// Every sum the partition self-check compares must share ONE reference point,
+/// so the four readings cancel against each other exactly instead of about four
+/// different centres.
+fn tri_volume6_about(tris: &[PTri], o: V3) -> f64 {
+    tris.iter()
+        .map(|t| tetra_volume6(&t.p[0], &t.p[1], &t.p[2], &o))
+        .sum()
+}
+
+/// Twice the vector area of `tris`: `Σ (b−a)×(c−a)`.
+///
+/// Zero (to roundoff) exactly when the list is a CLOSED surface, and it is what
+/// makes a divergence sum over that list reference-free: moving the reference
+/// point from `o1` to `o2` changes the sum by `−(o2−o1)·` this vector. Built
+/// from edge DIFFERENCES, so its roundoff is set by the triangles' own size and
+/// not by how far the model sits from the origin.
+fn vector_area2(tris: &[PTri]) -> V3 {
+    let mut acc = [0.0f64; 3];
+    for t in tris {
+        let n = cross(sub(t.p[1], t.p[0]), sub(t.p[2], t.p[0]));
+        for k in 0..3 {
+            acc[k] += n[k];
+        }
+    }
+    acc
+}
+
+/// The analytic cut's volume self-check. `Some(removed)` ⇒ the partition is
+/// consistent and `removed` is the volume the cut took away; `None` ⇒ refuse
+/// the analytic result and leave this opening to the exact kernel.
+///
+/// Four readings, all about the HOST'S OWN AABB CENTRE:
+///
+/// 1. `vol_out + vol_in == vol_host` — `out ∪ inside` re-triangulates the host
+///    and the caps cancel between the two sides. This identity holds about any
+///    reference point; the shared centre only bounds its roundoff.
+/// 2. `inside` plus the REVERSED caps closes. Without it `vol_in` is not a
+///    volume at all: over an open surface a divergence sum is whatever the
+///    reference point makes it, so the bounds below would read a number that
+///    says more about where the model sits than about what was removed. A
+///    single probe displacement would test only ONE direction of the gap
+///    (the shift is `(o2−o1)·Σ(b−a)×(c−a)`, a projection), so the whole vector
+///    area is taken and every component probed over the host's extent.
+/// 3. `vol_in > 0` — the cut removed something measurable.
+/// 4. `vol_in <= vol(cutter)` — and no more than the cutter holds.
+///
+/// The tolerance scales with the host's EXTENT, the scale these sums round at
+/// now that they are taken about the host's centre. It used to scale with the
+/// largest WORLD coordinate cubed, because the sums were taken about the frame
+/// origin: on native builds, where host-local coordinates are absolute metres,
+/// a site 9 km out bought 0.7 m³ of slack on bound 4 and a removed solid 10 %
+/// larger than a 1 m³ cutter passed.
+fn partition_volumes_consistent(
+    tris: &[PTri],
+    out: &[PTri],
+    inside: &[PTri],
+    caps: &[PTri],
+    pf: &PrismFrame,
+    aabbs: &[(V3, V3)],
+) -> Option<f64> {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for (l, h) in aabbs {
+        for k in 0..3 {
+            lo[k] = lo[k].min(l[k]);
+            hi[k] = hi[k].max(h[k]);
+        }
+    }
+    // An empty or non-finite host has no frame to verify against.
+    if !lo.iter().chain(hi.iter()).all(|c| c.is_finite()) {
+        return None;
+    }
+    let centre = [
+        (lo[0] + hi[0]) * 0.5,
+        (lo[1] + hi[1]) * 0.5,
+        (lo[2] + hi[2]) * 0.5,
+    ];
+    let extent = (0..3).fold(0.0f64, |m, k| m.max(hi[k] - lo[k]));
+    // HALF the extent, not the extent: it is the largest coordinate the sums
+    // below actually see once they are recentred, so it is the scale they round
+    // at. `(1 + extent)` would read up to 8x LOOSER than the world-magnitude
+    // form it replaces for a host straddling the origin, where `host_mag` was
+    // already the half-extent — a tolerance change must not relax anywhere.
+    // `(b − a)/2 <= max(|a|, |b|)` for every interval, so this is a tightening
+    // at every site, strictly so for any host that does not straddle.
+    let radius = extent * 0.5;
+    let tol = 1.0e-12 * (1.0 + radius).powi(3) + 1.0e-9;
+
+    let vol_host = tri_volume6_about(tris, centre) / 6.0;
+    let caps_vol = tri_volume6_about(caps, centre) / 6.0; // caps oriented for the RESULT
+    let vol_out = tri_volume6_about(out, centre) / 6.0 + caps_vol;
+    let vol_in = tri_volume6_about(inside, centre) / 6.0 - caps_vol;
+
+    if (vol_out + vol_in - vol_host).abs() > tol.max(1.0e-6 * vol_host.abs()) {
+        return None;
+    }
+
+    // `inside` keeps the host's outward winding while the caps are wound for
+    // the RESULT, so the removed solid is `inside` with the caps REVERSED —
+    // hence the subtraction, matching how `vol_in` is formed above.
+    let gap_in = vector_area2(inside);
+    let gap_caps = vector_area2(caps);
+    // Judged by the SAME two-sided tolerance as the identity above: the host is
+    // admitted by `closed_or_hairline`, so `inside` inherits whatever hairline
+    // subdivision mismatches the host carries, and a gate tighter than the one
+    // that let the host in would refuse those hosts for a defect they arrived
+    // with rather than for one the cut introduced.
+    let leak = extent * (0..3).fold(0.0f64, |m, k| m.max((gap_in[k] - gap_caps[k]).abs()));
+    if leak > tol.max(1.0e-6 * vol_host.abs()) {
+        return None;
+    }
+
+    if vol_in < 1.0e-9 {
+        return None; // removed nothing measurable — leave to the exact path
+    }
+    if vol_in > pf.volume() * (1.0 + 1.0e-6) + tol {
+        return None;
+    }
+    Some(vol_in)
+}
+
 /// Subtract the stepped solid `pf` from the host triangle list. `Err(defer
 /// index)` ⇒ a gate or self-check failed ⇒ the caller must leave the host
 /// untouched and route this opening to the exact kernel.
@@ -1932,30 +2060,10 @@ fn cut_prism(tris: &[PTri], pf: &PrismFrame) -> Result<PrismCutOutcome, usize> {
         }
     }
 
-    // Volume self-checks (f64, exact identities up to roundoff):
-    //   vol_out + vol_in == vol_host   (caps cancel, fragments partition)
-    //   0 < vol_in <= vol(cutter)      (the caps close the removed solid)
-    let mut host_mag = pf.corner_mag();
-    for (lo, hi) in &aabbs {
-        for k in 0..3 {
-            host_mag = host_mag.max(lo[k].abs()).max(hi[k].abs());
-        }
-    }
-    let vol_host = tri_volume6(tris) / 6.0;
-    let caps_vol = tri_volume6(&caps) / 6.0; // caps oriented for the RESULT
-    let vol_out = tri_volume6(&out) / 6.0 + caps_vol;
-    let vol_in = tri_volume6(&inside) / 6.0 - caps_vol;
-    let scale3 = (1.0 + host_mag).powi(3);
-    let tol = 1.0e-12 * scale3 + 1.0e-9;
-    if (vol_out + vol_in - vol_host).abs() > tol.max(1.0e-6 * vol_host.abs()) {
+    // Volume self-checks (f64, exact identities up to roundoff).
+    let Some(vol_in) = partition_volumes_consistent(tris, &out, &inside, &caps, pf, &aabbs) else {
         return Err(8);
-    }
-    if vol_in < 1.0e-9 {
-        return Err(8); // removed nothing measurable — leave to the exact path
-    }
-    if vol_in > pf.volume() * (1.0 + 1.0e-6) + tol {
-        return Err(8);
-    }
+    };
 
     let mut tris_out = out;
     tris_out.append(&mut caps);
@@ -2953,7 +3061,3 @@ impl GeometryRouter {
         Some((out, residual_ctx))
     }
 }
-
-#[cfg(test)]
-#[path = "prism_cut_tests.rs"]
-mod tests;
