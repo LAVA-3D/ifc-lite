@@ -135,7 +135,7 @@ export function extractGeoreferencing(
     const entity = entities.get(mapConversionIds[0]);
     if (entity) {
       // A refused conversion leaves the field absent and does not claim
-      // `hasGeoreference`. An IfcProjectedCRS further down may still claim it —
+      // `hasGeoreference`. A named IfcProjectedCRS further down may still claim it —
       // correct: the file does declare a CRS, it just carries no usable
       // placement.
       const mapConversion = extractMapConversion(entity);
@@ -152,7 +152,9 @@ export function extractGeoreferencing(
     const entity = entities.get(projectedCRSIds[0]);
     if (entity) {
       info.projectedCRS = extractProjectedCRS(entity, (id) => entities.get(id));
-      info.hasGeoreference = true;
+      // A CRS whose mandatory Name is unset or blank declares none: it still scales
+      // a parsed conversion, but neither claims presence nor holds back the fallbacks (#4695).
+      if (info.projectedCRS.name.trim() !== '') info.hasGeoreference = true;
     }
   }
 
