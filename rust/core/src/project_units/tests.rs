@@ -389,29 +389,16 @@ fn derived_unit_element_exponent_i32_min_resolves_without_panic() {
     assert_eq!(saturated.symbol, resolved.symbol);
 }
 
-/// #4690: a `UnitComponent` that does not resolve was read as the SI base, so
-/// FOOT given as 304.8 of a dangling `#99` (the author meant millimetres) was
-/// 304.8 m. The unit name's known factor stands in; a name with none shows no
-/// unit, not the SI default it would be mislabelled as.
+/// #4690: a conversion-based unit whose factor does not resolve and whose name
+/// has no known factor is not a resolved unit through either accessor. The
+/// display cases (FOOT, CUBIT) are the shared `unit_symbol_vectors.json` rows.
 #[test]
-fn issue_4690_an_unresolved_unit_component_uses_the_named_factor_or_no_unit() {
-    let file = |name: &str| {
-        format!(
-            "DATA;\n#1=IFCPROJECT('guid',$,'Test',$,$,$,$,$,#2);\n#2=IFCUNITASSIGNMENT((#3));\n\
-             #3=IFCCONVERSIONBASEDUNIT(#4,.LENGTHUNIT.,'{name}',#5);\n\
-             #4=IFCDIMENSIONALEXPONENTS(1,0,0,0,0,0,0);\n\
-             #5=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(304.8),#99);\nENDSEC;\n"
-        )
-    };
-    let foot = units_of(&file("FOOT")).unit_for_measure("IfcLengthMeasure").unwrap();
-    assert_eq!(foot.symbol, "ft");
-    assert!((foot.si_scale - 0.3048).abs() < 1e-12, "got {}", foot.si_scale);
-
-    let unknown = file("CUBIT");
-    let units = units_of(&unknown);
-    assert_eq!(units.unit_for_measure("IfcLengthMeasure"), None);
-    assert_eq!(units.resolved_for_unit_type("LENGTHUNIT"), None);
-    assert_eq!(units.unit_for_measure("IfcAreaMeasure").unwrap().symbol, "m\u{00B2}");
-    let mut decoder = EntityDecoder::new(&unknown);
+fn issue_4690_an_unresolved_conversion_unit_is_not_a_resolved_unit() {
+    let unknown = "DATA;\n#1=IFCPROJECT('guid',$,'Test',$,$,$,$,$,#2);\n#2=IFCUNITASSIGNMENT((#3));\n\
+                   #3=IFCCONVERSIONBASEDUNIT(#4,.LENGTHUNIT.,'CUBIT',#5);\n\
+                   #4=IFCDIMENSIONALEXPONENTS(1,0,0,0,0,0,0);\n\
+                   #5=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(457.2),#99);\nENDSEC;\n";
+    assert_eq!(units_of(unknown).resolved_for_unit_type("LENGTHUNIT"), None);
+    let mut decoder = EntityDecoder::new(unknown);
     assert!(resolve_unit_by_ref(&mut decoder, 3).is_none());
 }
