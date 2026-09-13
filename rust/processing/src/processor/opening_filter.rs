@@ -2,7 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{get_refs_from_list, normalize_optional_string, EntityJob, OpeningFilterMode};
+use super::{normalize_optional_string, EntityJob, OpeningFilterMode};
+use crate::prepass::refs_from_list;
 use crate::style::GeometryStyleInfo;
 use ifc_lite_core::{EntityDecoder, IfcType, MAX_MAPPED_ITEM_DEPTH};
 use rustc_hash::FxHashMap;
@@ -130,14 +131,14 @@ fn is_opaque_opening(
     let repr_ids = entity
         .get_ref(6)
         .and_then(|shape_id| decoder.decode_by_id(shape_id).ok())
-        .and_then(|shape| get_refs_from_list(&shape, 2))
+        .and_then(|shape| refs_from_list(&shape, 2))
         .unwrap_or_default();
     let mut pending: Vec<(u32, u32)> = Vec::new();
     for repr_id in repr_ids {
         if let Some(items) = decoder
             .decode_by_id(repr_id)
             .ok()
-            .and_then(|repr| get_refs_from_list(&repr, 3))
+            .and_then(|repr| refs_from_list(&repr, 3))
         {
             pending.extend(items.into_iter().map(|id| (id, 0)));
         }
@@ -217,7 +218,7 @@ fn scan_item_styles(
         else {
             continue;
         };
-        for child in get_refs_from_list(&mapped_repr, 3).unwrap_or_default() {
+        for child in refs_from_list(&mapped_repr, 3).unwrap_or_default() {
             pending.push((child, depth + 1));
         }
     }

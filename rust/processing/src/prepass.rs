@@ -721,15 +721,16 @@ fn normalize_style_name(raw: Option<&str>) -> Option<String> {
     Some(name.to_string())
 }
 
-/// Extract entity references from a list attribute.
+/// The entity references in list attribute `index`, or `None` when there are
+/// none. A list is walked, a bare reference is a one-element list (some
+/// exporters write one), and members that are not references are skipped.
 pub(crate) fn refs_from_list(entity: &DecodedEntity, index: usize) -> Option<Vec<u32>> {
-    let list = entity.get_list(index)?;
-    let refs: Vec<u32> = list.iter().filter_map(|v| v.as_entity_ref()).collect();
-    if refs.is_empty() {
-        None
-    } else {
-        Some(refs)
-    }
+    let attr = entity.get(index)?;
+    let refs: Vec<u32> = match attr.as_list() {
+        Some(list) => list.iter().filter_map(|v| v.as_entity_ref()).collect(),
+        None => vec![attr.as_entity_ref()?],
+    };
+    (!refs.is_empty()).then_some(refs)
 }
 
 #[cfg(test)]
