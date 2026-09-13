@@ -90,9 +90,16 @@ pub(crate) fn request_cache_key(data: &[u8], query: &ParseQuery, quality: Tessel
 /// v4 adds the `IfcMapConversionScaled` factors to `metadata.georeferencing`
 /// (#4653). A v3 entry has no factor fields, decodes cleanly with every factor
 /// defaulted to 1, and a client applying them places a scaled file wrong.
+/// v5 carries the embedded `symbolic_data` in the frame this response's own
+/// meshes are in (#4706). This entry is the whole response, symbols included,
+/// and it is returned BEFORE any extraction runs, so bumping
+/// [`symbolic_cache_key`] alone leaves the JSON endpoint replaying old-frame
+/// symbols for every file already on disk: measured on a translated, rotated
+/// site, a planted v4 entry came back with its grid axis at `(500, -300)`
+/// where the live parse puts it at `(0, 0)`.
 /// Bump again on any change to what `ParseResponse` means on the wire.
 pub(crate) fn json_response_cache_key(cache_key: &str) -> String {
-    format!("{cache_key}-json-v4")
+    format!("{cache_key}-json-v5")
 }
 
 /// The flat Parquet geometry entry for a request cache key, under the LAYOUT

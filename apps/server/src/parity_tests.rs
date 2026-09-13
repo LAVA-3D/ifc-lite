@@ -637,9 +637,11 @@ async fn issue_4459_old_json_response_is_reparsed_without_changing_request_ident
     assert!(state.cache.get_bytes(&current).await.unwrap().is_some());
     state.cache.remove(&current).await.unwrap();
     // v2 predates direct fill provenance (#4459); v3 predates the georeference
-    // factor fields (#4675). Neither may replay. Planted after the removal, so
-    // a reverted bump (where one of them IS `current`) cannot be removed here.
-    for retired in ["-json-v2", "-json-v3"] {
+    // factor fields (#4675); v4 predates the embedded symbols moving into the
+    // frame the same response's meshes are in (#4706). None may replay.
+    // Planted after the removal, so a reverted bump (where one of them IS
+    // `current`) cannot be removed here.
+    for retired in ["-json-v2", "-json-v3", "-json-v4"] {
         state.cache.set_bytes(&format!("{key}{retired}"), &bytes).await.unwrap();
     }
     let second = post_fixture(&state, "/api/v1/parse").await;
@@ -647,4 +649,76 @@ async fn issue_4459_old_json_response_is_reparsed_without_changing_request_ident
     let body: Value = serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(body["cache_key"], key);
     assert_eq!(body["stats"]["from_cache"], false, "must not replay a retired JSON response version");
+}
+
+/// #4706, second half: the JSON route answers a warm `CACHE_DIR` from the
+/// stored response BEFORE any extraction runs (`json.rs`), and that response
+/// carries `symbolic_data` inside it. Bumping the symbolic sidecar alone
+/// therefore left every file already on disk serving old-frame symbols from
+/// the main endpoint, indefinitely.
+///
+/// The control is an entry planted under the CURRENT key holding what a
+/// pre-change deployment wrote: the same response with its symbols in the
+/// frame the overlay extractor chooses (still the browser path's entry point,
+/// so this is the real old value, not a hand-written one). Serving it back is
+/// the defect; re-parsing past it is the fix. With `json_response_cache_key`
+/// reverted to `-json-v4` this fails, replaying the axis at (500, -300) where
+/// the live parse puts it at (0, 0).
+#[tokio::test]
+async fn issue_4706_a_response_cached_before_the_frame_fix_is_not_replayed() {
+    use crate::routes::parse::cache_keys::{json_response_cache_key, request_cache_key};
+    let state = test_state("4706-json-replay").await;
+    let key = request_cache_key(
+        SITE_LOCAL_FIXTURE.as_bytes(),
+        &Default::default(),
+        Default::default(),
+    );
+    let current = json_response_cache_key(&key);
+    let first = post_content(&state, "/api/v1/parse", SITE_LOCAL_FIXTURE.as_bytes()).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let live: Value =
+        serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let live_axes = grid_axis_endpoints(&live["symbolic_data"], "live parse");
+    // The route writes in a spawned cache task; wait for that write before
+    // overwriting it, so the plant cannot be raced away.
+    for _ in 0..100 {
+        if state.cache.get_bytes(&current).await.unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let mut stale: Value =
+        serde_json::from_slice(&state.cache.get_bytes(&current).await.unwrap().unwrap()).unwrap();
+    stale["symbolic_data"] = serde_json::to_value(
+        ifc_lite_processing::extract_symbolic_data_with_provenance(SITE_LOCAL_FIXTURE),
+    )
+    .unwrap();
+    let stale_axes = grid_axis_endpoints(&stale["symbolic_data"], "the pre-change response");
+    assert!(
+        (stale_axes[0][0] - live_axes[0][0]).abs() > 100.0,
+        "the control must actually differ from the live parse: {stale_axes:?} vs {live_axes:?}"
+    );
+    // Planted under the RETIRED suffix, after the current entry is gone: with
+    // the bump reverted, `-json-v4` IS the current key and this entry is
+    // served straight back.
+    state.cache.remove(&current).await.unwrap();
+    state
+        .cache
+        .set_bytes(&format!("{key}-json-v4"), &serde_json::to_vec(&stale).unwrap())
+        .await
+        .unwrap();
+
+    let second = post_content(&state, "/api/v1/parse", SITE_LOCAL_FIXTURE.as_bytes()).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let served: Value =
+        serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        served["stats"]["from_cache"], false,
+        "a response cached under the retired key must not be replayed"
+    );
+    assert_axes_match(
+        &grid_axis_endpoints(&served["symbolic_data"], "after the plant"),
+        &live_axes,
+        "the re-parsed response",
+    );
 }
