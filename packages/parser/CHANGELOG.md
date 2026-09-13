@@ -1,5 +1,29 @@
 # @ifc-lite/parser
 
+## 6.3.0
+
+### Minor Changes
+
+- [#4504](https://github.com/LTplus-AG/ifc-lite/pull/4504) [`3af8c93`](https://github.com/LTplus-AG/ifc-lite/commit/3af8c938050373cf95c09502573dead0fd425467) Thanks [@BIMvoice](https://github.com/BIMvoice)! - `EntityNode.containedIn()` now resolves duplicate containment against the same reachable-node set `elementToStorey` uses, so the two APIs agree.
+  
+  When an element is duplicate-declared in more than one `IfcRelContainedInSpatialStructure` edge (a malformed file naming the same element from two different storeys) and the first-declared storey is itself an orphan with no `IfcRelAggregates` edge back to `IfcProject`, `containedIn()` used to return that orphan while `SpatialHierarchyBuilder`'s `elementToStorey` fell through to the reachable, later-declared storey — two APIs answering "which storey is this element on" with a present but different value.
+  
+  `SpatialHierarchy` gains an optional `reachableSpatialNodes` set, which `SpatialHierarchyBuilder` fills from the `computeReachableSpatialNodes` call it already made when resolving `elementToStorey`, and which survives the worker transport. `containedIn()` reads that set rather than deciding reachability for itself, so the two answers come from one computation and cannot drift. First-declared still wins among reachable containers, and `containedIn()` falls back to the first-declared candidate when no candidate is reachable or the store carries no spatial hierarchy, so a disconnected spatial tree never turns a present answer into `null`.
+
+### Patch Changes
+
+- Updated dependencies [[`3af8c93`](https://github.com/LTplus-AG/ifc-lite/commit/3af8c938050373cf95c09502573dead0fd425467)]:
+  - @ifc-lite/data@4.3.0
+
+## 6.2.1
+
+### Patch Changes
+
+- [#4638](https://github.com/LTplus-AG/ifc-lite/pull/4638) [`e46e766`](https://github.com/LTplus-AG/ifc-lite/commit/e46e766640bd37553b1f92f53bb384a47f58e66a) Thanks [@louistrue](https://github.com/louistrue)! - The legacy `IfcSite` georeference fallback reads `RefLatitude`/`RefLongitude` components by position and refuses the angle when a component is not a number. It used to drop non-numeric components and index what was left, so `($,51,30,0)` placed the site at 51°30' instead of reporting no georeference. The Rust extractor applies the same rule, and both are held to it by the shared georeferencing vectors.
+- Updated dependencies [[`1120b6a`](https://github.com/LTplus-AG/ifc-lite/commit/1120b6a3acbbbb579a4e454083b862ed1d445200), [`c5c462e`](https://github.com/LTplus-AG/ifc-lite/commit/c5c462ec54535acd818375f33ffe3ea61d5981fb)]:
+  - @ifc-lite/data@4.2.1
+  - @ifc-lite/wasm@8.0.1
+
 ## 6.2.0
 
 ### Minor Changes
