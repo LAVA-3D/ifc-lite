@@ -531,12 +531,12 @@ export class MergedExporter {
       if (mode.normalized) { normalizedModelCount++; this.collectNormalizeCaveats(model, normalizeWarnings); }
       const plan = this.planModel(model, completeIndex, isFirstModel, mode.compatible, mode.lengthFactor, setup, guidToFinalId);
       this.applyContainerDrops(plan, containerDrops?.byModel.get(model.id));
-      ownerHistory.prefer(firstWrittenOwnerHistoryRef(model.dataStore.entityIndex.byType.get('IFCOWNERHISTORY'), (id) => (visibility === null || visibility.included.has(id)) && !plan.skipEntityIds.has(id), offset));
+      const written = (id: number) => (visibility === null || visibility.included.has(id)) && !plan.skipEntityIds.has(id);
+      if (schema === 'IFC2X3') ownerHistory.prefer(firstWrittenOwnerHistoryRef(model.dataStore.entityIndex.byType.get('IFCOWNERHISTORY'), written, offset));
 
       const sourceSchema = (model.dataStore.schemaVersion as IfcSchemaVersion) || 'IFC4';
       for (const [expressId, entityRef] of completeIndex) {
-        if (visibility !== null && !visibility.included.has(expressId)) continue;
-        if (plan.skipEntityIds.has(expressId)) continue;
+        if (!written(expressId)) continue;
         const line = this.renderEntity(
           expressId, entityRef, source, offset, plan, sourceSchema, schema, guidToFinalId, mode,
           visibility?.hiddenProductIds ?? null, completeIndex, visibility?.included ?? null, ownerHistory,
@@ -670,13 +670,13 @@ export class MergedExporter {
       if (mode.normalized) { normalizedModelCount++; this.collectNormalizeCaveats(model, normalizeWarnings); }
       const plan = this.planModel(model, completeIndex, isFirstModel, mode.compatible, mode.lengthFactor, setup, guidToFinalId);
       this.applyContainerDrops(plan, containerDrops?.byModel.get(model.id));
-      ownerHistory.prefer(firstWrittenOwnerHistoryRef(model.dataStore.entityIndex.byType.get('IFCOWNERHISTORY'), (id) => (visibility === null || visibility.included.has(id)) && !plan.skipEntityIds.has(id), offset));
+      const written = (id: number) => (visibility === null || visibility.included.has(id)) && !plan.skipEntityIds.has(id);
+      if (schema === 'IFC2X3') ownerHistory.prefer(firstWrittenOwnerHistoryRef(model.dataStore.entityIndex.byType.get('IFCOWNERHISTORY'), written, offset));
       const sourceSchema = (model.dataStore.schemaVersion as IfcSchemaVersion) || 'IFC4';
 
       let entityCount = 0;
       for (const [expressId, entityRef] of completeIndex) {
-        if (visibility !== null && !visibility.included.has(expressId)) continue;
-        if (plan.skipEntityIds.has(expressId)) continue;
+        if (!written(expressId)) continue;
 
         const line = this.renderEntity(
           expressId, entityRef, source, offset, plan, sourceSchema, schema, guidToFinalId, mode,

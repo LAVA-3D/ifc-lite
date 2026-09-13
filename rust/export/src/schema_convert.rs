@@ -376,6 +376,11 @@ fn convert_record(line: &str, cfrom: &'static str, cto: &'static str, express_id
     format!("{prefix}{new_type}({final_attrs});")
 }
 
+/// True when `to` names IFC2X3, the one target whose `OwnerHistory` is mandatory.
+pub(crate) fn targets_ifc2x3(to: &str) -> bool {
+    canon(to) == "IFC2X3"
+}
+
 /// True when converting between these schemas changes entity types/attributes.
 pub fn needs_conversion(from: &str, to: &str) -> bool {
     canon(from) != canon(to)

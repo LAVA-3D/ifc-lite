@@ -275,13 +275,14 @@ pub fn export_merged_models(models: &[MergedModel], opts: &MergedOptions) -> (St
             salt: salt.clone(),
         });
 
-        // The `$` OwnerHistory slots an IFC2X3 downgrade fills point at this
-        // model's first written owner history, else an earlier model's (#4686).
-        owner_history.prefer(index.order.iter().copied().find(|&id| {
-            index.type_of.get(&id).is_some_and(|t| t == "IFCOWNERHISTORY")
-                && included.contains(&id)
-                && !plan.skip.contains(&id)
-        }).map(|id| id.saturating_add(offset)));
+        // IFC2X3 `$` OwnerHistory: this model's first written one, else an earlier model's (#4686).
+        if crate::schema_convert::targets_ifc2x3(&schema) {
+            owner_history.prefer(index.order.iter().copied().find(|&id| {
+                index.type_of.get(&id).is_some_and(|t| t == "IFCOWNERHISTORY")
+                    && included.contains(&id)
+                    && !plan.skip.contains(&id)
+            }).map(|id| id.saturating_add(offset)));
+        }
 
         // Emit.
         let source_schema = detect_schema(model.content);

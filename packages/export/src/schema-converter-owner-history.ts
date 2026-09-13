@@ -3,7 +3,20 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { splitTopLevelStepArguments } from './step-argument-parser.js';
-import { isRootedEntityType } from './schema-untranslatable.js';
+import { isRootedType } from './merged-guid.js';
+
+/** {@link isRootedType} per type name: `apply` asks once per converted line,
+ *  and the inheritance walk allocates per step. */
+const ROOTED_BY_TYPE = new Map<string, boolean>();
+
+function isRooted(type: string): boolean {
+  let rooted = ROOTED_BY_TYPE.get(type);
+  if (rooted === undefined) {
+    rooted = isRootedType(type);
+    ROOTED_BY_TYPE.set(type, rooted);
+  }
+  return rooted;
+}
 
 /**
  * `IfcRoot.OwnerHistory` on a downgrade to IFC2X3 (#4686).
@@ -26,9 +39,9 @@ export class OwnerHistoryFill {
    *  was no reference to write. */
   unfilled = 0;
 
-  /** @param ref `#N` of an `IfcOwnerHistory` the export writes, as numbered in
-   *  the OUTPUT, or null when it writes none. */
-  constructor(private ref: string | null = null) {}
+  /** `#N` of an `IfcOwnerHistory` the export writes, as numbered in the
+   *  OUTPUT, or null while it has none; set through {@link prefer}. */
+  private ref: string | null = null;
 
   /** Switch to `ref` when there is one; otherwise keep the current reference.
    *  The merged exporter calls this per model, so a model without an owner
@@ -47,7 +60,7 @@ export class OwnerHistoryFill {
     const close = line.lastIndexOf(')');
     const eq = line.indexOf('=');
     if (eq < 0 || open <= eq || close <= open) return line;
-    if (!isRootedEntityType(line.slice(eq + 1, open).trim())) return line;
+    if (!isRooted(line.slice(eq + 1, open).trim())) return line;
     const slots = splitTopLevelStepArguments(line.slice(open + 1, close));
     if (slots === null || slots.length < 2 || slots[1].trim() !== '$') return line;
     if (this.ref === null) {

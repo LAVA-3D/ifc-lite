@@ -25,6 +25,7 @@ import { findLengthUnitReference, normalizeMapUnitName } from './step-map-unit.j
 import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index.js';
 import { HAS_PROPERTY_SETS_SLOT } from './type-owned-psets.js';
 import type { IfcSchemaVersion } from './schema-converter.js';
+import { firstWrittenOwnerHistoryRef } from './schema-converter-owner-history.js';
 import type { SourceLineMutations } from './step-exporter.js';
 
 /**
@@ -318,9 +319,7 @@ export function resolveFallbackOwnerHistoryRef(ctx: PropertySetContext, willBeEm
     // Source-only: the fallback is a best-effort "some owner history the file
     // still has", and the host's OWN history above is the path that resolves
     // an overlay-created one.
-    const ids = ctx.dataStore.entityIndex.byType.get('IFCOWNERHISTORY') ?? [];
-    const surviving = ids.find((id: number) => willBeEmitted(id));
-    ctx.ownerHistory.fallbackRef = surviving !== undefined ? `#${surviving}` : null;
+    ctx.ownerHistory.fallbackRef = firstWrittenOwnerHistoryRef(ctx.dataStore.entityIndex.byType.get('IFCOWNERHISTORY'), willBeEmitted, 0);
   }
   return ctx.ownerHistory.fallbackRef;
 }
