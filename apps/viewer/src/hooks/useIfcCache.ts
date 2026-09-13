@@ -277,11 +277,8 @@ export function useIfcCache() {
         } else {
           // Backward compatibility for v3 caches: rebuild byte offsets from the
           // source once, then future v4 writes persist this section.
-          // `byType` is keyed in upper case, as a fresh parse and a v4 load key
-          // it. The key is normalised here rather than trusted from the scan
-          // because not every scan path canonicalises type names: the wasm
-          // `scanEntitiesFast` and pre-scanned index paths return the file's
-          // own spelling (#4712).
+          // Key `byType` in upper case, as a fresh parse and a v4 load do: not
+          // every scan path canonicalises type names (#4712).
           const tokenizer = new StepTokenizer(source);
           const estimatedCount = cacheStore.entities?.count ?? 100_000;
           const indexBuilder = new CompactEntityIndexBuilder(estimatedCount);
