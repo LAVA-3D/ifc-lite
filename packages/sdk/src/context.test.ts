@@ -576,7 +576,9 @@ describe('ExportNamespace', () => {
     const content = bim.export.ifc(undefined, { schema: 'IFC4' });
 
     expect(content).toContain('ISO-10303-21');
-    expect(exportNs.ifc).toHaveBeenCalledWith([], { schema: 'IFC4' });
+    // `undefined`, not `[]`: the absence has to reach the backend, or a backend
+    // that refuses an empty list (the viewer's) cannot tell the two apart.
+    expect(exportNs.ifc).toHaveBeenCalledWith(undefined, { schema: 'IFC4' });
   });
 
   it('ifc() refuses an empty ref list instead of exporting the whole model', () => {

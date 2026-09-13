@@ -72,6 +72,18 @@ export function getAllModelEntries(state: ViewerState): [string, ModelLike][] {
   return [];
 }
 
+/**
+ * The model an SDK call means when it names none — `bim.export.ifc()` with no
+ * ref list (#4738). The user's active selection wins, then the first entry of
+ * the unified list (which is the legacy single-model store when the federated
+ * Map is empty). `undefined` when nothing is loaded.
+ */
+export function getDefaultModelId(state: ViewerState): string | undefined {
+  const active = state.activeModelId;
+  if (active && getModelForRef(state, active)) return active;
+  return getAllModelEntries(state)[0]?.[0];
+}
+
 function buildLegacyModel(dataStore: IfcDataStore): ModelLike {
   return {
     id: LEGACY_MODEL_ID,

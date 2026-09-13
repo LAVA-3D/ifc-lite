@@ -38,7 +38,7 @@ type ArgType =
   | 'string'       // vm.getString(handle)
   | 'number'       // vm.getNumber(handle)
   | 'dump'         // vm.dump(handle) — generic JSON-like value
-  | 'entityRefs'   // vm.dump(handle) — array of entities, map to .ref
+  | 'entityRefs' | 'entityRefs?' // vm.dump(handle) — array of entities, map to .ref; `?` keeps an OMITTED argument `undefined` instead of `[]` (#4738)
   | '...strings'   // rest: collect all remaining args as strings
 
 /** How to marshal the return value back to QuickJS */
@@ -321,9 +321,9 @@ function unmarshalArgs(vm: QuickJSContext, handles: QuickJSHandle[], argTypes: A
         result.push(handle ? vm.dump(handle) : undefined);
         break;
       }
-      case 'entityRefs': {
+      case 'entityRefs': case 'entityRefs?': {
         const handle = handles[i];
-        if (!handle) { result.push([]); break; }
+        if (!handle) { result.push(argTypes[i] === 'entityRefs?' ? undefined : []); break; }
         const raw = vm.dump(handle) as Array<{ ref?: EntityRef } & EntityRef>;
         result.push(raw.map(r => r.ref ?? r));
         break;

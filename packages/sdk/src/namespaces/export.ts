@@ -191,10 +191,13 @@ export class ExportNamespace {
    *
    * This is the one home for that rule: every surface (CLI, MCP, the browser
    * playground, sandboxed scripts, the viewer) reaches a STEP export through
-   * this method, and each backend below still reads an empty array as its
-   * internal "whole model" signal, so the distinction cannot survive down
-   * there. Callers may keep their own zero-match guard for a better message;
-   * none of them has to have one for the export to fail closed.
+   * this method, so no caller has to carry a zero-match guard for the export
+   * to fail closed (several keep one anyway, for a better message).
+   *
+   * The absence travels with the call rather than stopping here: a backend
+   * receives `undefined` for "no filter" and never an empty array, so it can
+   * answer the whole model without having to guess which of the two the
+   * caller meant (`export-adapter.ts` in the viewer needs exactly that).
    */
   ifc(refs?: EntityRef[] | null, options: ExportStepOptions = {}): string | Uint8Array {
     if (Array.isArray(refs) && refs.length === 0) {
@@ -203,7 +206,7 @@ export class ExportNamespace {
         + 'Refusing to export the whole model instead. Omit the argument to export the whole model.',
       );
     }
-    const content = this.backend.export.ifc(refs ?? [], options);
+    const content = this.backend.export.ifc(refs ?? undefined, options);
     if (options.filename) {
       this.backend.export.download(content, options.filename, 'application/x-step;charset=utf-8;');
     }
