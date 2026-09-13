@@ -25,6 +25,7 @@ import { findLengthUnitReference, normalizeMapUnitName } from './step-map-unit.j
 import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index.js';
 import { HAS_PROPERTY_SETS_SLOT } from './type-owned-psets.js';
 import type { IfcSchemaVersion } from './schema-converter.js';
+import { firstWrittenOwnerHistoryRef } from './schema-converter-owner-history.js';
 import type { SourceLineMutations } from './step-exporter.js';
 
 /**
@@ -65,8 +66,8 @@ export interface PropertySetContext {
  */
 export interface OwnerHistoryCache {
   /** Lazily-resolved fallback `#id` of an IfcOwnerHistory that survives the
-   *  current export closure (or `$` when the file has none). */
-  fallbackRef: string | undefined;
+   *  current export closure (or null when none does). */
+  fallbackRef: string | null | undefined;
   /** Per-host cache of an element's own OwnerHistory ref (`#id` or null). */
   readonly byEntity: Map<number, string | null>;
 }
@@ -304,13 +305,21 @@ export function resolveOwnerHistoryRef(ctx: PropertySetContext, hostEntityId: nu
     const ownId = parseInt(own.slice(1), 10);
     if (willBeEmitted(ownId)) return own;
   }
+  return resolveFallbackOwnerHistoryRef(ctx, willBeEmitted) ?? '$';
+}
+
+/**
+ * The first source IfcOwnerHistory that survives this export, as `#id`, or
+ * null when none does. The fallback of {@link resolveOwnerHistoryRef}, and
+ * the owner history an IFC2X3 downgrade writes into `$` OwnerHistory slots
+ * (#4686).
+ */
+export function resolveFallbackOwnerHistoryRef(ctx: PropertySetContext, willBeEmitted: (id: number) => boolean): string | null {
   if (ctx.ownerHistory.fallbackRef === undefined) {
     // Source-only: the fallback is a best-effort "some owner history the file
     // still has", and the host's OWN history above is the path that resolves
     // an overlay-created one.
-    const ids = ctx.dataStore.entityIndex.byType.get('IFCOWNERHISTORY') ?? [];
-    const surviving = ids.find((id: number) => willBeEmitted(id));
-    ctx.ownerHistory.fallbackRef = surviving !== undefined ? `#${surviving}` : '$';
+    ctx.ownerHistory.fallbackRef = firstWrittenOwnerHistoryRef(ctx.dataStore.entityIndex.byType.get('IFCOWNERHISTORY'), willBeEmitted, 0);
   }
   return ctx.ownerHistory.fallbackRef;
 }
