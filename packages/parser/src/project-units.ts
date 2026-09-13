@@ -219,13 +219,14 @@ function conversionFactorScale(
   else if (Array.isArray(valueAttr) && valueAttr.length === 2 && typeof valueAttr[1] === 'number') value = valueAttr[1];
   if (value === undefined || !(Number.isFinite(value) && value > 0)) return null;
 
-  // A UnitComponent this reader does not resolve leaves the factor unknown, not
-  // SI (#4690). Only an IfcSIUnit component is resolved here; the Rust resolver
-  // also follows a conversion-based or derived component.
+  // A dangling or unreadable UnitComponent leaves the factor unknown, not SI
+  // (#4690). A component that is not an IfcSIUnit is taken at 1.0, as before:
+  // the Rust resolver follows it, this reader does not.
   const compRef = attrs[1];
   const cRef = typeof compRef === 'number' ? entityIndex.byId.get(compRef) : undefined;
   const comp = cRef ? extractor.extractEntity(cRef) : null;
-  if (!comp || comp.type.toUpperCase() !== 'IFCSIUNIT') return null;
+  if (!comp) return null;
+  if (comp.type.toUpperCase() !== 'IFCSIUNIT') return value;
   const cAttrs = comp.attributes ?? [];
   const name = typeof cAttrs[3] === 'string' ? cAttrs[3] : null;
   const prefixAttr = cAttrs[2];
