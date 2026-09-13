@@ -100,7 +100,6 @@ impl GeometryRouter {
         // Body representations only ('Axis', 'FootPrint', 'Box' are skipped), and
         // a MappedRepresentation is skipped when direct geometry duplicates it.
         for shape_rep in super::meshed_representations(element, &representations) {
-
             // Get items list (attribute 3)
             let items_attr = shape_rep.get(3).ok_or_else(|| {
                 Error::geometry("IfcShapeRepresentation missing Items".to_string())
@@ -220,7 +219,6 @@ impl GeometryRouter {
         let mut sub_meshes = SubMeshCollection::new();
 
         for shape_rep in super::meshed_representations(element, &representations) {
-
             // Get items list (attribute 3)
             let items_attr = shape_rep.get(3).ok_or_else(|| {
                 Error::geometry("IfcShapeRepresentation missing Items".to_string())
