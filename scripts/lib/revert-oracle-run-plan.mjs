@@ -97,12 +97,25 @@ export function runPlan(plan, root, label, log = console.log) {
   }
   const recordsExecution = plan.runner.family === 'node-test';
   const coverageDir = recordsExecution ? mkdtempSync(join(tmpdir(), 'revert-oracle-execution-')) : null;
+  // Node 24 changed the default `node --test` reporter from TAP to spec even
+  // for captured output. The oracle parses TAP's stable `# tests/pass/fail`
+  // summary, so select it explicitly on every supported Node version.
+  const nodeOptions = recordsExecution
+    ? `${process.env.NODE_OPTIONS ?? ''} --test-reporter=tap`.trim()
+    : process.env.NODE_OPTIONS;
   const spawnOptions = {
     cwd,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     timeout: RUN_TIMEOUT_MS,
-    env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...(coverageDir ? { NODE_V8_COVERAGE: coverageDir } : {}) },
+    env: {
+      ...process.env,
+      CI: '1',
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
+      ...(coverageDir ? { NODE_V8_COVERAGE: coverageDir } : {}),
+    },
   };
   let run;
   let executionFiles = [];
