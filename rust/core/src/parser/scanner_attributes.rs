@@ -19,7 +19,7 @@
 //! as a separator and an apostrophe in one as a string (#4687). The rule
 //! lives here.
 
-use crate::parser::lexical::{is_step_space, skip_step_comment, skip_step_trivia};
+use crate::parser::lexical::skip_step_trivia;
 
 /// The top-level items of one parenthesized STEP list, each trimmed of
 /// trivia (STEP whitespace and `/* ... */` comments) at both ends. Nested
@@ -78,23 +78,19 @@ impl<'a> Iterator for StepListItems<'a> {
         }
         let bytes = self.bytes;
         let mut pos = self.pos;
-        // The item's non-trivia span; `start == end` until a value byte.
+        // The item's non-trivia span, once a value byte has been seen.
         let (mut start, mut end) = (None, pos);
         let mut depth = 0usize;
-        while let Some(&b) = bytes.get(pos) {
+        loop {
+            let Some(next) = skip_step_trivia(bytes, pos) else {
+                break;
+            };
+            pos = next;
+            let Some(&b) = bytes.get(pos) else {
+                break;
+            };
             let value_start = pos;
             match b {
-                b'/' if bytes.get(pos + 1) == Some(&b'*') => {
-                    match skip_step_comment(bytes, pos) {
-                        Some(next) => pos = next,
-                        None => break,
-                    }
-                    continue;
-                }
-                _ if is_step_space(b) => {
-                    pos += 1;
-                    continue;
-                }
                 b',' | b')' if depth == 0 => {
                     let first = std::mem::replace(&mut self.first, false);
                     self.pos = pos + 1;
@@ -104,8 +100,7 @@ impl<'a> Iterator for StepListItems<'a> {
                             return None; // `()`
                         }
                     }
-                    let start = start.unwrap_or(pos);
-                    return Some(&bytes[start..end.max(start)]);
+                    return Some(start.map_or(&bytes[pos..pos], |s| &bytes[s..end]));
                 }
                 b'\'' => {
                     pos += 1;
