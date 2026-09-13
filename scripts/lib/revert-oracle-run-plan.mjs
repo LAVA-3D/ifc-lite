@@ -98,11 +98,12 @@ export function runPlan(plan, root, label, log = console.log) {
   const recordsExecution = plan.runner.family === 'node-test';
   const coverageDir = recordsExecution ? mkdtempSync(join(tmpdir(), 'revert-oracle-execution-')) : null;
   // Node 24 changed the default `node --test` reporter from TAP to spec even
-  // for captured output. The oracle parses TAP's stable `# tests/pass/fail`
-  // summary, so select it explicitly on every supported Node version.
-  const nodeOptions = recordsExecution
-    ? `${process.env.NODE_OPTIONS ?? ''} --test-reporter=tap`.trim()
-    : process.env.NODE_OPTIONS;
+  // for captured output. Select TAP on this invocation instead of through
+  // NODE_OPTIONS: the selected test may itself spawn the oracle, and inherited
+  // NODE_OPTIONS would otherwise add the reporter twice in that nested run.
+  const runnerArgs = recordsExecution
+    ? [...command.prefix, '--test-reporter=tap', ...plan.runner.args]
+    : [...command.prefix, ...plan.runner.args];
   const spawnOptions = {
     cwd,
     encoding: 'utf8',
@@ -113,7 +114,6 @@ export function runPlan(plan, root, label, log = console.log) {
       CI: '1',
       FORCE_COLOR: '0',
       NO_COLOR: '1',
-      ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
       ...(coverageDir ? { NODE_V8_COVERAGE: coverageDir } : {}),
     },
   };
@@ -133,8 +133,8 @@ export function runPlan(plan, root, label, log = console.log) {
         .map((line) => resolve(plan.dir, line));
     }
     run = plan.moduleFilter
-      ? runExactCargoModule(command.bin, [...command.prefix, ...plan.runner.args], plan.moduleFilter, spawnOptions)
-      : spawnSync(command.bin, [...command.prefix, ...plan.runner.args], spawnOptions);
+      ? runExactCargoModule(command.bin, runnerArgs, plan.moduleFilter, spawnOptions)
+      : spawnSync(command.bin, runnerArgs, spawnOptions);
     if (coverageDir) executionFiles = readCoveredFiles(coverageDir);
   } catch (error) {
     executionEvidenceError = error instanceof Error ? error.message : String(error);
