@@ -81,8 +81,8 @@ function buildFixture(adapter, mode, dir) {
     production = 'src/lib.rs'; testFile = 'tests/probe.rs';
     writeFileSync(join(dir, testFile), rustSource(mode));
   } else if (adapter.id === 'typescript') {
-    mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'pkg/src'), { recursive: true });
-    copyFileSync(join(ROOT, 'scripts/typecheck-tests.mjs'), join(dir, 'scripts/typecheck-tests.mjs'));
+    mkdirSync(join(dir, 'scripts/lib'), { recursive: true }); mkdirSync(join(dir, 'pkg/src'), { recursive: true });
+    for (const file of ['scripts/typecheck-tests.mjs', 'scripts/lib/is-main-entry.mjs']) copyFileSync(join(ROOT, file), join(dir, file));
     copyFileSync(join(ROOT, 'tsconfig.tests.base.json'), join(dir, 'tsconfig.tests.base.json'));
     symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'), 'junction');
     writeFileSync(join(dir, 'package.json'), '{"private":true}\n');
