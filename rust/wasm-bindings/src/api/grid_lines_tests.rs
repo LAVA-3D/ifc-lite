@@ -258,3 +258,100 @@ fn to_render_frame_does_not_emit_negative_zero_for_a_zero_northing() {
     let flipped = to_render_frame([0.0, 4.0, 0.0], 1.0, &identity, (0.0, 0.0, 0.0));
     assert_eq!(flipped[2], -4.0);
 }
+
+// #4665. A metre model whose geometry jobs give the RTC sampler nothing: the
+// wall (#40), the grid (#60) and the alignment (#80) all have a null
+// Representation, so the job ladder abstains and the meshes take the
+// placement-bounds fallback. The two placement points sit at 2 km (the grid)
+// and 15 km (the wall), so one corner is past 10 km and the anchor is the
+// 8.5 km bbox centre. The alignment directrix is not a placement point and is
+// small, so it does not move the bounds.
+const BOUNDS_FALLBACK_OVERLAYS: &str = r#"ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('','',(''),(''),'','','');
+FILE_SCHEMA(('IFC4X1'));
+ENDSEC;
+DATA;
+#1=IFCPROJECT('0PrOjEcTpRoJeCtPrOjEc',$,'P',$,$,$,$,$,#8);
+#8=IFCUNITASSIGNMENT((#9));
+#9=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);
+#40=IFCWALL('1WaLLWaLLWaLLWaLLWaLL00',$,'W',$,$,#41,$,$,$);
+#41=IFCLOCALPLACEMENT($,#42);
+#42=IFCAXIS2PLACEMENT3D(#43,$,$);
+#43=IFCCARTESIANPOINT((15000.,0.,0.));
+#60=IFCGRID('0GrIdGrIdGrIdGrIdGrId0',$,'Grid',$,$,#61,$,(#70),$,$);
+#61=IFCLOCALPLACEMENT($,#62);
+#62=IFCAXIS2PLACEMENT3D(#63,$,$);
+#63=IFCCARTESIANPOINT((2000.,0.,0.));
+#70=IFCGRIDAXIS('A',#71,.T.);
+#71=IFCPOLYLINE((#72,#73));
+#72=IFCCARTESIANPOINT((0.,0.));
+#73=IFCCARTESIANPOINT((0.,10.));
+#81=IFCCARTESIANPOINT((2000.,0.,0.));
+#82=IFCCARTESIANPOINT((2010.,0.,0.));
+#83=IFCPOLYLINE((#81,#82));
+#80=IFCALIGNMENT('0aBcDeFgHiJkLmNoPqRsT0',$,'A',$,$,$,$,#83,$);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+/// #4665: the grid, alignment and symbolic overlays are re-based by the frame
+/// the meshes were re-based by, including when that frame comes from the
+/// placement-bounds fallback. Each overlay's first point is IFC x = 2000 m, so
+/// in the mesh frame it must read 2000 - 8500 = -6500. Before the fix the
+/// overlays ran their own first-element detector, which has no bounds
+/// fallback, and drew at +2000: 8.5 km east of the meshes.
+#[test]
+fn overlays_are_rebased_by_the_bounds_fallback_frame_the_meshes_use() {
+    use ifc_lite_processing::stream_meta::{resolve_stream_meta, MetaMode};
+
+    let content = BOUNDS_FALLBACK_OVERLAYS;
+    let bytes = content.as_bytes();
+    let anchor = (8500.0, 0.0, 0.0);
+
+    // The mesh frame, from both pipelines.
+    let native = ifc_lite_processing::process_geometry(content);
+    assert_eq!(native.metadata.coordinate_info.origin_shift, [anchor.0, anchor.1, anchor.2]);
+    let mut decoder = EntityDecoder::with_index(bytes, build_entity_index(bytes));
+    let mut jobs = Vec::new();
+    let mut scanner = EntityScanner::new(bytes);
+    while let Some((id, type_name, start, end)) = scanner.next_entity() {
+        if ifc_lite_core::has_geometry_by_name(type_name) {
+            jobs.push((id, start, end, IfcType::from_str(type_name)));
+        }
+    }
+    assert_eq!(jobs.len(), 3, "premise: the wall, the grid and the alignment are jobs");
+    let meta = resolve_stream_meta(MetaMode::SmallFileSingle, bytes, Some(1), None, &jobs, &mut decoder);
+    assert_eq!(meta.frame.rtc_offset(), anchor, "premise: the browser meshes shift by the anchor");
+
+    let expected_x = (2000.0 - anchor.0) as f32;
+
+    let axes = extract_grid_axes(content);
+    assert_eq!(axes.len(), 1, "expected one grid axis");
+    assert!(
+        (axes[0].start[0] - expected_x).abs() < 1e-3,
+        "grid axis start x must be {expected_x} in the mesh frame, got {}",
+        axes[0].start[0]
+    );
+
+    let alignment = crate::api::alignment_lines::extract_alignment_line_vertices(content);
+    assert!(!alignment.is_empty(), "alignment must emit centerline vertices");
+    assert!(
+        (alignment[0] - expected_x).abs() < 1e-3,
+        "alignment start x must be {expected_x} in the mesh frame, got {}",
+        alignment[0]
+    );
+
+    let symbolic = ifc_lite_processing::extract_symbolic_data(content);
+    let grid_line = symbolic
+        .polylines
+        .iter()
+        .find(|p| p.express_id == 70)
+        .expect("the symbolic overlay emits the grid axis");
+    assert!(
+        (grid_line.points[0] - expected_x).abs() < 1e-3,
+        "symbolic grid axis x must be {expected_x} in the mesh frame, got {}",
+        grid_line.points[0]
+    );
+}
