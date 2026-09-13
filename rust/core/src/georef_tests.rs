@@ -462,3 +462,34 @@ fn compound_plane_angle_with_non_numeric_component_is_refused() {
     let expected = 51.0 + 30.0 / 60.0 + 0.5 / 3600.0;
     assert!((geo.northings - expected).abs() < 1e-12, "got {}", geo.northings);
 }
+
+/// A CRS the decoder cannot read declares nothing on its own: with no
+/// conversion the site fallback still answers, as it did before a CRS-only
+/// file started holding the fallbacks back. Beside a parsed conversion the
+/// CRS may carry the MapUnit that scales it, so there it stays an error
+/// (#4695).
+#[test]
+fn undecodable_projected_crs_blocks_nothing_without_a_conversion() {
+    let file = |conversion: &str| {
+        format!(
+            "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('Test'),'2;1');\nFILE_NAME('t.ifc','2026-01-01',(''),(''),'','','');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,$,$);\n#2=IFCPROJECTEDCRS(%%%);\n{conversion}\n#4=IFCSITE('1abc',$,'Site',$,$,$,$,$,.ELEMENT.,(51,30,0),(14,28,0),0.,$,$);\nENDSEC;\nEND-ISO-10303-21;\n"
+        )
+    };
+
+    let content = file("");
+    let mut decoder = EntityDecoder::new(&content);
+    let types = [(2, IfcType::IfcProjectedCRS), (4, IfcType::IfcSite)];
+    let geo = GeoRefExtractor::extract(&mut decoder, &types)
+        .expect("an undecodable CRS alone is not an extraction error")
+        .expect("the site fallback answers");
+    assert_eq!(geo.source, Some(GeoRefSource::SiteLocation));
+
+    let content = file("#3=IFCMAPCONVERSION(#1,#2,1000.,2000.,42.,1.,0.,1.);");
+    let mut decoder = EntityDecoder::new(&content);
+    let types = [
+        (2, IfcType::IfcProjectedCRS),
+        (3, IfcType::IfcMapConversion),
+        (4, IfcType::IfcSite),
+    ];
+    assert!(GeoRefExtractor::extract(&mut decoder, &types).is_err());
+}

@@ -152,9 +152,9 @@ export function extractGeoreferencing(
     const entity = entities.get(projectedCRSIds[0]);
     if (entity) {
       info.projectedCRS = extractProjectedCRS(entity, (id) => entities.get(id));
-      // A CRS whose mandatory Name is unset declares none: it still scales a parsed
-      // conversion, but neither claims presence nor holds back the fallbacks (#4695).
-      if (getString(entity.attributes[0]) !== undefined) info.hasGeoreference = true;
+      // A CRS whose mandatory Name is unset or blank declares none: it still scales
+      // a parsed conversion, but neither claims presence nor holds back the fallbacks (#4695).
+      if (info.projectedCRS.name.trim() !== '') info.hasGeoreference = true;
     }
   }
 

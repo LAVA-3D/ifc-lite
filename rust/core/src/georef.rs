@@ -321,8 +321,8 @@ impl GeoRefExtractor {
     /// Precedence (identical to the TS parser): `IfcMapConversion` or a named
     /// `IfcProjectedCRS` → `ePSet_MapConversion` (IFC2x3) → legacy `IfcSite`
     /// lat/long. A refused conversion counts as no conversion, and an
-    /// `IfcProjectedCRS` whose mandatory `Name` is unset declares no CRS, so
-    /// neither holds back the fallbacks on its own.
+    /// `IfcProjectedCRS` whose mandatory `Name` is unset or blank declares no
+    /// CRS, so neither holds back the fallbacks on its own.
     pub fn extract(
         decoder: &mut EntityDecoder,
         entity_types: &[(u32, IfcType)],
@@ -366,8 +366,14 @@ impl GeoRefExtractor {
         // Attributes: Name, Description, GeodeticDatum, VerticalDatum,
         //             MapProjection, MapZone, MapUnit
         if let Some(id) = projected_crs_id {
-            let entity = decoder.decode_by_id(id)?;
-            Self::parse_projected_crs(&entity, decoder, &mut georef);
+            match decoder.decode_by_id(id) {
+                Ok(entity) => Self::parse_projected_crs(&entity, decoder, &mut georef),
+                // Beside a parsed conversion the CRS's MapUnit scales every
+                // coordinate, so an undecodable one stays an error. On its own
+                // it declares nothing and the fallbacks still run.
+                Err(error) if georef.has_map_conversion => return Err(error),
+                Err(_) => {}
+            }
         }
 
         // Neither a parsed conversion nor a named CRS: try the IFC2X3 property
@@ -444,8 +450,10 @@ impl GeoRefExtractor {
         decoder: &mut EntityDecoder,
         georef: &mut GeoReference,
     ) {
-        // Index 0: Name (e.g., "EPSG:32632")
-        if let Some(name) = entity.get_string(0) {
+        // Index 0: Name (e.g., "EPSG:32632"). Blank reads as unset, the rule
+        // the ePSet path applies: the viewer gates on a non-empty CRS name,
+        // so `Some("")` would claim a georeference nothing downstream shows.
+        if let Some(name) = entity.get_string(0).filter(|name| !name.trim().is_empty()) {
             georef.crs_name = Some(name.to_string());
         }
         // Index 1: Description
