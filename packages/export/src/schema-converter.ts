@@ -26,7 +26,7 @@ import { ENTITIES_IFC2X3, ENTITIES_IFC4, ENTITIES_IFC4X3, type IfcEntityInfo } f
 import { resolveUnrepresentedEntity } from './schema-untranslatable.js';
 import { BY_NAME_ATTR_REMAP_TYPES, remapRenamedAttributesByName } from './schema-converter-attr-remap.js';
 import { splitTopLevelStepArguments } from './step-argument-parser.js';
-import type { OwnerHistoryFill } from './schema-converter-owner-history.js';
+import type { Ifc2x3SlotFill } from './schema-converter-ifc2x3-slots.js';
 
 export type IfcSchemaVersion = 'IFC2X3' | 'IFC4' | 'IFC4X3' | 'IFC5';
 
@@ -276,10 +276,10 @@ function requireTopLevelAttributes(attrsRaw: string): string[] {
  * @param random - Optional seeded `RandomSource` for the GlobalId of any
  *   IFCPROXY placeholder minted here. Omit for the default random path; pass
  *   a seeded source when the caller needs byte-reproducible output.
- * @param ownerHistory - On a downgrade to IFC2X3, fills a `$` in the converted
- *   record's mandatory `OwnerHistory` slot and counts the ones it cannot
- *   (#4686); see {@link OwnerHistoryFill}. Every exporter in this package
- *   passes one. Omitted, the slot keeps whatever the source wrote.
+ * @param slots - On a downgrade to IFC2X3, settles the slots IFC2X3 requires a
+ *   value in that the record still holds `$` in: `OwnerHistory` by reuse
+ *   (#4686), the rest from the generated table (#4714); see {@link Ifc2x3SlotFill}.
+ *   Every exporter here passes one; omitted, those slots keep what the source wrote.
  * @returns Converted line (entities without valid target representation become IFCPROXY placeholders)
  */
 export function convertStepLine(
@@ -287,14 +287,14 @@ export function convertStepLine(
   fromSchema: IfcSchemaVersion,
   toSchema: IfcSchemaVersion,
   random?: RandomSource,
-  ownerHistory?: OwnerHistoryFill,
+  slots?: Ifc2x3SlotFill,
 ): string {
   if (fromSchema === toSchema) return line;
   const converted = convertRecord(line, fromSchema, toSchema, random);
-  return toSchema === 'IFC2X3' && ownerHistory ? ownerHistory.apply(converted) : converted;
+  return toSchema === 'IFC2X3' && slots ? slots.apply(converted) : converted;
 }
 
-/** {@link convertStepLine} before the IFC2X3 OwnerHistory fill, between two
+/** {@link convertStepLine} before the IFC2X3 required-slot fills, between two
  *  different schemas. */
 function convertRecord(
   line: string,
@@ -396,7 +396,7 @@ function convertRecord(
       }
     } else if (entityType !== newType && BY_NAME_ATTR_REMAP_TYPES.has(entityType)) {
       // Neither list is a prefix of the other; see `BY_NAME_ATTR_REMAP_TYPES`.
-      const remapped = remapRenamedAttributesByName(attrsRaw, srcAttrs, tgtAttrs);
+      const remapped = remapRenamedAttributesByName(attrsRaw, srcAttrs, tgtAttrs, newType);
       if (remapped === null) throw new Error('Schema conversion refused an invalid STEP argument list.');
       finalAttrs = remapped;
     }

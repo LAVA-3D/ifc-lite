@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { splitTopLevelStepArguments } from './step-argument-parser.js';
+import { ifc2x3MandatoryDefault } from './schema-converter-ifc2x3-slots.js';
 
 /**
  * Attribute-list reconciliation for a genuine cross-schema entity RENAME
@@ -54,23 +55,6 @@ export function splitTopLevelAttributes(attrsRaw: string): string[] | null {
 export const BY_NAME_ATTR_REMAP_TYPES = new Set(['IFCDOORTYPE', 'IFCWINDOWTYPE']);
 
 /**
- * The value written into a remap target slot that IFC2X3 declares mandatory
- * when the source has nothing for it. `IfcDoorStyle`/`IfcWindowStyle` require
- * `OperationType`, `ConstructionType`, `ParameterTakesPrecedence` and
- * `Sizeable`; IFC4's types have no `ConstructionType` or `Sizeable` and leave
- * `ParameterTakesPrecedence` optional, so a plain `$` there made a record a
- * strict Part 21 reader rejects. `.NOTDEFINED.` is a member of every one of
- * those enums and `.F.` is the BOOLEAN that claims nothing. Same table as
- * `ifc2x3_mandatory_default` in the Rust `schema_convert.rs`.
- */
-const IFC2X3_MANDATORY_DEFAULTS: ReadonlyMap<string, string> = new Map([
-  ['OperationType', '.NOTDEFINED.'],
-  ['ConstructionType', '.NOTDEFINED.'],
-  ['ParameterTakesPrecedence', '.F.'],
-  ['Sizeable', '.F.'],
-]);
-
-/**
  * Reconcile a renamed entity's attribute list by matching attribute NAMES
  * between the source and target schema tables, rather than by position.
  *
@@ -82,16 +66,24 @@ const IFC2X3_MANDATORY_DEFAULTS: ReadonlyMap<string, string> = new Map([
  * prefix of the other.
  *
  * A target attribute with no same-named source attribute becomes `$`
- * (unknown) rather than a guess, unless IFC2X3 requires a value there (see
- * `IFC2X3_MANDATORY_DEFAULTS`); a source attribute with no same-named
- * target slot is dropped. Both are honest data loss for attributes the
- * target schema's OWN shape does not carry under that name — never a
+ * (unknown) rather than a guess, unless IFC2X3 requires a value in that slot
+ * of `tgtType` and the generated required-slot table records a default that
+ * claims nothing ({@link ifc2x3MandatoryDefault}); a source attribute with no
+ * same-named target slot is dropped. Both are honest data loss for attributes
+ * the target schema's OWN shape does not carry under that name — never a
  * misplaced value.
+ *
+ * `IfcDoorStyle`/`IfcWindowStyle` are why the defaults matter: both declare
+ * `OperationType`, `ConstructionType`, `ParameterTakesPrecedence` and
+ * `Sizeable` mandatory, and `IfcDoorType`/`IfcWindowType` have no
+ * `ConstructionType` or `Sizeable` at all, so a plain `$` there made a record
+ * a strict Part 21 reader rejects.
  */
 export function remapRenamedAttributesByName(
   attrsRaw: string,
   srcNames: readonly string[],
   tgtNames: readonly string[],
+  tgtType: string,
 ): string | null {
   const values = splitTopLevelAttributes(attrsRaw);
   if (values === null) return null;
@@ -102,7 +94,7 @@ export function remapRenamedAttributesByName(
   return tgtNames
     .map((name) => {
       const given = byName.get(name);
-      return given !== undefined && given !== '$' ? given : (IFC2X3_MANDATORY_DEFAULTS.get(name) ?? '$');
+      return given !== undefined && given !== '$' ? given : (ifc2x3MandatoryDefault(tgtType, name) ?? '$');
     })
     .join(',');
 }
