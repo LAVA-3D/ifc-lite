@@ -84,6 +84,45 @@ export function findQuotedAttrRange(
     return [start, pos];
 }
 
+// Trivia byte set kept in sync with isSpaceByte in step-lexing.ts (#3733):
+// space, tab, LF, CR, form feed, vertical tab.
+function isTriviaByte(b: number): boolean {
+    return b === 0x20 || b === 0x09 || b === 0x0A || b === 0x0D || b === 0x0C || b === 0x0B;
+}
+
+/**
+ * True unless the attribute at `attrIndex` is the IFC "not present" token
+ * `$`. False (not true) when the record's attribute list is too short to
+ * reach `attrIndex` at all, matching how `entity.get(N).is_some_and(|a|
+ * !a.is_null())` reads a missing attribute on the Rust export side
+ * (`rust/export/src/model.rs`) — an absent slot means "no value", not
+ * "assume present".
+ *
+ * Used for `Representation` (index 6) on `IfcProduct` descendants: GlobalId,
+ * OwnerHistory, Name, Description, ObjectType, ObjectPlacement,
+ * Representation — `IfcProduct` is the last ancestor in the chain to declare
+ * an attribute before this one, so every subtype (`IfcElement`, `IfcWall`,
+ * `IfcBuildingElementProxy`, `IfcSpatialElement`, …) inherits `Representation`
+ * at this exact position; subtypes only append attributes after it. Callers
+ * are responsible for only calling this on an `IfcProduct` descendant.
+ */
+export function hasAttrValueAt(
+    buffer: Uint8Array,
+    entityStart: number,
+    entityLen: number,
+    attrIndex: number,
+): boolean {
+    const end = entityStart + entityLen;
+    let pos = entityStart;
+    while (pos < end && buffer[pos] !== 0x28 /* ( */) pos++;
+    if (pos >= end) return false;
+    pos++; // skip '('
+    pos = skipCommas(buffer, pos, end, attrIndex);
+    while (pos < end && isTriviaByte(buffer[pos])) pos++;
+    if (pos >= end) return false;
+    return buffer[pos] !== 0x24 /* $ */;
+}
+
 /**
  * Skip N commas at depth 0 in STEP bytes.
  */

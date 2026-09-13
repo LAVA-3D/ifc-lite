@@ -28,7 +28,7 @@ import {
 } from '@ifc-lite/data';
 import type { SpatialHierarchy, QuantityTable, PropertyValue, PropertySet, QuantitySet, IfcStoreBase } from '@ifc-lite/data';
 import { BufferEntitySource } from './entity-source.js';
-import { batchExtractGlobalIdAndName } from './columnar-parser-attributes.js';
+import { batchExtractGlobalIdAndName, hasAttrValueAt } from './columnar-parser-attributes.js';
 import {
     REL_TYPE_MAP,
     SECONDARY_REL_TYPE_MAP,
@@ -347,7 +347,38 @@ export async function parseColumnarInput(
         };
 
         addEntityBatch(spatialRefs, false, false);
-        addEntityBatch(geometryRefs, true, false);
+        // #4666: HAS_GEOMETRY must answer for THIS entity's own
+        // Representation attribute, not merely its class. GEOMETRY_TYPES
+        // buckets every IfcProduct subtype it lists and previously stamped
+        // every one of them HAS_GEOMETRY unconditionally, so a
+        // placement-only stub like `IFCBUILDINGELEMENTPROXY(...,#165,$,...)`
+        // (Representation `$`, tests/models/local/Building-Structural.ifc
+        // #162) reported geometry it does not have. `hasAttrValueAt` reads
+        // attribute index 6 (Representation, see its own doc comment for
+        // why that position holds for every IfcProduct subtype) instead of
+        // trusting the bucket.
+        //
+        // Deliberately per-entity, not per-descendant: a container whose own
+        // Representation is `$` but that aggregates geometry-bearing
+        // children via IfcRelAggregates (e.g. an IfcRoof aggregating
+        // IfcBeams, Building-Structural.ifc #196) still answers `false`
+        // here. A caller that needs "does this id or its parts render
+        // anything" must do that descent itself — the viewer's object-count
+        // fix (#4655) already does, over the mesh set plus IfcRelAggregates,
+        // specifically because this flag cannot answer that question.
+        for (const ref of geometryRefs) {
+            const entityData = parsedEntityData.get(ref.expressId);
+            entityTableBuilder.add(
+                ref.expressId,
+                ref.type,
+                entityData?.globalId || '',
+                entityData?.name || '',
+                '', // description
+                '', // objectType
+                hasAttrValueAt(uint8Buffer, ref.byteOffset, ref.byteLength, 6),
+                false
+            );
+        }
         addEntityBatch(typeObjectRefs, false, true);
         addEntityBatch(relationshipRefs, false, false);
         addEntityBatch(otherRelevantRefs, false, false);
