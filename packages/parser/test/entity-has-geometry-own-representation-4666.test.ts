@@ -25,6 +25,24 @@
  *     a geometry-bearing child via IfcRelAggregates -> the CONTAINER itself
  *     is false (aggregated children are not considered by this flag), while
  *     the AGGREGATED CHILD is independently true.
+ *
+ * #4725 review (CHANGES_REQUESTED): the fix above only reached
+ * `geometryRefs` in columnar-parser.ts. `spatialRefs` and
+ * `otherRelevantRefs` still called `addEntityBatch(refs, false, false)`
+ * unconditionally, so an `IfcSite`/`IfcGrid`/etc. WITH its own
+ * `Representation` set kept reporting `false` — a spatial/other-product
+ * narrowing of the exact bug #4666 fixed. Two more distinguishing pairs
+ * below exercise those two buckets specifically:
+ *  4. `IfcSite` (spatialRefs) with Representation `$` -> false; the same
+ *     class with Representation set -> true.
+ *  5. `IfcProject` (also spatialRefs, but NOT an `IfcProduct` — its
+ *     attribute index 6 is `Phase`, not `Representation`) always answers
+ *     `false`, even though its index-6 byte value is not `$`. Proves the
+ *     fix reads the SCHEMA's attribute name at that index rather than
+ *     assuming every spatialRefs member has the same layout.
+ *  6. `IfcGrid` (otherRelevantRefs, a real `IfcProduct` descendant in that
+ *     bucket) with Representation `$` -> false; the same class with
+ *     Representation set -> true.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -61,6 +79,12 @@ const IFC = `#1=IFCOWNERHISTORY($,$,$,$,$,$,$,0);
 #196=IFCROOF('3CjP_CWub368bZVuVHeHs5',#1,'Roof',$,$,#165,$,'tag3',$);
 #197=IFCBEAM('4CjP_CWub368bZVuVHeHs6',#1,'Beam',$,$,#165,#171,'tag4',$);
 #198=IFCRELAGGREGATES('5CjP_CWub368bZVuVHeHs7',#1,$,$,#196,(#197));
+#300=IFCSITE('SiteNoRep0000000000001',#1,'Site',$,$,#165,$,$,.ELEMENT.,$,$,$,$,$);
+#301=IFCSITE('SiteWithRep000000000001',#1,'SiteRep',$,$,#165,#171,$,.ELEMENT.,$,$,$,$,$);
+#302=IFCPROJECT('Project00000000000000001',#1,'Proj',$,$,$,'Phase1',(#303),$);
+#303=IFCGEOMETRICREPRESENTATIONCONTEXT($,$,3,$,#45,$);
+#400=IFCGRID('GridNoRep00000000000001',#1,'Grid',$,$,#165,$,(),(),(),$);
+#401=IFCGRID('GridWithRep0000000000001',#1,'GridRep',$,$,#165,#171,(),(),(),$);
 `;
 
 async function parseStore() {
@@ -89,5 +113,26 @@ describe('EntityTable.hasGeometry: own Representation attribute, not class bucke
         // The aggregated child answers independently and correctly true —
         // proves the fixture isn't vacuous (not every entity answers alike).
         expect(store.entities.hasGeometry(197)).toBe(true);
+    });
+
+    it('spatialRefs: is false for an IfcSite with Representation $, true when set', async () => {
+        const store = await parseStore();
+        expect(store.entities.hasGeometry(300)).toBe(false);
+        expect(store.entities.hasGeometry(301)).toBe(true);
+    });
+
+    it('spatialRefs: an IfcProject (not an IfcProduct) is always false, regardless of its index-6 byte', async () => {
+        const store = await parseStore();
+        // #302's attribute index 6 is 'Phase1' — not $, and not empty — so a
+        // fix that reads "index 6, is it $" for every spatialRefs member
+        // would misread this as geometry-bearing. IfcProject's index 6 is
+        // Phase, not Representation; it must answer false regardless.
+        expect(store.entities.hasGeometry(302)).toBe(false);
+    });
+
+    it('otherRelevantRefs: is false for an IfcGrid with Representation $, true when set', async () => {
+        const store = await parseStore();
+        expect(store.entities.hasGeometry(400)).toBe(false);
+        expect(store.entities.hasGeometry(401)).toBe(true);
     });
 });
