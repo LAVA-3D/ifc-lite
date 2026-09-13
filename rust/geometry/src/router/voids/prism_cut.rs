@@ -1718,7 +1718,7 @@ fn face_coords(pf: &PrismFrame, face: Face, p: V3) -> V2 {
 /// Six times the signed volume of `tris` about `o` (divergence theorem).
 ///
 /// Every sum the partition self-check compares must share ONE reference point,
-/// so the four readings cancel against each other exactly instead of about four
+/// so the readings cancel against each other exactly instead of about four
 /// different centres.
 fn tri_volume6_about(tris: &[PTri], o: V3) -> f64 {
     tris.iter()
@@ -1726,48 +1726,31 @@ fn tri_volume6_about(tris: &[PTri], o: V3) -> f64 {
         .sum()
 }
 
-/// Twice the vector area of `tris`: `Σ (b−a)×(c−a)`.
-///
-/// Zero (to roundoff) exactly when the list is a CLOSED surface, and it is what
-/// makes a divergence sum over that list reference-free: moving the reference
-/// point from `o1` to `o2` changes the sum by `−(o2−o1)·` this vector. Built
-/// from edge DIFFERENCES, so its roundoff is set by the triangles' own size and
-/// not by how far the model sits from the origin.
-fn vector_area2(tris: &[PTri]) -> V3 {
-    let mut acc = [0.0f64; 3];
-    for t in tris {
-        let n = cross(sub(t.p[1], t.p[0]), sub(t.p[2], t.p[0]));
-        for k in 0..3 {
-            acc[k] += n[k];
-        }
-    }
-    acc
-}
-
 /// The analytic cut's volume self-check. `Some(removed)` ⇒ the partition is
 /// consistent and `removed` is the volume the cut took away; `None` ⇒ refuse
 /// the analytic result and leave this opening to the exact kernel.
 ///
-/// Four readings, all about the HOST'S OWN AABB CENTRE:
+/// Three readings, all about the HOST'S OWN AABB CENTRE:
 ///
 /// 1. `vol_out + vol_in == vol_host` — `out ∪ inside` re-triangulates the host
 ///    and the caps cancel between the two sides. This identity holds about any
 ///    reference point; the shared centre only bounds its roundoff.
-/// 2. `inside` plus the REVERSED caps closes. Without it `vol_in` is not a
-///    volume at all: over an open surface a divergence sum is whatever the
-///    reference point makes it, so the bounds below would read a number that
-///    says more about where the model sits than about what was removed. A
-///    single probe displacement would test only ONE direction of the gap
-///    (the shift is `(o2−o1)·Σ(b−a)×(c−a)`, a projection), so the whole vector
-///    area is taken and every component probed over the host's extent.
-/// 3. `vol_in > 0` — the cut removed something measurable.
-/// 4. `vol_in <= vol(cutter)` — and no more than the cutter holds.
+/// 2. `vol_in > 0` — the cut removed something measurable.
+/// 3. `vol_in <= vol(cutter)` — and no more than the cutter holds.
+///
+/// It does NOT test whether `inside` plus the reversed caps closes. That list
+/// is open by construction at this stage — it has not yet been through
+/// `consolidate_coplanar` or sliver refinement — and the emitted surface IS
+/// audited for closure, once, after those run: `if !directed_closed(&out) &&
+/// !closed_or_hairline(&out)` defers the host to the exact kernel. Repeating
+/// that audit here charged the analytic path for openness the pipeline is not
+/// required to have removed yet, and refused cuts whose finished output closes.
 ///
 /// The tolerance scales with the host's EXTENT, the scale these sums round at
 /// now that they are taken about the host's centre. It used to scale with the
 /// largest WORLD coordinate cubed, because the sums were taken about the frame
 /// origin: on native builds, where host-local coordinates are absolute metres,
-/// a site 9 km out bought 0.7 m³ of slack on bound 4 and a removed solid 10 %
+/// a site 9 km out bought 0.7 m³ of slack on bound 3 and a removed solid 10 %
 /// larger than a 1 m³ cutter passed.
 fn partition_volumes_consistent(
     tris: &[PTri],
@@ -1811,21 +1794,6 @@ fn partition_volumes_consistent(
     let vol_in = tri_volume6_about(inside, centre) / 6.0 - caps_vol;
 
     if (vol_out + vol_in - vol_host).abs() > tol.max(1.0e-6 * vol_host.abs()) {
-        return None;
-    }
-
-    // `inside` keeps the host's outward winding while the caps are wound for
-    // the RESULT, so the removed solid is `inside` with the caps REVERSED —
-    // hence the subtraction, matching how `vol_in` is formed above.
-    let gap_in = vector_area2(inside);
-    let gap_caps = vector_area2(caps);
-    // Judged by the SAME two-sided tolerance as the identity above: the host is
-    // admitted by `closed_or_hairline`, so `inside` inherits whatever hairline
-    // subdivision mismatches the host carries, and a gate tighter than the one
-    // that let the host in would refuse those hosts for a defect they arrived
-    // with rather than for one the cut introduced.
-    let leak = extent * (0..3).fold(0.0f64, |m, k| m.max((gap_in[k] - gap_caps[k]).abs()));
-    if leak > tol.max(1.0e-6 * vol_host.abs()) {
         return None;
     }
 
