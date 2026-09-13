@@ -1242,3 +1242,59 @@ fn a_closed_removed_region_reads_the_same_number_at_both_sites() {
         "a closed region must read the same at both sites, got {readings:?}"
     );
 }
+
+/// DOCUMENTING TEST, not a defect this PR introduces or fixes: `A` is a NET sum
+/// over `inside`'s unpaired edges, so two holes whose vector areas cancel (here,
+/// the removed box's two opposite z-faces, `framed_box_mesh`'s first four
+/// triangles) read `A ≈ 0` exactly like a closed region does. The predicate
+/// only ever uses `A` to widen bounds 2/3 by its own drift, never as a closure
+/// test, so this is not the check trusting a false "closed" signal — but with
+/// `A ≈ 0` the drift is also ≈0, so the accepted `vol_in` carries no safety
+/// margin, and here it is wrong by a third of the true volume. Nothing in this
+/// file's actual `inside`/`caps` construction (`decompose_tri`'s coplanar CDT
+/// seams) is known to produce this shape of opening — see the doc on
+/// [`partition_volumes_consistent`] — so this fixture is a synthetic worst
+/// case, not a reproduction of a live bug.
+#[test]
+fn a_cancelling_pair_of_holes_reads_wrong_with_no_margin() {
+    let mesh = framed_box_mesh(
+        [0.0, 0.0, 0.0],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [0.5, 0.5, 0.5],
+    );
+    let tris = ptris_from_mesh(&mesh).expect("box");
+    // Faces 0 and 1 are the two z-faces (opposite, parallel, equal area) and
+    // are emitted first: tris[0..2] and tris[2..4] respectively.
+    let (dropped, region) = tris.split_at(4);
+    let inside: Vec<PTri> = region.to_vec();
+    let out: Vec<PTri> = dropped.to_vec();
+    let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
+    let (lo, hi) = host_bounds(&tris);
+    let pf = unit_cutter_at(lo, hi); // 1 m³ cutter, exactly the host's true volume.
+
+    // The two holes' contributions cancel: confirms the fixture is testing what
+    // it claims to, not merely a closed region in disguise.
+    let a_net_norm = norm(area_vector(&inside));
+    assert!(
+        a_net_norm < 1.0e-9,
+        "fixture is not actually cancelling: |A| = {a_net_norm}"
+    );
+    // Distinguishes this from the single-hole case, which the interval refuses
+    // (see `an_open_removed_region_reaches_one_verdict_at_both_sites`): the
+    // single hole's nonzero net `A` widens the interval past bound 2 or 3, but
+    // the cancelling pair's near-zero net `A` does not.
+    let single_hole_a_norm = norm(area_vector(&tris[2..])); // drop face 0 only
+    assert!(
+        single_hole_a_norm > 1.0,
+        "control fixture is not actually open: |A| = {single_hole_a_norm}"
+    );
+
+    let removed = partition_volumes_consistent(&tris, &out, &inside, &[], &pf, &aabbs)
+        .expect("the cancelling-holes region is accepted, not refused");
+    // True removed volume is 1.0 (the cutter exactly fills the host here); the
+    // accepted reading is off by a third, with zero interval margin to catch it.
+    assert!(
+        (removed - 1.0).abs() > 0.3,
+        "expected a materially wrong reading, got {removed}"
+    );
+}

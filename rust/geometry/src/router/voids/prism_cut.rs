@@ -1745,8 +1745,17 @@ fn face_coords(pf: &PrismFrame, face: Face, p: V3) -> V2 {
 /// edges: zero for a closed surface, zero for a T-junction chain that subdivides
 /// a shared line two different ways (`A×B + B×C = A×C` whenever `B` lies on
 /// `AC`), and twice the hole's vector area for a genuine hole. So it is blind to
-/// exactly the hairline openness the emitted-surface audit forgives, and sees
-/// exactly the openness that makes a volume reading meaningless.
+/// exactly the hairline openness the emitted-surface audit forgives.
+///
+/// `A_L` is a NET sum over every unpaired edge, not a per-hole one: two or more
+/// genuine holes whose vector areas cancel (equal openings on opposite,
+/// parallel faces, say) drive it to zero exactly like a closed surface or a
+/// T-junction chain does, even though real area is still missing and the point
+/// reading `6·V_L(0)` is still not the true volume. What a small `A_L` DOES
+/// establish is only the identity above: the reading is unchanged by moving the
+/// reference anywhere `A_L` stays this value. It is a drift bound for a
+/// reference-independence check, not a closure test — `A_L ≈ 0` is never a
+/// license to trust the point reading as correct on its own.
 fn area_vector(tris: &[PTri]) -> V3 {
     let mut a = [0.0f64; 3];
     for t in tris {
@@ -1792,6 +1801,21 @@ fn area_vector(tris: &[PTri]) -> V3 {
 /// mean for a predicate that routes. A region that does close carries `A = 0` to
 /// roundoff and reads exactly as it did. Measured over this repo's census
 /// corpus, 2191 of 2483 cuts carry `|A| < 1e-12`.
+///
+/// `A = 0` proves the reading is stable under the reference, not that it is
+/// CORRECT: `A` is a net sum over every unpaired edge in `inside` and `caps`
+/// combined ([`area_vector`]), so it can also read zero when real area is
+/// missing from two or more places whose vector areas happen to cancel (e.g.
+/// congruent openings on opposite faces), and that reading is stable at the
+/// wrong number rather than moving toward the right one. This function never
+/// treats `A ≈ 0` as evidence of closure — it only widens bounds 2 and 3 by
+/// `A`'s own drift, so whatever `A` is, the verdict does not depend on where
+/// the reference for `inside` happens to sit. The gap this leaves is the one
+/// `decompose_tri`'s coplanar CDT seams are documented to produce: a hairline
+/// re-triangulation artifact, not a pair of same-sized missing patches: this
+/// function was not audited against the latter, and neither would any other
+/// area-vector check be, since cancellation is a property of `A` itself, not
+/// of how it gets used here.
 ///
 /// Reading 1 is left about the ORIGIN, where it has always been taken, and keeps
 /// its world-magnitude tolerance. It is an identity — `out ∪ inside` is a
