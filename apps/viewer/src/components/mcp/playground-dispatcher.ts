@@ -1019,9 +1019,7 @@ const IMPLS: Record<string, ToolImpl> = {
     // extensions based on prior context; we ignore them.
     const filename = coerceFilename(args.file_path as string | undefined, 'ifc', m.id);
     const schema = (args.schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' | undefined) ?? (m.store.schemaVersion as 'IFC2X3' | 'IFC4' | 'IFC4X3');
-    // `model_save` never isolates: no ref list means the whole model. An empty
-    // array would mean an isolation filter that matched nothing (#4738).
-    const content = m.bim.export.ifc(undefined, { schema });
+    const content = m.bim.export.ifc(undefined, { schema }); // no ref list: whole model (#4738)
     const text = typeof content === 'string' ? content : new TextDecoder().decode(content);
     const blob = new Blob([text], { type: 'application/x-step' });
     const file = playgroundFiles.add({
@@ -1197,22 +1195,16 @@ const IMPLS: Record<string, ToolImpl> = {
   async export_ifc(m, args) {
     const filename = coerceFilename(args.file_path as string | undefined, 'ifc', m.id);
     const schema = (args.schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' | undefined) ?? (m.store.schemaVersion as 'IFC2X3' | 'IFC4' | 'IFC4X3');
-    const refs: EntityRef[] = [];
-    const isolating = Array.isArray(args.global_ids);
-    if (isolating) {
-      const wanted = new Set(args.global_ids as string[]);
-      for (const e of m.bim.query().toArray()) if (wanted.has(e.globalId)) refs.push(e.ref);
-    }
-    // No `global_ids` ⇒ no isolation filter, so the ref list is OMITTED. An
-    // allowlist that matched nothing stays an EMPTY array, which `export.ifc`
-    // refuses rather than widening back to the whole model (#4738) — this tool
-    // used to stage the entire model as a download and report success.
-    const content = m.bim.export.ifc(isolating ? refs : undefined, { schema });
+    // No `global_ids` omits the ref list; an allowlist that matched nothing stays an
+    // EMPTY one, which `export.ifc` refuses rather than widening to the whole model (#4738).
+    const wanted = Array.isArray(args.global_ids) ? new Set(args.global_ids as string[]) : null;
+    const refs = wanted ? m.bim.query().toArray().filter((e) => wanted.has(e.globalId)).map((e) => e.ref) : undefined;
+    const content = m.bim.export.ifc(refs, { schema });
     const text = typeof content === 'string' ? content : new TextDecoder().decode(content);
     const blob = new Blob([text], { type: 'application/x-step' });
     const file = playgroundFiles.add({
       filename, mimeType: 'application/x-step', size: blob.size, blob,
-      source: 'export_ifc', description: `${refs.length || m.store.entityCount} entit${(refs.length || m.store.entityCount) === 1 ? 'y' : 'ies'}`,
+      source: 'export_ifc', description: `${refs?.length ?? m.store.entityCount} entit${(refs?.length ?? m.store.entityCount) === 1 ? 'y' : 'ies'}`,
     });
     return {
       text: `Wrote ${filename} (${formatBytes(blob.size)}).`,
