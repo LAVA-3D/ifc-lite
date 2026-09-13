@@ -20,15 +20,17 @@ use ring_ops::{floor_pow2, simplify_2d_collinear, weld_near_coincident_2d};
 /// The test is `min_edge < floor_pow2(max_edge) · 2⁻¹³` — POWER-OF-TWO and
 /// scale-relative, so it is bit-deterministic AND catches the needle (min 6.6 µm
 /// vs max ~5 m ⇒ threshold ~5·10⁻⁴) while never touching a real thin sliver at
-/// that scale (e.g. a 0.2 m × 2 m face, min 0.2 m ≫ 2·10⁻⁴). Dropping a needle cannot open a
-/// real gap — the hole/seam is already framed by the neighbouring non-degenerate
-/// triangles, exactly as Manifold (which welds the near-duplicate) produces.
+/// that scale (e.g. a 0.2 m × 2 m face, min 0.2 m ≫ 2·10⁻⁴). Dropping such a
+/// needle cannot open a gap: the hole/seam is already framed by the neighbouring
+/// non-degenerate triangles, exactly as Manifold (which welds the near-duplicate)
+/// produces.
 ///
 /// The cost of scale-relativity, documented behaviour rather than a defect
 /// (#4698): a REAL face thinner than `floor_pow2(max_edge) / 8192` is dropped
 /// with the needles — 7.8 mm across a 64 m span, so a 64 m × 5 mm plate edge
-/// does not survive the needle filter, on any of the paths that call it. An
-/// absolute floor cannot replace the rule: this runs in the CALLER's unit
+/// does not survive the needle filter, on any of the paths that call it, and its
+/// removal DOES leave a gap — the framing argument above covers a needle, not a
+/// face. An absolute floor cannot replace the rule: this runs in the CALLER's unit
 /// (metres on the void path, millimetres on the file-unit boolean path, #2684),
 /// and the corpus needles it must keep dropping reach 1.7 mm (ISSUE_129
 /// #296868) and 0.054 file units (S_Office #92642) — within 3× of a plausible
@@ -50,7 +52,8 @@ pub(crate) fn tri_is_needle(v: &[Point3<f64>; 3]) -> bool {
 /// 2D-union round-trip (single-triangle buckets and the union-collapse fallback);
 /// the needle drop here is what removes the #1007 diagonal sliver, since each
 /// tilted opening face lands in its own single-triangle plane bucket and would
-/// otherwise pass the raw kernel needle through verbatim.
+/// otherwise pass the raw kernel needle through verbatim. See [`tri_is_needle`]
+/// for what else the rule drops at long spans.
 pub(super) fn emit_triangle(mesh: &mut Mesh, v: &[Point3<f64>; 3], normal: &Vector3<f64>) {
     if tri_is_needle(v) {
         return;

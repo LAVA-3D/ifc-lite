@@ -181,15 +181,15 @@ fn scoped_refinement_does_less_work_than_whole_mesh_region() {
 }
 
 /// The rebuild is whole-mesh even when the sliver candidates are scoped
-/// (#4698): once anything refines, every vertex comes back on its 100 µm
-/// canonical position, which is what closes the near-duplicate cracks the
-/// census depends on. Here a fin hangs off the far end of the bar, outside the
+/// (#4698): once anything refines, every vertex comes back on the first raw
+/// position seen in its 100 µm cell, which is what closes the near-duplicate
+/// cracks the census depends on. Here a fin hangs off the far end of the bar, outside the
 /// refined region, with one corner 30 µm from the bar's corner. It comes back
 /// on the bar's position. Documented on `refine_high_aspect_slivers`; pinned
 /// here because the scoped wrapper's own doc used to promise that everything
 /// outside the region is left exactly as authored.
 #[test]
-fn scoped_refinement_still_snaps_vertices_outside_the_region_4698() {
+fn scoped_refinement_still_dedups_vertices_outside_the_region_4698() {
     let mut mesh = slivered_box(4, 20.0);
     let (lo, hi) = whole_mesh_box(&mesh);
     let far_x = hi[0] as f32;
