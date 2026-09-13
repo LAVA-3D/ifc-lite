@@ -15,9 +15,8 @@
  * Drives the real hook against a real cache buffer written without an
  * EntityIndex section, once per keyword spelling. The upper-case row is the
  * control: it passes with or without the fix, so a failure in the other rows
- * is the spelling and not the fixture. There is no all-lowercase row: the
- * TypeScript scanners refuse a keyword whose first byte is not A-Z, so such a
- * file yields no entities on this path at all, a separate defect.
+ * is the spelling and not the fixture. There is no all-lowercase row here:
+ * the TypeScript scanners accept one only from #4713 on.
  */
 
 import '@/test/setup-dom.js';
