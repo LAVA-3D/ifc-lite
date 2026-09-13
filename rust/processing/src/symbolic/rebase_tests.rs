@@ -69,7 +69,7 @@ fn a_sub_threshold_anchor_is_subtracted() {
 /// but at ground level must still have its northing and elevation re-based by
 /// the anchor's other components.
 #[test]
-fn a_single_large_axis_arms_the_whole_rebase() {
+fn every_anchor_component_is_subtracted() {
     let rebase = model_rtc((12_050.0, 30.0, 7.0));
     let (_, y) = rebase.plan(0.0, 0.0);
     assert!((y - 30.0).abs() < 1e-3, "y2d: {y}");

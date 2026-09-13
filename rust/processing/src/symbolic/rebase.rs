@@ -37,11 +37,8 @@ pub(super) struct RenderFrameRebase {
 }
 
 impl RenderFrameRebase {
-    /// Build the rebase for the frame the meshes were re-based by. The frame
-    /// already decided whether anything is subtracted (a `RawIfc` frame is the
-    /// identity), so there is no second threshold test here: a placement-bounds
-    /// frame anchored on a bbox centre inside 10 km is subtracted like any
-    /// other (#4665).
+    /// The rebase for a mesh frame: subtracts what the frame subtracts, so a
+    /// `RawIfc` frame is the identity. The frame owns the threshold decision.
     pub(super) fn from_frame(frame: MeshFrame) -> Self {
         let (x, y, z) = frame.rtc_offset();
         Self { x: x as f32, y: y as f32, z: z as f32 }

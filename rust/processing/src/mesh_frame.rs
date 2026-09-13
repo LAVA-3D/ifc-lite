@@ -77,10 +77,12 @@ impl MeshFrame {
     }
 
     /// The frame for a consumer that parses the file itself and has no job
-    /// list: the symbolic, grid and alignment overlays (#4665). They are drawn
-    /// over the browser's meshes, so this is the browser pre-pass selection
-    /// (the fallback ladder, no site tier) with the file's geometry entities
-    /// as the jobs. The native pipeline's site tier is not applied here.
+    /// list: the symbolic, grid and alignment overlays (#4665). It runs the
+    /// browser pre-pass selection (the bounds-fallback ladder, no site tier)
+    /// with every geometry entity of the file as the jobs. The pre-passes
+    /// sample a narrower job window, so a model with widely spread elements
+    /// can still get a different median anchor (#4611), and the native site
+    /// tier is not applied (#4706).
     pub fn for_overlay(router: &GeometryRouter, content: &[u8], decoder: &mut EntityDecoder) -> Self {
         Self::select(None, router.detect_rtc_offset_for_file(content, decoder))
     }

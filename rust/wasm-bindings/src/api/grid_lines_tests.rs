@@ -310,48 +310,39 @@ fn overlays_are_rebased_by_the_bounds_fallback_frame_the_meshes_use() {
     let bytes = content.as_bytes();
     let anchor = (8500.0, 0.0, 0.0);
 
-    // The mesh frame, from both pipelines.
+    // The mesh frame, from the native pipeline and from the browser's
+    // `buildPrePassOnce` (its own job list, sample window and meta resolver).
     let native = ifc_lite_processing::process_geometry(content);
     assert_eq!(native.metadata.coordinate_info.origin_shift, [anchor.0, anchor.1, anchor.2]);
     let mut decoder = EntityDecoder::with_index(bytes, build_entity_index(bytes));
-    let mut jobs = Vec::new();
-    let mut scanner = EntityScanner::new(bytes);
-    while let Some((id, type_name, start, end)) = scanner.next_entity() {
-        if ifc_lite_core::has_geometry_by_name(type_name) {
-            jobs.push((id, start, end, IfcType::from_str(type_name)));
-        }
-    }
-    assert_eq!(jobs.len(), 3, "premise: the wall, the grid and the alignment are jobs");
-    let meta = resolve_stream_meta(MetaMode::SmallFileSingle, bytes, Some(1), None, &jobs, &mut decoder);
+    let pre_pass = crate::api::styling::combined_pre_pass(bytes, &mut decoder);
+    let jobs: Vec<_> =
+        pre_pass.simple_jobs.iter().take(25).chain(pre_pass.complex_jobs.iter().take(25)).copied().collect();
+    assert!(!jobs.is_empty(), "premise: the pre-pass schedules jobs");
+    let meta = resolve_stream_meta(
+        MetaMode::SmallFileSingle,
+        bytes,
+        pre_pass.project_id,
+        pre_pass.site_position,
+        &jobs,
+        &mut decoder,
+    );
     assert_eq!(meta.frame.rtc_offset(), anchor, "premise: the browser meshes shift by the anchor");
 
     let expected_x = (2000.0 - anchor.0) as f32;
+    let assert_in_mesh_frame = |overlay: &str, x: f32| {
+        assert!((x - expected_x).abs() < 1e-3, "{overlay} x must be {expected_x} in the mesh frame, got {x}");
+    };
 
     let axes = extract_grid_axes(content);
     assert_eq!(axes.len(), 1, "expected one grid axis");
-    assert!(
-        (axes[0].start[0] - expected_x).abs() < 1e-3,
-        "grid axis start x must be {expected_x} in the mesh frame, got {}",
-        axes[0].start[0]
-    );
+    assert_in_mesh_frame("grid axis start", axes[0].start[0]);
 
     let alignment = crate::api::alignment_lines::extract_alignment_line_vertices(content);
     assert!(!alignment.is_empty(), "alignment must emit centerline vertices");
-    assert!(
-        (alignment[0] - expected_x).abs() < 1e-3,
-        "alignment start x must be {expected_x} in the mesh frame, got {}",
-        alignment[0]
-    );
+    assert_in_mesh_frame("alignment start", alignment[0]);
 
     let symbolic = ifc_lite_processing::extract_symbolic_data(content);
-    let grid_line = symbolic
-        .polylines
-        .iter()
-        .find(|p| p.express_id == 70)
-        .expect("the symbolic overlay emits the grid axis");
-    assert!(
-        (grid_line.points[0] - expected_x).abs() < 1e-3,
-        "symbolic grid axis x must be {expected_x} in the mesh frame, got {}",
-        grid_line.points[0]
-    );
+    let grid_line = symbolic.polylines.iter().find(|p| p.express_id == 70).expect("the symbolic overlay emits the grid axis");
+    assert_in_mesh_frame("symbolic grid axis", grid_line.points[0]);
 }

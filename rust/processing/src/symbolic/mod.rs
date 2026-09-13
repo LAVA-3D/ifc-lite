@@ -43,8 +43,8 @@
 //! - Per-representation `ContextOfItems.WorldCoordinateSystem` is
 //!   composed in when present (Plan reps occasionally use a different
 //!   WCS than Body).
-//! - The RTC offset is the browser mesh frame's (`MeshFrame::for_overlay`),
-//!   so the overlay is subtracted by what the meshes were.
+//! - The RTC offset comes from the browser mesh frame selection
+//!   (`MeshFrame::for_overlay`).
 //! - The whole RTC offset is subtracted — easting and northing into the
 //!   plan pair (whose Y axis is flipped to match the renderer's section-cut
 //!   handedness), elevation into `world_y`. `rebase::RenderFrameRebase` is

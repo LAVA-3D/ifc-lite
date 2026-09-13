@@ -15,11 +15,10 @@
 //!
 //! This module resolves each axis through the **same** transform pipeline the
 //! meshes use — full `IfcLocalPlacement` chain (`resolve_scaled_placement`) +
-//! `lengthUnitScale` + the same RTC offset (`MeshFrame::for_overlay`, the
-//! browser mesh frame) — and
-//! emits the endpoints in the renderer's **Y-up, RTC-subtracted, metres** world
-//! space (the exact frame `MeshDataJs::new` produces after its IFC Z-up → WebGL
-//! Y-up swap). Grids then line up with the streamed geometry by construction,
+//! `lengthUnitScale` + the RTC frame the browser meshes select
+//! (`MeshFrame::for_overlay`) — and emits the endpoints in the renderer's
+//! **Y-up, RTC-subtracted, metres** world space (the exact frame
+//! `MeshDataJs::new` produces after its IFC Z-up → WebGL Y-up swap). Grids then line up with the streamed geometry by construction,
 //! mirroring `alignment_lines.rs`.
 
 use super::IfcAPI;

@@ -7,7 +7,7 @@
 
 use super::GeometryRouter;
 use crate::coord_is_large;
-use ifc_lite_core::{has_geometry_by_name, DecodedEntity, EntityDecoder, IfcType, RtcVerdict};
+use ifc_lite_core::{geometry_flags_by_name, DecodedEntity, EntityDecoder, IfcType, RtcVerdict};
 
 /// Whether a near-origin element with this `RepresentationType` may cast a
 /// "no-shift" `(0,0,0)` RTC vote when the vertex probe can't cheaply read a
@@ -31,13 +31,9 @@ fn is_rtc_votable_representation(rep_type: &str) -> bool {
 
 impl GeometryRouter {
     /// Compute median-based RTC offset from sampled translations.
-    /// Returns `(0,0,0)` if empty or the median is within
+    /// Returns `(0,0,0)` if the median is within
     /// [`LARGE_COORD_THRESHOLD_METERS`](crate::LARGE_COORD_THRESHOLD_METERS) of the origin.
     fn rtc_offset_from_translations(translations: &[(f64, f64, f64)]) -> (f64, f64, f64) {
-        if translations.is_empty() {
-            return (0.0, 0.0, 0.0);
-        }
-
         let mut x: Vec<f64> = translations.iter().map(|(x, _, _)| *x).collect();
         let mut y: Vec<f64> = translations.iter().map(|(_, y, _)| *y).collect();
         let mut z: Vec<f64> = translations.iter().map(|(_, _, z)| *z).collect();
@@ -442,8 +438,7 @@ impl GeometryRouter {
         decoder: &mut EntityDecoder,
         content: &[u8],
     ) -> Option<RtcVerdict> {
-        let sampled = self.detect_rtc_offset_from_jobs(jobs, decoder);
-        self.or_placement_bounds(sampled, content)
+        self.verdict_with_bounds_fallback(jobs.iter().map(|&(id, start, end, _)| (id, start, end)), decoder, content)
     }
 
     /// [`Self::detect_rtc_offset_with_fallback`] with every geometry-bearing
@@ -451,19 +446,23 @@ impl GeometryRouter {
     /// itself and has no job list: the symbolic, grid and alignment overlays
     /// (#4665). Scans lazily and stops at the sample cap.
     pub fn detect_rtc_offset_for_file(&self, content: &[u8], decoder: &mut EntityDecoder) -> Option<RtcVerdict> {
-        let sampled = self.sample_rtc_offset(file_geometry_spans(content), decoder);
-        self.or_placement_bounds(sampled, content)
+        self.verdict_with_bounds_fallback(file_geometry_spans(content), decoder, content)
     }
 
-    /// The sampler's verdict, or the placement-bounds scan when it had no sample.
-    fn or_placement_bounds(&self, sampled: Option<(f64, f64, f64)>, content: &[u8]) -> Option<RtcVerdict> {
+    /// The sampler's verdict over `spans`, or the placement-bounds scan when it had no sample.
+    fn verdict_with_bounds_fallback(
+        &self,
+        spans: impl Iterator<Item = (u32, usize, usize)>,
+        decoder: &mut EntityDecoder,
+        content: &[u8],
+    ) -> Option<RtcVerdict> {
         let bounds = || ifc_lite_core::scan_placement_bounds(content).rtc_offset(self.unit_scale);
-        sampled.map(RtcVerdict::of_anchor).or_else(bounds)
+        self.sample_rtc_offset(spans, decoder).map(RtcVerdict::of_anchor).or_else(bounds)
     }
 }
 
 /// The `(id, start, end)` span of every entity the mesh pre-passes schedule,
-/// in file order: the canonical `has_geometry_by_name` check, plus (#1910) a
+/// in file order: the canonical `geometry_flags_by_name` check, plus (#1910) a
 /// spatial container it blocks by name (`IfcBuilding` et al.) whose instance
 /// carries a non-null Representation, mirroring the entity-job scans in
 /// `rust/processing/src/processor/mod.rs` and
@@ -471,9 +470,8 @@ impl GeometryRouter {
 fn file_geometry_spans(content: &[u8]) -> impl Iterator<Item = (u32, usize, usize)> + '_ {
     let mut scanner = ifc_lite_core::EntityScanner::new(content);
     std::iter::from_fn(move || scanner.next_entity()).filter_map(move |(id, type_name, start, end)| {
-        let is_geometry = has_geometry_by_name(type_name)
-            || (ifc_lite_core::is_representationless_spatial_container_by_name(type_name)
-                && ifc_lite_core::nth_attribute_is_present(&content[start..end], 6));
-        is_geometry.then_some((id, start, end))
+        let (geometry, spatial) = geometry_flags_by_name(type_name);
+        let has_representation = || ifc_lite_core::nth_attribute_is_present(&content[start..end], 6);
+        (geometry || (spatial && has_representation())).then_some((id, start, end))
     })
 }
