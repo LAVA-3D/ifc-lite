@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { isMainEntry } from './lib/is-main-entry.mjs';
 import { REVERT_ORACLE_ADAPTERS } from './lib/revert-oracle-adapters.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ORACLE = join(ROOT, 'scripts/check-test-revert-oracle.mjs');
@@ -193,4 +194,4 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`[selfcheck] all ${selected.length} selected adapter(s) passed all three probes`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (isMainEntry(import.meta.url)) main();
