@@ -459,7 +459,9 @@ const modelSave: Tool = {
     const m = resolveModel(ctx, input.model_id as string | undefined);
     const filePath = await resolveSafePath(input.file_path, ctx, 'write');
     const schema = (input.schema as string | undefined) ?? m.store.schemaVersion;
-    const content = m.bim.export.ifc([], { schema: schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' });
+    // `model_save` never isolates: no ref list means the whole model. An empty
+    // array would mean an isolation filter that matched nothing (#4738).
+    const content = m.bim.export.ifc(undefined, { schema: schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' });
     const text = typeof content === 'string' ? content : new TextDecoder().decode(content);
     await writeFile(filePath, text, 'utf-8');
     return okResult(`Wrote ${text.length.toLocaleString()} bytes to ${filePath}.`, {

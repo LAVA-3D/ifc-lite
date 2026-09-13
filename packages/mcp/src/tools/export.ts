@@ -60,8 +60,9 @@ const exportIfc: Tool = {
     const filePath = await resolveSafePath(input.file_path, ctx, 'write');
     const schema = (input.schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' | undefined) ?? m.store.schemaVersion;
     const refs: EntityRef[] = [];
+    const isolating = Array.isArray(input.global_ids);
     let unmatched: string[] = [];
-    if (Array.isArray(input.global_ids)) {
+    if (isolating) {
       // `query()` folds the session's queued creates (#2014), so an id this
       // session created resolves here — and since #2012 the exporter's
       // visible-only closure can see it too, which is what makes naming one in
@@ -74,9 +75,11 @@ const exportIfc: Tool = {
         matched.add(e.globalId);
       }
       unmatched = [...wanted].filter((id) => !matched.has(id));
-      // FAIL CLOSED. An empty ref list falls through to an UNFILTERED export,
-      // so an allowlist that matched nothing used to write the entire model to
-      // disk and report success — the opposite of what the caller asked for.
+      // FAIL CLOSED, with the allowlist's own wording. `export.ifc` refuses an
+      // empty-but-active ref list too since #4738, so this is the first of two
+      // lines rather than the only one; before either existed, an allowlist
+      // that matched nothing wrote the entire model to disk and reported
+      // success — the opposite of what the caller asked for.
       if (refs.length === 0) {
         throw new ToolExecutionError({
           code: ToolErrorCode.ENTITY_NOT_FOUND,
@@ -84,7 +87,13 @@ const exportIfc: Tool = {
         });
       }
     }
-    const content = m.bim.export.ifc(refs, { schema: schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' });
+    // No `global_ids` ⇒ no isolation filter, so the ref list is OMITTED rather
+    // than passed empty: an empty array now means "a filter matched nothing"
+    // and is refused (#4738).
+    const content = m.bim.export.ifc(
+      isolating ? refs : undefined,
+      { schema: schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' },
+    );
     const text = typeof content === 'string' ? content : new TextDecoder().decode(content);
     await writeFile(filePath, text, 'utf-8');
     return okResult(
