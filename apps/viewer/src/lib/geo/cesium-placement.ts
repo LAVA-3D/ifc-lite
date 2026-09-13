@@ -79,10 +79,7 @@ export interface CesiumPlacementInput {
   ifcOriginHeight: number;
   terrainHeight: number | null;
   storeyElevations?: Map<number, number>;
-  /**
-   * The camera bridge's `viewerUpScale` (Scale x FactorZ): metres of height
-   * per viewer Y unit in the frame the clip plane is expressed in.
-   */
+  /** The camera bridge's `viewerUpScale`: metres of height per viewer Y unit. */
   viewerUpScale: number;
 }
 
@@ -124,10 +121,8 @@ export function computeCesiumPlacement({
   const anchorOffset = modelCenterY - clampAnchorY;
   // Model placement = authored IFC altitude. No clamp. No auto-adjust.
   const placementHeight = ifcOriginHeight;
-  // The frame draws viewer Y at `placementHeight + viewerUpScale * (y -
-  // modelCenterY)`, so the terrain's height difference is divided back out.
-  // A zero vertical scale (Scale 0) has no terrain plane; a non-finite floor
-  // would pin the camera at infinity (useCesiumCameraSync).
+  // The frame draws viewer Y at `placementHeight + viewerUpScale * (y - modelCenterY)`.
+  // Scale 0 gets no plane: a non-finite floor pins the camera at infinity.
   const terrainClipY = terrainHeight !== null
     ? modelCenterY + (terrainHeight - placementHeight) / viewerUpScale
     : null;
@@ -217,21 +212,32 @@ export function computeIfcOriginHeight(
     + scaleZ * computeModelCenterInIfcMeters(coordinateInfo).ifcZ;
 }
 
-/**
- * Metres of height per viewer Y unit (Scale x FactorZ) for this geometry,
- * through the map-absolute guard (#2526) as the Cesium bridge computes its
- * `viewerUpScale`. The placement gizmo's height handle divides a height
- * change by it for the preview and multiplies a drag by it (#4675).
- */
-export function viewerUpScaleForGeometry(
+/** The frame's gizmo height arguments: the conversion, CRS, length unit, geometry. */
+type HeightFrame = [
   mapConversion: MapConversion,
   projectedCRS: Pick<ProjectedCRS, 'mapUnitScale'> | undefined,
   lengthUnitScale: number,
   coordinateInfo: CoordinateInfo | undefined,
-): number {
-  const mapScale = getMapUnitScale(projectedCRS, lengthUnitScale);
-  const conversion = effectiveMapConversionForGeometry(mapConversion, mapScale, coordinateInfo);
-  return getEffectiveAxisScales(conversion, mapScale, lengthUnitScale).z;
+];
+
+/**
+ * Metres of height per viewer Y unit (Scale x FactorZ), through the
+ * map-absolute guard (#2526), as the Cesium bridge derives `viewerUpScale`.
+ */
+export function viewerUpScaleForGeometry(...[conversion, crs, lengthUnitScale, coordinateInfo]: HeightFrame): number {
+  const mapScale = getMapUnitScale(crs, lengthUnitScale);
+  const guarded = effectiveMapConversionForGeometry(conversion, mapScale, coordinateInfo);
+  return getEffectiveAxisScales(guarded, mapScale, lengthUnitScale).z;
+}
+
+/** The gizmo's height drag: a viewer-Y delta as an OrthogonalHeight delta in map units (#4675). */
+export function viewerHeightDeltaToOrthogonalHeightDeltaForGeometry(deltaY: number, ...frame: HeightFrame): number {
+  return metersToMapUnits(deltaY * viewerUpScaleForGeometry(...frame), frame[1], frame[2]);
+}
+
+/** The gizmo's height preview: the inverse of the drag conversion above (#4675). */
+export function orthogonalHeightDeltaToViewerDeltaForGeometry(deltaHeight: number, ...frame: HeightFrame): number {
+  return mapUnitsToMeters(deltaHeight, frame[1], frame[2]) / viewerUpScaleForGeometry(...frame);
 }
 
 export function viewerDeltaToProjectedDelta(

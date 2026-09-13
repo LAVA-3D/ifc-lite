@@ -13,11 +13,11 @@ import {
   closestYOnVerticalLineFromRay,
   getMapUnitScale,
   intersectRayWithHorizontalPlane,
-  mapUnitsToMeters,
   metersToMapUnits,
+  orthogonalHeightDeltaToViewerDeltaForGeometry,
   projectedDeltaToViewerDeltaForGeometry,
   viewerDeltaToProjectedDeltaForGeometry,
-  viewerUpScaleForGeometry,
+  viewerHeightDeltaToOrthogonalHeightDeltaForGeometry,
 } from '@/lib/geo/cesium-placement';
 import { findClampAnchorY } from '@/lib/geo/clamp-anchor';
 import { effectiveMapConversionForGeometry } from '@/lib/geo/map-absolute';
@@ -356,7 +356,6 @@ export function CesiumPlacementEditor({
   const deltaN = activeDraft.northings - baseMapConversion.northings;
   const deltaH = activeDraft.orthogonalHeight - baseMapConversion.orthogonalHeight;
   const deltaAngle = normalizeDegrees(activeAngle - baseAngle);
-  const deltaHeightMeters = mapUnitsToMeters(deltaH, projectedCRS, lengthUnitScale);
   const dirty = Math.abs(deltaE) > 1e-6 || Math.abs(deltaN) > 1e-6 || Math.abs(deltaH) > 1e-6 || Math.abs(deltaAngle) > 1e-6;
   const nudgeStep = round2(metersToMapUnits(1, projectedCRS, lengthUnitScale));
 
@@ -404,13 +403,11 @@ export function CesiumPlacementEditor({
       lengthUnitScale,
       coordinateInfo,
     );
-    // Heights too: the camera frame draws a viewer Y unit as Scale x FactorZ
-    // metres, as the XY offset above divides by its axis scale (#4675).
-    const upScale = viewerUpScaleForGeometry(guardConversion, projectedCRS, lengthUnitScale, coordinateInfo);
 
     return {
       x: centerX + xyOffset.x,
-      y: anchorY + deltaHeightMeters / upScale,
+      y: anchorY + orthogonalHeightDeltaToViewerDeltaForGeometry(
+        deltaH, guardConversion, projectedCRS, lengthUnitScale, coordinateInfo),
       z: centerZ + xyOffset.z,
     };
   }, [
@@ -420,7 +417,7 @@ export function CesiumPlacementEditor({
     coordinateInfo,
     deltaE,
     deltaN,
-    deltaHeightMeters,
+    deltaH,
     lengthUnitScale,
     projectedCRS,
     storeyElevations,
@@ -526,16 +523,11 @@ export function CesiumPlacementEditor({
     if (dragState.mode === 'height') {
       const worldY = closestYOnVerticalLineFromRay(ray, dragState.anchorX, dragState.anchorZ);
       if (worldY === null) return;
-      // One viewer Y unit is Scale x FactorZ metres of height (#4675).
-      const deltaMeters = (worldY - dragState.startWorldY)
-        * viewerUpScaleForGeometry(dragConversion, projectedCRS, lengthUnitScale, coordinateInfo);
       const mus = getMapUnitScale(projectedCRS, lengthUnitScale);
       updateDraft({
-        orthogonalHeight: roundToMm(
-          dragState.startDraft.orthogonalHeight
-            + metersToMapUnits(deltaMeters, projectedCRS, lengthUnitScale),
-          mus,
-        ),
+        orthogonalHeight: roundToMm(dragState.startDraft.orthogonalHeight
+          + viewerHeightDeltaToOrthogonalHeightDeltaForGeometry(
+            worldY - dragState.startWorldY, dragConversion, projectedCRS, lengthUnitScale, coordinateInfo), mus),
       });
       return;
     }
