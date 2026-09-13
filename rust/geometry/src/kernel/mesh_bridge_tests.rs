@@ -9,17 +9,12 @@ use super::super::arrangement::cube_mesh;
 use super::*;
 
 fn mesh_volume(m: &Mesh) -> f64 {
-    mesh_volume_about(m, [0.0; 3])
-}
-
-/// [`mesh_volume`] summed about `o` instead of the world origin.
-fn mesh_volume_about(m: &Mesh, o: [f64; 3]) -> f64 {
     let vertex = |i: u32| {
         let b = (i as usize) * 3;
         [
-            m.positions[b] as f64 - o[0],
-            m.positions[b + 1] as f64 - o[1],
-            m.positions[b + 2] as f64 - o[2],
+            m.positions[b] as f64,
+            m.positions[b + 1] as f64,
+            m.positions[b + 2] as f64,
         ]
     };
     m.indices
@@ -745,6 +740,7 @@ fn lenient_gable_group() -> (Mesh, Mesh, Mesh) {
 #[test]
 fn lenient_batch_on_an_open_host_reads_both_volumes_about_one_point_4693() {
     use super::super::arrangement::{box_mesh, difference_all};
+    use crate::router::voids::geom::mesh_signed_volume_about;
     let (wall, notch, window) = lenient_gable_group();
     let rod = tris_to_mesh(&box_mesh([0.2, 50.6, 6.0], [0.3, 52.47, 6.1]));
     let tip = tris_to_mesh(&box_mesh([0.1, 51.47, 5.9], [0.4, 53.0, 6.2]));
@@ -772,7 +768,7 @@ fn lenient_batch_on_an_open_host_reads_both_volumes_about_one_point_4693() {
     let removed = |host: &Mesh, what: &str| {
         let cut = expect_cut(subtract_many(host, &cutters), what);
         let o = [0.25, 45.0, 7.0];
-        mesh_volume_about(host, o) - mesh_volume_about(&cut, o)
+        mesh_signed_volume_about(host, &o) - mesh_signed_volume_about(&cut, &o)
     };
     let closed_removed = removed(&closed, "closed host");
     let open_removed = removed(&open, "open host: the oracle read the crack as removed volume");
