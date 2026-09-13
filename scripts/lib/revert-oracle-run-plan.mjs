@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,16 @@ import { runTypecheckPlan } from './revert-oracle-type-only.mjs';
 
 const toolchainVersions = new Map();
 const RUN_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * The repo root every plan path derives from, with symlinks resolved. V8
+ * coverage and a spawned script's `import.meta.url` name files by their real
+ * path, so a root through a symlink would attribute nothing (#4682). A missing
+ * root stays as given so git reports it as an ERROR result.
+ */
+export function realRoot(root) {
+  return existsSync(root) ? realpathSync(root) : root;
+}
 
 /** Resolve a runner binary the way the owning package would. */
 function resolveCommand(bin, pkgDir, root) {
