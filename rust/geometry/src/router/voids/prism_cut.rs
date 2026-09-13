@@ -1830,6 +1830,23 @@ fn area_vector(tris: &[PTri]) -> V3 {
 /// area-vector check be, since cancellation is a property of `A` itself, not
 /// of how it gets used here.
 ///
+/// A follow-up audit walked every producer of `inside` and `caps` looking for
+/// a path that drops a real, non-hairline patch rather than a coplanar seam.
+/// `decompose_tri` cannot: every CDT output triangle it produces is classified
+/// into `out` or `inside`, and every failure branch (a degenerate triangle
+/// basis, a CDT the triangulator refuses to build, or one that invents a
+/// point) returns early and routes the WHOLE opening to the exact kernel
+/// instead of emitting a partial result. `build_face_cap`'s single-probe
+/// whole-face fast path and `cap_cdt_impl`'s per-triangle host-parity gate CAN
+/// skip a real-area face or sub-triangle by design — no host material there
+/// means no cap belongs there — but that decision reduces to `point_inside`'s
+/// ray-parity test at one point, the same primitive used throughout this file
+/// (and by `geom.rs`'s mesh containment checks); no host configuration was
+/// found that makes it misclassify two congruent, oppositely-oriented cap
+/// faces at once, which is the only shape whose drop would cancel here. This
+/// paragraph records that boundary so a change letting these gates fire on a
+/// partial, non-uniform region is recognisable as reopening it.
+///
 /// Reading 1 is left about the ORIGIN, where it has always been taken, and keeps
 /// its world-magnitude tolerance. It is an identity — `out ∪ inside` is a
 /// decomposition of `tris`, so the two sides are equal in real arithmetic about
