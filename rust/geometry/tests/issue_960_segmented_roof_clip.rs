@@ -201,11 +201,21 @@ fn segmented_roof_walls_render_without_slivers_or_drops() {
 /// loop that actually bounds a hole (real missing material) contributes a
 /// nonzero vector, equal to twice that hole's own (signed) area vector.
 ///
-/// This is why `|A|` — not an open-boundary-EDGE COUNT — is the closure
-/// measure that matters for correctness: an edge count flags the hairline
-/// T-junctions the pipeline deliberately forgives (`csg::consolidate::conform`
-/// documents exactly this) as equally "open" as a genuine hole, while `|A|`
-/// reads zero for the former and nonzero for the latter.
+/// This is why `|A|` reads zero on the hairline T-junctions the pipeline
+/// deliberately forgives by design (`csg::consolidate::conform` documents
+/// exactly this) where an open-boundary-EDGE count cannot tell that apart
+/// from a genuine hole.
+///
+/// **`A` is a NET, not a per-hole, measure.** It sums every boundary loop's
+/// own area vector, so it distinguishes a hairline chain from a hole, but it
+/// does NOT distinguish "no holes" from "multiple holes whose area vectors
+/// happen to sum near zero" (two square holes of equal area on opposite
+/// faces of a box, for instance — see
+/// `boundary_area_vector_false_negative_on_cancelling_holes` below for a
+/// worked case). Reading `|A| ~= 0` on a mesh therefore rules out any single
+/// dominant hole or any set of holes whose area vectors do not
+/// near-cancel; it does not by itself prove the mesh has NO missing
+/// material.
 fn boundary_area_vector6(mesh: &ifc_lite_geometry::Mesh) -> [f64; 3] {
     let mut a = [0.0f64; 3];
     for tri in mesh.indices.chunks_exact(3) {
@@ -260,9 +270,9 @@ fn twice_surface_area(mesh: &ifc_lite_geometry::Mesh) -> f64 {
     s
 }
 
-/// Verifies the #3980 cutter-union closure contract against the REAL
-/// accepted subtraction — the mesh production actually ships for these five
-/// walls — rather than against `build_cutter_union`'s own nonemptiness
+/// Measures the #3980 cutter-union's net boundary-area vector against the
+/// REAL accepted subtraction — the mesh production actually ships for these
+/// five walls — rather than against `build_cutter_union`'s own nonemptiness
 /// assumption.
 ///
 /// #3997 measured that this union is exact-bit-closed on only 1 of 5 real
@@ -274,11 +284,16 @@ fn twice_surface_area(mesh: &ifc_lite_geometry::Mesh) -> f64 {
 /// retained/removed material, or just unmerged coincident boundaries with no
 /// missing area.
 ///
-/// `boundary_area_vector6` answers that: it is the zero vector for both a
-/// closed mesh AND a hairline chain, and nonzero (twice the hole's own area
-/// vector) only for a genuine hole. Measuring it on the actual per-wall
-/// output mesh is a REFERENCE-INDEPENDENT, no-topology-walk closure read on
-/// exactly what ships.
+/// `boundary_area_vector6` narrows that: it is the zero vector for both a
+/// closed mesh and a hairline chain, and nonzero (twice the hole's own area
+/// vector) for a single genuine hole. As its own doc comment above states,
+/// it is a NET measure — it would also read near-zero if a mesh carried
+/// multiple genuine holes whose area vectors happen to cancel, so a
+/// negligible reading here rules out any single dominant hole or any
+/// non-cancelling combination on these five real chains, but is not by
+/// itself an unconditional proof of zero missing material. It is still a
+/// meaningfully stronger, reference-independent signal than the edge count
+/// #3997 used, which cannot even separate a hairline chain from a hole.
 #[test]
 fn segmented_roof_walls_boundary_area_vector_is_negligible() {
     let Some(content) = read_fixture() else {
@@ -455,6 +470,49 @@ fn boundary_area_vector_discriminates_hole_from_hairline() {
         "the genuine hole must read orders of magnitude larger than the \
          hairline case; hole={fraction_hole} hairline={}",
         a_hairline_mag / twice_surface_area(&hairline),
+    );
+}
+
+/// Documents `boundary_area_vector6`'s known blind spot (raised in review of
+/// #4679): it is a NET measure over every boundary loop, so it cannot tell
+/// "no holes" apart from "multiple holes whose area vectors cancel." Drop
+/// BOTH the top and bottom faces of the cube — two genuine, disjoint 1x1
+/// holes totalling 2 units^2 of missing material — and `A` reads back
+/// exactly zero, because the top hole's loop area vector ([0,0,+2]) and the
+/// bottom hole's ([0,0,-2], the mirror-image loop on the opposite face) sum
+/// to nothing.
+///
+/// This is why `segmented_roof_walls_boundary_area_vector_is_negligible`'s
+/// negligible reading on the five real #960 walls is stated there as ruling
+/// out a single dominant hole or any non-cancelling combination, not as an
+/// unconditional proof of zero missing material: this test is the worked
+/// case that shows why the stronger claim would not hold in general.
+#[test]
+fn boundary_area_vector_false_negative_on_cancelling_holes() {
+    let cube = unit_cube_mesh();
+
+    // Top quad is indices [6,12), bottom quad is indices [0,6) (see
+    // `unit_cube_mesh`'s `quads` ordering: bottom first, then top).
+    let mut two_holes = cube.clone();
+    two_holes.indices.drain(6..12); // drop top face
+    two_holes.indices.drain(0..6); // drop bottom face
+
+    let a = boundary_area_vector6(&two_holes);
+    let a_mag = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    assert!(
+        a_mag < 1e-9,
+        "two opposite holes with cancelling area vectors must read A ~= 0 \
+         despite 2 units^2 of real missing material — got |A|={a_mag}, A={a:?}. \
+         If this fails, the cube's quad winding changed and the cancellation \
+         claim above needs re-deriving, not the test loosening."
+    );
+
+    // The two-holes mesh is genuinely NOT closed (dropping two of six faces
+    // leaves an open tube), so the false negative is real, not a mislabeled
+    // closed shape.
+    assert!(
+        two_holes.indices.len() < cube.indices.len(),
+        "sanity: the two-holes mesh must have fewer triangles than the closed cube"
     );
 }
 
