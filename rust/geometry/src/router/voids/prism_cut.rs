@@ -44,8 +44,11 @@
 //! the FULL opening set unchanged):
 //! * per-opening volume identity `vol(outside) + vol(inside) == vol(host)` in
 //!   f64 (the caps cancel; the fragments partition the host surface), plus
-//!   `0 < vol(inside) <= vol(prism)` so the caps provably close the removed
-//!   solid;
+//!   `0 < vol(inside) <= vol(prism)` so the cut removed something and no more
+//!   than the cutter holds — both bounds taken on an interval wide enough to
+//!   cover every reference point the removed region admits, so the verdict is a
+//!   property of the region and not of the origin (see
+//!   `partition_volumes_consistent`);
 //! * the host must arrive as a consistently-wound closed solid and the final
 //!   emitted mesh must pass the same DIRECTED quantized closed-surface audit
 //!   (which also catches doubled coincident faces and flipped caps).
@@ -64,7 +67,6 @@ use std::sync::OnceLock;
 use super::geom::opening_mesh_thinnest_axis_dir;
 use super::{cutter_is_closed_manifold, GeometryRouter, OpeningType, VoidContext};
 use crate::cdt::triangulate_pslg;
-use crate::kernel::signed_volume::tetra_volume6;
 use crate::mesh::Mesh;
 use nalgebra::Point2;
 use rustc_hash::FxHashMap;
@@ -300,6 +302,11 @@ struct PTri {
 }
 
 impl PTri {
+    /// Signed volume contribution about the origin (divergence theorem, ×6).
+    #[inline]
+    fn vol6(&self) -> f64 {
+        dot(self.p[0], cross(self.p[1], self.p[2]))
+    }
     #[inline]
     fn aabb(&self) -> (V3, V3) {
         let mut lo = self.p[0];
@@ -312,6 +319,10 @@ impl PTri {
         }
         (lo, hi)
     }
+}
+
+fn tri_volume6(tris: &[PTri]) -> f64 {
+    tris.iter().map(PTri::vol6).sum()
 }
 
 /// Promote a `Mesh` to the f64 triangle list, folding nothing (the mesh is
@@ -1715,43 +1726,93 @@ fn face_coords(pf: &PrismFrame, face: Face, p: V3) -> V2 {
     }
 }
 
-/// Six times the signed volume of `tris` about `o` (divergence theorem).
+/// Twice the vector area of `tris` — the sum of every triangle's
+/// `(p1 − p0) × (p2 − p0)`.
 ///
-/// Every sum the partition self-check compares must share ONE reference point,
-/// so the readings cancel against each other exactly instead of about four
-/// different centres.
-fn tri_volume6_about(tris: &[PTri], o: V3) -> f64 {
-    tris.iter()
-        .map(|t| tetra_volume6(&t.p[0], &t.p[1], &t.p[2], &o))
-        .sum()
+/// This is the WHOLE of a triangle list's dependence on the point its volume is
+/// read about, in closed form. Writing the tetrahedron determinant out,
+/// `det(a − o, b − o, c − o) = det(a, b, c) − o · ((b − a) × (c − a))`, so for
+/// any list `L` and any reference `o`
+///
+/// ```text
+///     6·V_L(o) = 6·V_L(0) − o · A_L        with A_L = Σ (p1 − p0) × (p2 − p0)
+/// ```
+///
+/// exactly, term for term, in real arithmetic. Moving the reference by `δ`
+/// therefore moves the reading by exactly `δ · A_L / 6` and by nothing else.
+///
+/// By the divergence theorem `A_L` is also `∮ r × dr` over the list's unpaired
+/// edges: zero for a closed surface, zero for a T-junction chain that subdivides
+/// a shared line two different ways (`A×B + B×C = A×C` whenever `B` lies on
+/// `AC`), and twice the hole's vector area for a genuine hole. So it is blind to
+/// exactly the hairline openness the emitted-surface audit forgives, and sees
+/// exactly the openness that makes a volume reading meaningless.
+fn area_vector(tris: &[PTri]) -> V3 {
+    let mut a = [0.0f64; 3];
+    for t in tris {
+        let n = cross(sub(t.p[1], t.p[0]), sub(t.p[2], t.p[0]));
+        for k in 0..3 {
+            a[k] += n[k];
+        }
+    }
+    a
 }
 
 /// The analytic cut's volume self-check. `Some(removed)` ⇒ the partition is
 /// consistent and `removed` is the volume the cut took away; `None` ⇒ refuse
 /// the analytic result and leave this opening to the exact kernel.
 ///
-/// Three readings, all about the HOST'S OWN AABB CENTRE:
+/// Three readings:
 ///
 /// 1. `vol_out + vol_in == vol_host` — `out ∪ inside` re-triangulates the host
-///    and the caps cancel between the two sides. This identity holds about any
-///    reference point; the shared centre only bounds its roundoff.
+///    and the caps cancel between the two sides.
 /// 2. `vol_in > 0` — the cut removed something measurable.
 /// 3. `vol_in <= vol(cutter)` — and no more than the cutter holds.
 ///
-/// It does NOT test whether `inside` plus the reversed caps closes. That list
-/// is open by construction at this stage — it has not yet been through
-/// `consolidate_coplanar` or sliver refinement — and the emitted surface IS
-/// audited for closure, once, after those run: `if !directed_closed(&out) &&
-/// !closed_or_hairline(&out)` defers the host to the exact kernel. Repeating
-/// that audit here charged the analytic path for openness the pipeline is not
-/// required to have removed yet, and refused cuts whose finished output closes.
+/// # Bounds 2 and 3 decide geometry, so they are taken on a reading that does
+/// not move
 ///
-/// The tolerance scales with the host's EXTENT, the scale these sums round at
-/// now that they are taken about the host's centre. It used to scale with the
-/// largest WORLD coordinate cubed, because the sums were taken about the frame
-/// origin: on native builds, where host-local coordinates are absolute metres,
-/// a site 9 km out bought 0.7 m³ of slack on bound 3 and a removed solid 10 %
-/// larger than a 1 m³ cutter passed.
+/// `vol_in` is not diagnostic. It decides whether this function returns `Some`,
+/// which decides whether the caller commits the cut's triangles or drops the
+/// opening into the residual set for the exact kernel — so it decides the
+/// emitted geometry, the host every later cut on this element sees, and whether
+/// the exact kernel runs at all. The closure audit that runs on the finished
+/// surface cannot recover a candidate refused here. A number that changes with
+/// an arbitrary choice of origin must not be what decides that.
+///
+/// The removed region is `inside` with the caps reversed, and it is NOT closed
+/// at this point in the pipeline: the per-triangle CDT leaves coplanar gaps that
+/// `consolidate_coplanar` closes afterwards. So its volume genuinely depends on
+/// the reference — by exactly `δ · A / 6` for `A = A_inside − A_caps`
+/// ([`area_vector`]) — and reading it at one canonical point does not make that
+/// dependence go away, it only hides it. Bounds 2 and 3 are instead applied to
+/// the whole interval `vol_in ± drift`, `drift = |A| · radius / 6` over the
+/// removed region's own half-extent: the verdict is then the same for every
+/// reference the region admits, which is what "reference-independent" has to
+/// mean for a predicate that routes. A region that does close carries `A = 0` to
+/// roundoff and reads exactly as it did. Measured over this repo's census
+/// corpus, 2191 of 2483 cuts carry `|A| < 1e-12`.
+///
+/// Reading 1 is left about the ORIGIN, where it has always been taken, and keeps
+/// its world-magnitude tolerance. It is an identity — `out ∪ inside` is a
+/// decomposition of `tris`, so the two sides are equal in real arithmetic about
+/// any reference whatsoever — and its residual is therefore pure roundoff of the
+/// sums actually performed. Its tolerance has to be calibrated to those sums, so
+/// re-centring them and keeping a world-magnitude tolerance would simply widen
+/// the gate; re-centring them and shrinking the tolerance to match changes which
+/// cuts commit. Neither is what #4627 is about.
+///
+/// # The #4627 slack
+///
+/// Bound 3's slack used to be `1e-12 · (1 + host_mag)³`, `host_mag` being the
+/// largest WORLD coordinate of the host and the cutter. That is a roundoff scale
+/// for reading 1's origin-referenced sums; it is not a roundoff scale for a
+/// COMPARISON against the cutter's analytic volume, which is exact and carries
+/// no world magnitude at all. On native builds, where host-local coordinates are
+/// absolute metres, a site 9 km out bought 0.73 m³ of slack there, and a removed
+/// solid 10 % larger than a 1 m³ cutter passed. It now scales with the removed
+/// region's own half-extent, which is translation-invariant: the same cut reads
+/// the same at the origin and 9 km out.
 fn partition_volumes_consistent(
     tris: &[PTri],
     out: &[PTri],
@@ -1760,47 +1821,58 @@ fn partition_volumes_consistent(
     pf: &PrismFrame,
     aabbs: &[(V3, V3)],
 ) -> Option<f64> {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for (l, h) in aabbs {
+    let mut host_mag = pf.corner_mag();
+    for (lo, hi) in aabbs {
         for k in 0..3 {
-            lo[k] = lo[k].min(l[k]);
-            hi[k] = hi[k].max(h[k]);
+            host_mag = host_mag.max(lo[k].abs()).max(hi[k].abs());
         }
     }
-    // An empty or non-finite host has no frame to verify against.
+    // A non-finite host has no frame to verify against, and `NaN > tol` is
+    // FALSE — reading 1 would wave it through rather than reject it.
+    if !host_mag.is_finite() {
+        return None;
+    }
+    let vol_host = tri_volume6(tris) / 6.0;
+    let caps_vol = tri_volume6(caps) / 6.0; // caps oriented for the RESULT
+    let vol_out = tri_volume6(out) / 6.0 + caps_vol;
+    let vol_in = tri_volume6(inside) / 6.0 - caps_vol;
+
+    // Reading 1: the partition identity, about the origin, at the roundoff scale
+    // of the origin-referenced sums above.
+    let ident_tol = 1.0e-12 * (1.0 + host_mag).powi(3) + 1.0e-9;
+    if (vol_out + vol_in - vol_host).abs() > ident_tol.max(1.0e-6 * vol_host.abs()) {
+        return None;
+    }
+
+    // The removed region's own half-extent: the distance a reference for it can
+    // move and still be a reference for IT. Translation-invariant, so it carries
+    // no world magnitude.
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for t in inside.iter().chain(caps.iter()) {
+        for q in &t.p {
+            for k in 0..3 {
+                lo[k] = lo[k].min(q[k]);
+                hi[k] = hi[k].max(q[k]);
+            }
+        }
+    }
+    // An empty or non-finite removed region has no extent to measure, and
+    // nothing to bound: refuse rather than fall through on `±inf`.
     if !lo.iter().chain(hi.iter()).all(|c| c.is_finite()) {
         return None;
     }
-    let centre = [
-        (lo[0] + hi[0]) * 0.5,
-        (lo[1] + hi[1]) * 0.5,
-        (lo[2] + hi[2]) * 0.5,
-    ];
-    let extent = (0..3).fold(0.0f64, |m, k| m.max(hi[k] - lo[k]));
-    // HALF the extent, not the extent: it is the largest coordinate the sums
-    // below actually see once they are recentred, so it is the scale they round
-    // at. `(1 + extent)` would read up to 8x LOOSER than the world-magnitude
-    // form it replaces for a host straddling the origin, where `host_mag` was
-    // already the half-extent — a tolerance change must not relax anywhere.
-    // `(b − a)/2 <= max(|a|, |b|)` for every interval, so this is a tightening
-    // at every site, strictly so for any host that does not straddle.
-    let radius = extent * 0.5;
+    let radius = (0..3).fold(0.0f64, |m, k| m.max(hi[k] - lo[k])) * 0.5;
     let tol = 1.0e-12 * (1.0 + radius).powi(3) + 1.0e-9;
 
-    let vol_host = tri_volume6_about(tris, centre) / 6.0;
-    let caps_vol = tri_volume6_about(caps, centre) / 6.0; // caps oriented for the RESULT
-    let vol_out = tri_volume6_about(out, centre) / 6.0 + caps_vol;
-    let vol_in = tri_volume6_about(inside, centre) / 6.0 - caps_vol;
+    // How far `vol_in` moves if its reference moves anywhere within the removed
+    // region. Zero exactly when the region closes; see `area_vector`.
+    let drift = norm(sub(area_vector(inside), area_vector(caps))) * radius / 6.0;
 
-    if (vol_out + vol_in - vol_host).abs() > tol.max(1.0e-6 * vol_host.abs()) {
-        return None;
-    }
-
-    if vol_in < 1.0e-9 {
+    if vol_in - drift < 1.0e-9 {
         return None; // removed nothing measurable — leave to the exact path
     }
-    if vol_in > pf.volume() * (1.0 + 1.0e-6) + tol {
+    if vol_in + drift > pf.volume() * (1.0 + 1.0e-6) + tol {
         return None;
     }
     Some(vol_in)

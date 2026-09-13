@@ -1145,3 +1145,100 @@ fn a_legitimate_cut_9km_out_is_accepted_like_one_at_the_origin() {
         );
     }
 }
+
+/// `vol_in` is NOT diagnostic: it decides whether the self-check returns `Some`,
+/// which decides whether the caller commits the analytic triangles or drops the
+/// opening into the residual set for the exact kernel. So the reading it decides
+/// on must not depend on where the reference sits — and for an open removed
+/// region, a reading taken at ANY single point does.
+///
+/// The region here is a box with ONE FACE MISSING: open by exactly that face,
+/// the shape an unconsolidated coplanar gap leaves. Its point reading moves by
+/// `δ·A/6` when the reference moves by `δ`, so 9 km out it moves by cubic
+/// metres, and the cutter bound reaches the OPPOSITE verdict at the two sites
+/// from geometry that is a bit-exact translate. The interval reading reaches one
+/// verdict at both, because `drift` is derived from the same `A` that makes the
+/// point reading move.
+#[test]
+fn an_open_removed_region_reaches_one_verdict_at_both_sites() {
+    // Host: a 1.1 x 1.0 x 1.0 box. `inside` is the host minus its last face and
+    // `out` is that face, so `out ∪ inside` still re-triangulates the host and
+    // the partition identity holds exactly — only the removed region is open.
+    let far_mesh = framed_box_mesh(FAR_SITE_M, rot_z_frame(0.6), [0.55, 0.5, 0.5]);
+    let mut verdicts_point: Vec<bool> = Vec::new();
+    let mut verdicts_interval: Vec<bool> = Vec::new();
+    let mut readings: Vec<f64> = Vec::new();
+    for mesh in [
+        translated_to_origin(&far_mesh, FAR_SITE_M),
+        far_mesh.clone(),
+    ] {
+        let tris = ptris_from_mesh(&mesh).expect("box");
+        // `framed_box_mesh` emits two triangles per face, so the last two are
+        // one whole face: `inside` is the box without it, `out` is the face.
+        let (region, face) = tris.split_at(tris.len() - 2);
+        let inside: Vec<PTri> = region.to_vec();
+        let out: Vec<PTri> = face.to_vec();
+        let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
+        let (lo, hi) = host_bounds(&tris);
+        let pf = unit_cutter_at(lo, hi);
+
+        // The point reading the bounds used to be taken on, and the verdict it
+        // reaches. Reproduced here rather than called, because the production
+        // predicate no longer offers it.
+        let vol_in = tri_volume6(&inside) / 6.0; // no caps in this assembly
+        readings.push(vol_in);
+        verdicts_point
+            .push(vol_in >= 1.0e-9 && vol_in <= pf.volume() * (1.0 + 1.0e-6) + 1.0e-9);
+        verdicts_interval.push(
+            partition_volumes_consistent(&tris, &out, &inside, &[], &pf, &aabbs).is_some(),
+        );
+    }
+
+    // The evidence the requirement is about: ONE region, TWO references, two
+    // readings that are not the same number and not the same verdict.
+    assert!(
+        (readings[0] - readings[1]).abs() > 1.0,
+        "fixture is not reference-dependent: readings {readings:?} — the test proves \
+         nothing unless the point reading actually moves"
+    );
+    assert_ne!(
+        verdicts_point[0], verdicts_point[1],
+        "the point reading must reach OPPOSITE verdicts at the two sites for this \
+         test to be about reference-dependence at all; readings {readings:?}"
+    );
+    assert_eq!(
+        verdicts_interval[0], verdicts_interval[1],
+        "the interval reading must reach ONE verdict at both sites; readings {readings:?}"
+    );
+    assert!(
+        !verdicts_interval[0],
+        "an open removed region has no defensible volume, so the analytic cut must \
+         be refused and the opening left to the exact kernel"
+    );
+}
+
+/// The control the test above needs: the SAME assembly with the region closed
+/// reads the same number at both sites and is accepted at both. Without this,
+/// refusing everything would pass.
+#[test]
+fn a_closed_removed_region_reads_the_same_number_at_both_sites() {
+    let far_mesh = framed_box_mesh(FAR_SITE_M, rot_z_frame(0.6), [0.55, 0.5, 0.5]);
+    let mut readings: Vec<f64> = Vec::new();
+    for (label, mesh) in [
+        ("origin", translated_to_origin(&far_mesh, FAR_SITE_M)),
+        ("9 km out", far_mesh.clone()),
+    ] {
+        let tris = ptris_from_mesh(&mesh).expect("box");
+        let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
+        let (lo, hi) = host_bounds(&tris);
+        let mut pf = unit_cutter_at(lo, hi);
+        pf.planes[1] = lo[2] + 2.0; // a 2 m³ cutter comfortably holds 1.1 m³
+        let removed = partition_volumes_consistent(&tris, &[], &tris, &[], &pf, &aabbs)
+            .unwrap_or_else(|| panic!("{label}: a closed 1.1 m³ region must be accepted"));
+        readings.push(removed);
+    }
+    assert!(
+        (readings[0] - readings[1]).abs() < 1.0e-6,
+        "a closed region must read the same at both sites, got {readings:?}"
+    );
+}
