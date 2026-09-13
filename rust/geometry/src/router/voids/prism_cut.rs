@@ -3035,6 +3035,13 @@ impl GeometryRouter {
                 }
             }
         }
+        // Two host faces sharing an edge compute the same new crossing point
+        // through different arithmetic. Unify them at ulp scale BEFORE the
+        // closure and volume audits: this is the mesh the caller emits or
+        // passes into the residual exact cut, and a post-audit weld can move
+        // millimetres at baked georeferenced coordinates (#4627 review).
+        out = dedup_cut_vertices(&out, mesh);
+
         // Never emit a cut that is not a consistently-wound closed surface. The
         // analytic CONSTRUCTION itself must be closed (the DIRECTED audit also
         // catches doubled coincident faces and flipped caps the undirected

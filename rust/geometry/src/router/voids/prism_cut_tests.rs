@@ -175,6 +175,11 @@ fn rotated_prism_cutter_fires_and_reconciles() {
     let (cut, residual) = router
         .try_prism_cut(&host, &ctx)
         .expect("rotated box cutter must take the prism path");
+    assert_eq!(
+        dedup_cut_vertices(&cut, &host).positions,
+        cut.positions,
+        "the returned prism mesh must already contain the weld that the caller emits"
+    );
     assert!(residual.is_none());
     assert!(watertight(&cut), "rotated prism cut must be watertight");
     let removed = mesh_volume(&host) - mesh_volume(&cut);
