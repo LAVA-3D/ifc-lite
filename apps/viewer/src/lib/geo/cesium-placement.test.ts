@@ -14,6 +14,7 @@ import {
   intersectRayWithHorizontalPlane,
   mapUnitsToMeters,
   metersToMapUnits,
+  orthogonalHeightDeltaToViewerDeltaForGeometry,
   orthometricTargetForTerrain,
   projectedDeltaToViewerDelta,
   projectedDeltaToViewerDeltaForGeometry,
@@ -21,6 +22,7 @@ import {
   shouldPreferOrthometricTerrain,
   viewerDeltaToProjectedDelta,
   viewerDeltaToProjectedDeltaForGeometry,
+  viewerHeightDeltaToOrthogonalHeightDeltaForGeometry,
 } from './cesium-placement.js';
 import type { CoordinateInfo } from '@ifc-lite/geometry';
 import type { MapConversion } from '@ifc-lite/parser';
@@ -91,6 +93,7 @@ describe('cesium placement helpers', () => {
       ifcOriginHeight: 244,
       terrainHeight: 245,
       storeyElevations: new Map([[1, -3], [2, 0], [3, 3]]),
+      viewerUpScale: 1,
     });
 
     // placementHeight == authored ifcOriginHeight, NOT terrain+anchorOffset.
@@ -104,14 +107,53 @@ describe('cesium placement helpers', () => {
 
   it('keeps the authored height whether it is above OR below terrain', () => {
     // Above terrain — unchanged.
-    const above = computeCesiumPlacement({ ifcOriginHeight: 244, terrainHeight: 195.4 });
+    const above = computeCesiumPlacement({ ifcOriginHeight: 244, terrainHeight: 195.4, viewerUpScale: 1 });
     assert.strictEqual(above.placementHeight, 244);
 
     // Below terrain — the model stays sub-grade, NOT lifted to terrain.
     // (Regression: the old Math.max floor pinned it to terrain, which froze
     //  the vertical placement gizmo and lifted basements above ground.)
-    const below = computeCesiumPlacement({ ifcOriginHeight: -20, terrainHeight: 70.61 });
+    const below = computeCesiumPlacement({ ifcOriginHeight: -20, terrainHeight: 70.61, viewerUpScale: 1 });
     assert.strictEqual(below.placementHeight, -20);
+  });
+
+  it('puts the below-terrain clip plane on the terrain in a FactorZ-scaled frame (#4675)', () => {
+    // The camera frame places viewer Y at `placementHeight + viewerUpScale *
+    // (y - modelCenterY)` (cesium-bridge.ts, m21). Centre Y 3, model at 244,
+    // terrain at 250, Scale x FactorZ 2: the terrain is 6 m up, which is 3
+    // viewer units, so the plane sits at Y 6. Ignoring the scale gives 9,
+    // which the frame draws at 256, 6 m above the ground.
+    const placement = computeCesiumPlacement({
+      coordinateInfo: {
+        originShift: { x: 0, y: 0, z: 0 },
+        originalBounds: { min: { x: 0, y: -3, z: 0 }, max: { x: 10, y: 9, z: 10 } },
+        shiftedBounds: { min: { x: 0, y: -3, z: 0 }, max: { x: 10, y: 9, z: 10 } },
+        hasLargeCoordinates: false,
+      },
+      ifcOriginHeight: 244,
+      terrainHeight: 250,
+      viewerUpScale: 2,
+    });
+    assert.strictEqual(placement.terrainClipY, 6);
+    const worldHeightOfPlane = placement.placementHeight
+      + 2 * (placement.terrainClipY! - placement.modelCenterY);
+    assert.strictEqual(worldHeightOfPlane, 250);
+    // Scale 0 flattens the frame: no plane rather than a floor at infinity.
+    const flat = computeCesiumPlacement({ ifcOriginHeight: 244, terrainHeight: 250, viewerUpScale: 0 });
+    assert.strictEqual(flat.terrainClipY, null);
+    const flatAtTerrain = computeCesiumPlacement({ ifcOriginHeight: 250, terrainHeight: 250, viewerUpScale: 0 });
+    assert.strictEqual(flatAtTerrain.terrainClipY, null);
+  });
+
+  it('converts gizmo height deltas through Scale x FactorZ in both directions (#4675)', () => {
+    const conversion: MapConversion = {
+      id: 1, sourceCRS: 2, targetCRS: 3, eastings: 0, northings: 0, orthogonalHeight: 0,
+      scale: 1, factorZ: 2,
+    };
+    // Metre units: 3 viewer units x scaleZ 2 = 6 m of OrthogonalHeight. Unscaled: 3.
+    const crs = { mapUnitScale: 1 };
+    assert.strictEqual(viewerHeightDeltaToOrthogonalHeightDeltaForGeometry(3, conversion, crs, 1, undefined), 6);
+    assert.strictEqual(orthogonalHeightDeltaToViewerDeltaForGeometry(6, conversion, crs, 1, undefined), 3);
   });
 
   it('computes OrthogonalHeight from target base altitude with shift and RTC', () => {

@@ -79,6 +79,8 @@ export interface CesiumPlacementInput {
   ifcOriginHeight: number;
   terrainHeight: number | null;
   storeyElevations?: Map<number, number>;
+  /** The camera bridge's `viewerUpScale`: metres of height per viewer Y unit. */
+  viewerUpScale: number;
 }
 
 export interface CesiumPlacementResult {
@@ -110,6 +112,7 @@ export function computeCesiumPlacement({
   ifcOriginHeight,
   terrainHeight,
   storeyElevations,
+  viewerUpScale,
 }: CesiumPlacementInput): CesiumPlacementResult {
   const bounds = coordinateInfo?.originalBounds;
   const modelCenterY = bounds ? (bounds.min.y + bounds.max.y) / 2 : 0;
@@ -118,6 +121,11 @@ export function computeCesiumPlacement({
   const anchorOffset = modelCenterY - clampAnchorY;
   // Model placement = authored IFC altitude. No clamp. No auto-adjust.
   const placementHeight = ifcOriginHeight;
+  // The frame draws viewer Y at `placementHeight + viewerUpScale * (y - modelCenterY)`.
+  // Scale 0 gets no plane: a non-finite floor pins the camera at infinity.
+  const terrainClipY = terrainHeight !== null
+    ? modelCenterY + (terrainHeight - placementHeight) / viewerUpScale
+    : null;
 
   return {
     clampAnchorY,
@@ -126,9 +134,7 @@ export function computeCesiumPlacement({
     anchorOffset,
     ifcOriginHeight,
     placementHeight,
-    terrainClipY: terrainHeight !== null
-      ? terrainHeight - placementHeight + modelCenterY
-      : null,
+    terrainClipY: terrainClipY !== null && Number.isFinite(terrainClipY) ? terrainClipY : null,
     preferOrthometricTerrain: shouldPreferOrthometricTerrain(projectedCRS),
   };
 }
@@ -166,9 +172,10 @@ export function computeOrthogonalHeightForBaseAltitude({
   // The read path places IFC height z at `OrthogonalHeight*mapScale +
   // scaleZ*z` (cesium-bridge.ts), so the anchor's height is scaled before it
   // is subtracted, through the same map-absolute neutralisation.
-  const mapScale = getMapUnitScale(projectedCRS, lengthUnitScale);
-  const conversion = mapConversion && effectiveMapConversionForGeometry(mapConversion, mapScale, coordinateInfo);
-  const scaleZ = getEffectiveAxisScales(conversion ?? {}, mapScale, lengthUnitScale).z;
+  // With no conversion there is no Scale or FactorZ, and the axis reads 1.
+  const scaleZ = mapConversion
+    ? viewerUpScaleForGeometry(mapConversion, projectedCRS, lengthUnitScale, coordinateInfo)
+    : 1;
   const orthogonalHeightMeters = targetBaseAltitude - scaleZ * (rtcYupY + anchorY);
 
   return Math.round(
@@ -203,6 +210,34 @@ export function computeIfcOriginHeight(
   const scaleZ = getEffectiveAxisScales(mapConversion, mapScale, lengthUnitScale).z;
   return mapConversion.orthogonalHeight * mapScale
     + scaleZ * computeModelCenterInIfcMeters(coordinateInfo).ifcZ;
+}
+
+/** The frame's gizmo height arguments: the conversion, CRS, length unit, geometry. */
+type HeightFrame = [
+  mapConversion: MapConversion,
+  projectedCRS: Pick<ProjectedCRS, 'mapUnitScale'> | undefined,
+  lengthUnitScale: number,
+  coordinateInfo: CoordinateInfo | undefined,
+];
+
+/**
+ * Metres of height per viewer Y unit (Scale x FactorZ), through the
+ * map-absolute guard (#2526), as the Cesium bridge derives `viewerUpScale`.
+ */
+export function viewerUpScaleForGeometry(...[conversion, crs, lengthUnitScale, coordinateInfo]: HeightFrame): number {
+  const mapScale = getMapUnitScale(crs, lengthUnitScale);
+  const guarded = effectiveMapConversionForGeometry(conversion, mapScale, coordinateInfo);
+  return getEffectiveAxisScales(guarded, mapScale, lengthUnitScale).z;
+}
+
+/** The gizmo's height drag: a viewer-Y delta as an OrthogonalHeight delta in map units (#4675). */
+export function viewerHeightDeltaToOrthogonalHeightDeltaForGeometry(deltaY: number, ...frame: HeightFrame): number {
+  return metersToMapUnits(deltaY * viewerUpScaleForGeometry(...frame), frame[1], frame[2]);
+}
+
+/** The gizmo's height preview: the inverse of the drag conversion above (#4675). */
+export function orthogonalHeightDeltaToViewerDeltaForGeometry(deltaHeight: number, ...frame: HeightFrame): number {
+  return mapUnitsToMeters(deltaHeight, frame[1], frame[2]) / viewerUpScaleForGeometry(...frame);
 }
 
 export function viewerDeltaToProjectedDelta(
