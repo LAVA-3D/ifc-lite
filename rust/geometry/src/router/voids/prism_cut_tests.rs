@@ -1160,7 +1160,7 @@ fn a_legitimate_cut_9km_out_is_accepted_like_one_at_the_origin() {
 /// verdict at both, because `drift` is derived from the same `A` that makes the
 /// point reading move.
 #[test]
-fn an_open_removed_region_reaches_one_verdict_at_both_sites() {
+fn an_open_removed_region_is_accepted_at_both_sites_when_its_interval_fits() {
     // Host: a 1.1 x 1.0 x 1.0 box. `inside` is the host minus its last face and
     // `out` is that face, so `out ∪ inside` still re-triangulates the host and
     // the partition identity holds exactly — only the removed region is open.
@@ -1180,7 +1180,12 @@ fn an_open_removed_region_reaches_one_verdict_at_both_sites() {
         let out: Vec<PTri> = face.to_vec();
         let aabbs: Vec<(V3, V3)> = tris.iter().map(PTri::aabb).collect();
         let (lo, hi) = host_bounds(&tris);
-        let pf = unit_cutter_at(lo, hi);
+        let mut pf = unit_cutter_at(lo, hi);
+        // The removed region's centred interval is [0.733..., 1.1] m³. A
+        // 2 m³ cutter contains that whole interval, so both translated twins
+        // must be accepted. The old world-origin reading accepts only the near
+        // twin, making this a behavioral RED rather than two matching refusals.
+        pf.slab_area[0] = 2.0;
 
         // The point reading the bounds used to be taken on, and the verdict it
         // reaches. Reproduced here rather than called, because the production
@@ -1211,9 +1216,9 @@ fn an_open_removed_region_reaches_one_verdict_at_both_sites() {
         "the interval reading must reach ONE verdict at both sites; readings {readings:?}"
     );
     assert!(
-        !verdicts_interval[0],
-        "an open removed region has no defensible volume, so the analytic cut must \
-         be refused and the opening left to the exact kernel"
+        verdicts_interval[0],
+        "the whole centred interval fits inside the cutter, so both translated \
+         twins must be accepted"
     );
 }
 
@@ -1279,10 +1284,13 @@ fn a_cancelling_pair_of_holes_reads_wrong_with_no_margin() {
         a_net_norm < 1.0e-9,
         "fixture is not actually cancelling: |A| = {a_net_norm}"
     );
-    // Distinguishes this from the single-hole case, which the interval refuses
-    // (see `an_open_removed_region_reaches_one_verdict_at_both_sites`): the
-    // single hole's nonzero net `A` widens the interval past bound 2 or 3, but
-    // the cancelling pair's near-zero net `A` does not.
+    // Distinguishes this from the single-hole case (see
+    // `an_open_removed_region_is_accepted_at_both_sites_when_its_interval_fits`):
+    // a single hole's nonzero net `A` widens the interval, which can still be
+    // accepted if the cutter comfortably contains it — but the widened bound is
+    // a real, non-degenerate margin there. The cancelling pair's near-zero net
+    // `A` gives NO margin at all, and is accepted on the strength of a point
+    // reading that happens to be wrong.
     let single_hole_a_norm = norm(area_vector(&tris[2..])); // drop face 0 only
     assert!(
         single_hole_a_norm > 1.0,
@@ -1297,4 +1305,21 @@ fn a_cancelling_pair_of_holes_reads_wrong_with_no_margin() {
         (removed - 1.0).abs() > 0.3,
         "expected a materially wrong reading, got {removed}"
     );
+}
+
+#[test]
+fn a_real_prism_cut_routes_the_same_at_origin_and_nine_km() {
+    let far_mesh = framed_box_mesh(FAR_SITE_M, rot_z_frame(0.6), [0.55, 0.5, 0.5]);
+    let mut verdicts = Vec::new();
+    for mesh in [translated_to_origin(&far_mesh, FAR_SITE_M), far_mesh] {
+        let tris = ptris_from_mesh(&mesh).expect("box");
+        let (lo, hi) = host_bounds(&tris);
+        let pf = unit_cutter_at(lo, hi);
+        verdicts.push(cut_prism(&tris, &pf).is_ok());
+    }
+    assert_eq!(
+        verdicts[0], verdicts[1],
+        "the production analytic accept/defer route must be translation-invariant"
+    );
+    assert!(verdicts[0], "the control cut must take the analytic path");
 }
