@@ -180,12 +180,11 @@ ${WORKER_LEXING}
       // (e.g. "Aa"/"BB"), so without the byte compare a crafted/unlucky file
       // could have one type silently misread as another. Mirrors tokenizer.ts,
       // including its case fold (#4713): the cached name is upper case, and
-      // of the bytes accepted above only a-z is at or above 0x61.
+      // the loop above satisfies upperKeywordByte's [A-Za-z0-9_] precondition.
       var typeLen = pos - typeStart;
       var typeHash = typeLen;
       for (var i = typeStart; i < pos; i++) {
-        var kc = buf[i];
-        typeHash = (typeHash * 31 + (kc >= 0x61 ? kc - 0x20 : kc)) | 0;
+        typeHash = (typeHash * 31 + upperKeywordByte(buf[i])) | 0;
       }
       var cacheKey = typeLen + ':' + typeHash;
       var typeName = typeCache.get(cacheKey);
@@ -193,8 +192,7 @@ ${WORKER_LEXING}
       if (typeName !== undefined && typeName.length === typeLen) {
         cacheHitMatches = true;
         for (var v = 0; v < typeLen; v++) {
-          var kv = buf[typeStart + v];
-          if (typeName.charCodeAt(v) !== (kv >= 0x61 ? kv - 0x20 : kv)) {
+          if (typeName.charCodeAt(v) !== upperKeywordByte(buf[typeStart + v])) {
             cacheHitMatches = false;
             break;
           }

@@ -131,6 +131,15 @@ export function isKeywordLeadByte(b: number): boolean {
   return (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a);
 }
 
+// The upper-case form of keyword byte `b`. Precondition: `b` is a keyword
+// byte, [A-Za-z0-9_], which every caller's token loop has already checked. Of
+// those only a-z is at or above 0x61, so one compare folds case; any other
+// byte (0x7B and up) would come back wrong. `scan-worker-lexing.ts` holds the
+// worker's copy as `upperKeywordByte`.
+export function upperKeywordByte(b: number): number {
+  return b >= 0x61 ? b - 0x20 : b;
+}
+
 // ASCII whitespace per ISO 10303-21. Not /\s/: that also matches U+00A0 and the
 // other Unicode space separators, which the byte scanners and the Rust half do
 // not treat as whitespace.

@@ -18,6 +18,7 @@ import {
   skipComment,
   skipLexical,
   skipTrivia,
+  upperKeywordByte,
 } from './step-lexing.js';
 import {
   recordCloseOffset,
@@ -230,15 +231,13 @@ export class StepTokenizer {
         //
         // Case-folded (#4713): the keyword's case is not significant, so the
         // cached name is upper case and every spelling of it shares one entry.
-        // The loop above accepts only [A-Za-z0-9_], and of those only a-z is
-        // at or above 0x61, so `c >= 0x61 ? c - 0x20 : c` is the upper-case
-        // byte: no allocation per byte, and an upper-case file hashes exactly
-        // as before.
+        // The loop above satisfies upperKeywordByte's [A-Za-z0-9_]
+        // precondition. No allocation per byte, and an upper-case file hashes
+        // exactly as before.
         const typeLen = pos - typeStart;
         let typeHash = typeLen;
         for (let i = typeStart; i < pos; i++) {
-          const c = buf[i];
-          typeHash = (typeHash * 31 + (c >= 0x61 ? c - 0x20 : c)) | 0;
+          typeHash = (typeHash * 31 + upperKeywordByte(buf[i])) | 0;
         }
         const cacheKey = `${typeLen}:${typeHash}`;
         let type = typeCache.get(cacheKey);
@@ -246,8 +245,7 @@ export class StepTokenizer {
         if (type !== undefined && type.length === typeLen) {
           cacheHitMatches = true;
           for (let i = 0; i < typeLen; i++) {
-            const c = buf[typeStart + i];
-            if (type.charCodeAt(i) !== (c >= 0x61 ? c - 0x20 : c)) {
+            if (type.charCodeAt(i) !== upperKeywordByte(buf[typeStart + i])) {
               cacheHitMatches = false;
               break;
             }

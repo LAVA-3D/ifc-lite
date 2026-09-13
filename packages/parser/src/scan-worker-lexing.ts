@@ -30,6 +30,12 @@ export const WORKER_LEXING = `
     return (t >= 0x41 && t <= 0x5A) || (t >= 0x61 && t <= 0x7A);
   }
 
+  // The upper-case form of keyword byte b, which must already be [A-Za-z0-9_].
+  // Mirrors upperKeywordByte in step-lexing.ts, where the precondition is argued.
+  function upperKeywordByte(b) {
+    return b >= 0x61 ? b - 0x20 : b;
+  }
+
   // Whether a STEP comment opens at p.
   function opensCommentAt(p) {
     return p + 1 < len && buf[p] === 0x2F && buf[p + 1] === 0x2A;
