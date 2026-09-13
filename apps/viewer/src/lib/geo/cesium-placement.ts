@@ -79,6 +79,11 @@ export interface CesiumPlacementInput {
   ifcOriginHeight: number;
   terrainHeight: number | null;
   storeyElevations?: Map<number, number>;
+  /**
+   * The camera bridge's `viewerUpScale` (Scale x FactorZ): metres of height
+   * per viewer Y unit in the frame the clip plane is expressed in.
+   */
+  viewerUpScale: number;
 }
 
 export interface CesiumPlacementResult {
@@ -110,6 +115,7 @@ export function computeCesiumPlacement({
   ifcOriginHeight,
   terrainHeight,
   storeyElevations,
+  viewerUpScale,
 }: CesiumPlacementInput): CesiumPlacementResult {
   const bounds = coordinateInfo?.originalBounds;
   const modelCenterY = bounds ? (bounds.min.y + bounds.max.y) / 2 : 0;
@@ -118,6 +124,13 @@ export function computeCesiumPlacement({
   const anchorOffset = modelCenterY - clampAnchorY;
   // Model placement = authored IFC altitude. No clamp. No auto-adjust.
   const placementHeight = ifcOriginHeight;
+  // The frame draws viewer Y at `placementHeight + viewerUpScale * (y -
+  // modelCenterY)`, so the terrain's height difference is divided back out.
+  // A zero vertical scale (Scale 0) has no terrain plane; a non-finite floor
+  // would pin the camera at infinity (useCesiumCameraSync).
+  const terrainClipY = terrainHeight !== null
+    ? modelCenterY + (terrainHeight - placementHeight) / viewerUpScale
+    : null;
 
   return {
     clampAnchorY,
@@ -126,9 +139,7 @@ export function computeCesiumPlacement({
     anchorOffset,
     ifcOriginHeight,
     placementHeight,
-    terrainClipY: terrainHeight !== null
-      ? terrainHeight - placementHeight + modelCenterY
-      : null,
+    terrainClipY: terrainClipY !== null && Number.isFinite(terrainClipY) ? terrainClipY : null,
     preferOrthometricTerrain: shouldPreferOrthometricTerrain(projectedCRS),
   };
 }
@@ -166,9 +177,10 @@ export function computeOrthogonalHeightForBaseAltitude({
   // The read path places IFC height z at `OrthogonalHeight*mapScale +
   // scaleZ*z` (cesium-bridge.ts), so the anchor's height is scaled before it
   // is subtracted, through the same map-absolute neutralisation.
-  const mapScale = getMapUnitScale(projectedCRS, lengthUnitScale);
-  const conversion = mapConversion && effectiveMapConversionForGeometry(mapConversion, mapScale, coordinateInfo);
-  const scaleZ = getEffectiveAxisScales(conversion ?? {}, mapScale, lengthUnitScale).z;
+  // With no conversion there is no Scale or FactorZ, and the axis reads 1.
+  const scaleZ = mapConversion
+    ? viewerUpScaleForGeometry(mapConversion, projectedCRS, lengthUnitScale, coordinateInfo)
+    : 1;
   const orthogonalHeightMeters = targetBaseAltitude - scaleZ * (rtcYupY + anchorY);
 
   return Math.round(
@@ -203,6 +215,23 @@ export function computeIfcOriginHeight(
   const scaleZ = getEffectiveAxisScales(mapConversion, mapScale, lengthUnitScale).z;
   return mapConversion.orthogonalHeight * mapScale
     + scaleZ * computeModelCenterInIfcMeters(coordinateInfo).ifcZ;
+}
+
+/**
+ * Metres of height per viewer Y unit (Scale x FactorZ) for this geometry,
+ * through the map-absolute guard (#2526) as the Cesium bridge computes its
+ * `viewerUpScale`. The placement gizmo's height handle divides a height
+ * change by it for the preview and multiplies a drag by it (#4675).
+ */
+export function viewerUpScaleForGeometry(
+  mapConversion: MapConversion,
+  projectedCRS: Pick<ProjectedCRS, 'mapUnitScale'> | undefined,
+  lengthUnitScale: number,
+  coordinateInfo: CoordinateInfo | undefined,
+): number {
+  const mapScale = getMapUnitScale(projectedCRS, lengthUnitScale);
+  const conversion = effectiveMapConversionForGeometry(mapConversion, mapScale, coordinateInfo);
+  return getEffectiveAxisScales(conversion, mapScale, lengthUnitScale).z;
 }
 
 export function viewerDeltaToProjectedDelta(

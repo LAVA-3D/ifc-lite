@@ -175,6 +175,7 @@ export function useCesiumBridge({
         ifcOriginHeight: modelTentative.modelOrigin.height,
         terrainHeight: terrainHForFrame,
         storeyElevations,
+        viewerUpScale: modelTentative.viewerUpScale,
       });
       const cameraPlacement = usesSeparateCameraBridge
         ? computeCesiumPlacement({
@@ -183,6 +184,7 @@ export function useCesiumBridge({
             ifcOriginHeight: cameraTentative.modelOrigin.height,
             terrainHeight: terrainHForFrame,
             storeyElevations,
+            viewerUpScale: cameraTentative.viewerUpScale,
           })
         : placement;
 

@@ -17,6 +17,7 @@ import {
   metersToMapUnits,
   projectedDeltaToViewerDeltaForGeometry,
   viewerDeltaToProjectedDeltaForGeometry,
+  viewerUpScaleForGeometry,
 } from '@/lib/geo/cesium-placement';
 import { findClampAnchorY } from '@/lib/geo/clamp-anchor';
 import { effectiveMapConversionForGeometry } from '@/lib/geo/map-absolute';
@@ -403,10 +404,13 @@ export function CesiumPlacementEditor({
       lengthUnitScale,
       coordinateInfo,
     );
+    // Heights too: the camera frame draws a viewer Y unit as Scale x FactorZ
+    // metres, as the XY offset above divides by its axis scale (#4675).
+    const upScale = viewerUpScaleForGeometry(guardConversion, projectedCRS, lengthUnitScale, coordinateInfo);
 
     return {
       x: centerX + xyOffset.x,
-      y: anchorY + deltaHeightMeters,
+      y: anchorY + deltaHeightMeters / upScale,
       z: centerZ + xyOffset.z,
     };
   }, [
@@ -517,10 +521,14 @@ export function CesiumPlacementEditor({
     const ray = rayFromPointerEvent(e.clientX, e.clientY);
     if (!ray) return;
 
+    // The session baseline under this gesture's frozen draft; see the XY note below.
+    const dragConversion = { ...baseMapConversion, ...dragState.startDraft };
     if (dragState.mode === 'height') {
       const worldY = closestYOnVerticalLineFromRay(ray, dragState.anchorX, dragState.anchorZ);
       if (worldY === null) return;
-      const deltaMeters = worldY - dragState.startWorldY;
+      // One viewer Y unit is Scale x FactorZ metres of height (#4675).
+      const deltaMeters = (worldY - dragState.startWorldY)
+        * viewerUpScaleForGeometry(dragConversion, projectedCRS, lengthUnitScale, coordinateInfo);
       const mus = getMapUnitScale(projectedCRS, lengthUnitScale);
       updateDraft({
         orthogonalHeight: roundToMm(
@@ -567,7 +575,7 @@ export function CesiumPlacementEditor({
     const projectedDelta = viewerDeltaToProjectedDeltaForGeometry(
       deltaX,
       deltaZ,
-      { ...baseMapConversion, ...dragState.startDraft },
+      dragConversion,
       projectedCRS,
       lengthUnitScale,
       coordinateInfo,
