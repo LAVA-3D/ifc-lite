@@ -76,6 +76,18 @@ const LAYERS_PANEL = join(VIEWER_DIR, 'layers/LayersPanel.tsx');
  *  `bg-white` as light. */
 const PROPERTIES_PANEL_SURFACE = 'bg-white dark:bg-black';
 
+/** `RibbonToolbar`'s outer wrapper (`apps/viewer/src/components/viewer/ribbon/RibbonToolbar.tsx`,
+ *  the always-present ancestor of every `RibbonGroup`) — a literal
+ *  `border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-black`,
+ *  not the `bg-background` semantic token. This matters in two themes:
+ *  `.dark .bg-background` resolves to `var(--tokyo-night)` (`#16161e`), not
+ *  the real surface's literal `#000`; and `.colorful` has a selector keyed
+ *  specifically on `.border-b.bg-white` (`apps/viewer/src/index.css`) that
+ *  tints it violet-glass, which the generic `.bg-background` rule (resolving
+ *  to `var(--cf-glass)`) does not match. `border-b` is included here so the
+ *  colorful selector actually applies. */
+const RIBBON_TOOLBAR_SURFACE = 'border-b bg-white dark:bg-black';
+
 const THEMES: Theme[] = ['light', 'dark', 'colorful'];
 
 after(async () => {
@@ -160,6 +172,12 @@ describe('panel secondary text meets WCAG AA on its real surface (#4792)', () =>
       name: 'MeasurePanel projected-CRS name',
       file: MEASURE_PANEL,
       anchor: 'reground">m</span>\n            </div>\n          </div>\n          <div ',
+      // MeasurePanel's real panel surface is `bg-background/95 backdrop-blur-sm`,
+      // floating translucent over the live 3D viewport — deliberately
+      // measured here against the opaque `bg-background` as the nearest
+      // reasonable proxy, since the true composited backdrop behind the
+      // blur is scene-dependent (whatever geometry/background is under the
+      // panel at the time) and not a fixed value this harness can render.
       surface: 'bg-background',
     },
     {
@@ -252,7 +270,7 @@ describe('panel secondary text meets WCAG AA on its real surface (#4792)', () =>
       name: 'ribbon/primitives RibbonGroup label',
       file: RIBBON_PRIMITIVES,
       anchor: "aria-label={label} className={cn('flex h-full shrink-0 flex-col px-1.5', className)}>\n      <div className=\"flex min-h-0 flex-1 items-stretch justify-center gap-0.5 pt-1\">\n        {children}\n      </div>\n      <div ",
-      surface: 'bg-background',
+      surface: RIBBON_TOOLBAR_SURFACE,
     },
     {
       name: 'compare/ChangeDetailView data-count parenthetical',
