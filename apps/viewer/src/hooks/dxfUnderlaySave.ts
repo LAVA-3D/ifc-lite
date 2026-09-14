@@ -49,30 +49,40 @@ import { getCachedHash } from './drawingMarkupRestorePrecedence.js';
 
 /** hash -> the most recently requested `dxfUnderlays` value not yet written. */
 const pendingByHash = new Map<string, DxfUnderlayState[]>();
-/** hash -> whether a write loop is currently draining {@link pendingByHash} for it. */
-const writingHashes = new Set<string>();
+/** hash -> the write loop currently draining {@link pendingByHash} for it. */
+const drainsByHash = new Map<string, Promise<void>>();
 /** model id -> latest edit made while that model's content hash was unresolved. */
 const pendingByModelId = new Map<string, DxfUnderlayState[]>();
 
-async function drain(hash: string): Promise<void> {
-  if (writingHashes.has(hash)) return; // a loop for this hash is already running and will pick up the latest pending value itself
-  writingHashes.add(hash);
-  try {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const value = pendingByHash.get(hash);
-      if (value === undefined) break;
-      pendingByHash.delete(hash);
-      await saveDxfUnderlaysEntry(hash, value);
+function drain(hash: string): Promise<void> {
+  const active = drainsByHash.get(hash);
+  if (active) return active;
+
+  const task = (async () => {
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const value = pendingByHash.get(hash);
+        if (value === undefined) break;
+        pendingByHash.delete(hash);
+        await saveDxfUnderlaysEntry(hash, value);
+      }
+    } finally {
+      drainsByHash.delete(hash);
     }
-  } finally {
-    writingHashes.delete(hash);
-  }
+  })();
+  drainsByHash.set(hash, task);
+  return task;
 }
 
 function enqueueSave(hash: string, dxfUnderlays: DxfUnderlayState[]): void {
   pendingByHash.set(hash, dxfUnderlays);
   void drain(hash);
+}
+
+async function waitForPendingSave(hash: string): Promise<void> {
+  const active = drainsByHash.get(hash);
+  if (active) await active;
 }
 
 /** Registers the raw store subscription that saves `dxfUnderlays` on every change, scoped to the active model's already-resolved content hash. Idempotent — module-level, subscribed once regardless of how many components mount `useDrawing2DPersistence`. */
@@ -100,12 +110,13 @@ export function ensureDxfUnderlaySaveSubscription(): void {
   });
 }
 
-/** Flush the latest edit captured while `modelId` was still hashing. Returns whether a pending live value superseded restore. */
+/** Flush the latest edit captured while `modelId` was still hashing. Returns whether a live value is pending and supersedes restore. */
 export function settleDxfUnderlayHash(modelId: string, hash: string | null): boolean {
   const pending = pendingByModelId.get(modelId);
   pendingByModelId.delete(modelId);
   if (hash && pending !== undefined) enqueueSave(hash, pending);
-  return pending !== undefined;
+  const skip = pending !== undefined || (hash !== null && drainsByHash.has(hash));
+  return skip;
 }
 
 // ── Restore ──────────────────────────────────────────────────────────
@@ -132,6 +143,11 @@ export async function restoreDxfUnderlaysFor(
   hash: string,
   stillCurrent: () => boolean,
 ): Promise<void> {
+  // A cached A→B→A switch can arrive while A's latest removal is coalesced
+  // behind an in-flight write. Reading before that drain commits would merge
+  // the older saved underlay back into the live workspace.
+  await waitForPendingSave(hash);
+  if (!stillCurrent()) return;
   const saved = await loadDxfUnderlaysEntry(hash);
   if (!stillCurrent()) return;
   if (!saved) return;
