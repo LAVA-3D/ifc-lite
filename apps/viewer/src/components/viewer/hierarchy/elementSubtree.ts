@@ -16,6 +16,7 @@
 import { getAggregatedChildren, collectAggregatedDescendants, type AggregationRelationships } from '@/utils/aggregation';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import type { FederatedModel } from '@/store';
+import { isPhysicalObjectType } from '@/lib/physical-objects';
 import { resolveTreeGlobalId } from './productTree';
 import type { TreeNode, HierarchySortMode } from './types';
 
@@ -161,6 +162,14 @@ export function emitElementSubtree(
  * (`makeShapeTest`'s `geometryKnown` gate) — absence is unanswerable then,
  * so every element is emitted normally with no split and no "Other" row,
  * exactly like the count badge already treats that window.
+ *
+ * A shapeless row joins "Other" only when it is ALSO a physical object
+ * (`isPhysicalObjectType` — the same predicate `AssemblyGeometry.isOther`
+ * gates on for the By Class / By Type tabs, #4764 review). A directly
+ * contained `IfcAnnotation` or other non-physical row with no representation
+ * is schema-legal and ordinary — it renders as a normal selectable row
+ * instead, never grayed or bucketed, so the three tree paths agree on what
+ * "Other" means.
  */
 export function emitElementsWithOtherBucket(
   elementIds: readonly number[],
@@ -186,7 +195,16 @@ export function emitElementsWithOtherBucket(
   const shaped: number[] = [];
   const other: number[] = [];
   for (const elementId of ordered) {
-    (hasShape(elementId) ? shaped : other).push(elementId);
+    if (hasShape(elementId)) {
+      shaped.push(elementId);
+      continue;
+    }
+    // Mirrors `AssemblyGeometry.isOther`'s physical-object gate: only a
+    // physical element with no shape belongs in "Other". A non-physical row
+    // (an annotation, for instance) with no representation is normal and
+    // stays a plain row instead of being swept into the bucket.
+    const typeName = dataStore.entities?.getTypeName(elementId) ?? 'Unknown';
+    (isPhysicalObjectType(typeName) ? other : shaped).push(elementId);
   }
 
   for (const elementId of shaped) {
