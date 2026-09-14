@@ -1,0 +1,136 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+/**
+ * `dxfUnderlays`'s half of the #4153 persistence bridge — the IndexedDB
+ * counterpart to `drawingMarkupSave.ts`'s `localStorage` save subscription.
+ * Split into its own module for the same module-size-budget reason as that
+ * file and `useDrawing2DPersistence.ts`; wired into both from
+ * `useDrawing2DPersistence.ts` (`ensureDxfUnderlaySaveSubscription` alongside
+ * `ensureSaveSubscription`, and {@link restoreDxfUnderlaysFor} from inside
+ * that hook's `applyHash`).
+ *
+ * ## Why this does NOT reuse `drawingMarkupSave.ts`'s suppress/restoring-model
+ * guards
+ * Those guards (`suppressNextSaveFor`, `restoringModelId`) exist because the
+ * five markup fields are cleared to defaults and re-restored on EVERY
+ * `activeModelId` transition (`FIELD_CLASSIFICATION`'s `'committed'`), which
+ * creates a window where an atomic clear looks identical to a genuine edit.
+ * `dxfUnderlays` is classified `'preserved'` — `markupTransitionPatch` never
+ * touches it on a switch — so there is no accompanying clear for a save
+ * listener to mistake for a real change, and no restore-vs-genuine-edit
+ * ambiguity to suppress. The only guard this module needs is the same
+ * `stillCurrent()` check `useDrawing2DPersistence.ts` already threads through
+ * every other async step in its restore effect, so a slow IndexedDB lookup
+ * for a model the user has since switched away from can never land on the
+ * wrong model's state.
+ *
+ * ## Save coalescing
+ * IndexedDB writes are async; a rapid sequence of edits to the same model
+ * (e.g. dragging a placement slider) must not queue unboundedly many
+ * overlapping writes. `enqueueSave` keeps at most one write per hash
+ * in-flight and one pending value behind it — any edits arriving while a
+ * write is already running simply replace the pending value, so the pending
+ * write loop below always ends up persisting whatever was most recently set,
+ * without executing every intermediate value or adding a debounce timer.
+ */
+
+import { useViewerStore } from '@/store';
+import type { DxfUnderlayState } from '@/store/slices/drawing2DSlice.js';
+import {
+  loadDxfUnderlaysEntry,
+  saveDxfUnderlaysEntry,
+  mergeDxfUnderlays,
+} from '@/store/slices/drawing2DSlice.dxfPersistence.js';
+import { getCachedHash } from './drawingMarkupRestorePrecedence.js';
+
+// ── Save ─────────────────────────────────────────────────────────────
+
+/** hash -> the most recently requested `dxfUnderlays` value not yet written. */
+const pendingByHash = new Map<string, DxfUnderlayState[]>();
+/** hash -> whether a write loop is currently draining {@link pendingByHash} for it. */
+const writingHashes = new Set<string>();
+
+async function drain(hash: string): Promise<void> {
+  if (writingHashes.has(hash)) return; // a loop for this hash is already running and will pick up the latest pending value itself
+  writingHashes.add(hash);
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const value = pendingByHash.get(hash);
+      if (value === undefined) break;
+      pendingByHash.delete(hash);
+      await saveDxfUnderlaysEntry(hash, value);
+    }
+  } finally {
+    writingHashes.delete(hash);
+  }
+}
+
+function enqueueSave(hash: string, dxfUnderlays: DxfUnderlayState[]): void {
+  pendingByHash.set(hash, dxfUnderlays);
+  void drain(hash);
+}
+
+/** Registers the raw store subscription that saves `dxfUnderlays` on every change, scoped to the active model's already-resolved content hash. Idempotent — module-level, subscribed once regardless of how many components mount `useDrawing2DPersistence`. */
+let saveSubscriptionStarted = false;
+export function ensureDxfUnderlaySaveSubscription(): void {
+  if (saveSubscriptionStarted) return;
+  saveSubscriptionStarted = true;
+  let prev = useViewerStore.getState();
+  useViewerStore.subscribe((state) => {
+    const changed = state.dxfUnderlays !== prev.dxfUnderlays;
+    const modelId = state.activeModelId;
+    prev = state;
+    if (!changed || !modelId) return;
+    // No hash resolved yet for the active model (still hashing, or no
+    // `sourceFile` at all) -> nothing to key this save on. Matches
+    // `drawingMarkupSave.ts`'s "no hash, no save" degrade: the edit stays
+    // live in memory but is not persisted until a hash becomes available.
+    const hash = getCachedHash(modelId);
+    if (!hash) return;
+    enqueueSave(hash, state.dxfUnderlays);
+  });
+}
+
+/** Test-only: drop all save-path bookkeeping between tests. */
+export function __resetDxfUnderlaySaveStateForTests(): void {
+  saveSubscriptionStarted = false;
+  pendingByHash.clear();
+  writingHashes.clear();
+}
+
+// ── Restore ──────────────────────────────────────────────────────────
+
+/**
+ * Load `hash`'s saved `dxfUnderlays` (if any) and additively merge them
+ * into the live store — called from `useDrawing2DPersistence.ts`'s
+ * `applyHash` once a model's content hash has resolved.
+ *
+ * `stillCurrent` is the SAME closure that hook's restore effect already
+ * uses to guard its other async steps: it is only `true` while the effect
+ * that started this call is still the latest one for the active model, so a
+ * fast switch away (and possibly back) while this lookup is in flight
+ * cannot let a stale result land on the wrong model's `dxfUnderlays`.
+ *
+ * A `null` load result (nothing saved for `hash`, or a corrupt stored
+ * value) leaves the store's `dxfUnderlays` completely untouched — no
+ * `setState` call at all — which is what "restores as absent, not as an
+ * explicit empty array" means at this layer: {@link mergeDxfUnderlays}'s own
+ * `saved.length === 0` branch would already no-op on an explicit `[]`, but
+ * this function does not even reach that branch for `null`.
+ */
+export async function restoreDxfUnderlaysFor(
+  modelId: string,
+  hash: string,
+  stillCurrent: () => boolean,
+): Promise<void> {
+  const saved = await loadDxfUnderlaysEntry(hash);
+  if (!stillCurrent()) return;
+  if (!saved) return;
+
+  const current = useViewerStore.getState().dxfUnderlays;
+  const merged = mergeDxfUnderlays(current, saved.dxfUnderlays);
+  if (merged !== current) useViewerStore.setState({ dxfUnderlays: merged });
+}

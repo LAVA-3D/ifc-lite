@@ -22,6 +22,14 @@
  * Mount once, unconditionally (`useDrawing2DPersistence()` near the top of
  * `Section2DPanel.tsx`, before its `if (!panelVisible) return null`) so
  * restore runs as soon as a model loads even if the 2D panel is closed.
+ *
+ * `dxfUnderlays` (issue #4153, reopened) rides the same resolved hash but is
+ * NOT one of `drawingMarkupSave.ts`'s five committed fields — it is
+ * IndexedDB-backed (`drawing2DSlice.dxfPersistence.ts`) and additively
+ * restored by `dxfUnderlaySave.ts`'s `restoreDxfUnderlaysFor`, called from
+ * `applyHash` below once the hash resolves. See that module's doc for why
+ * its restore never clears or replaces the live array the way the markup
+ * fields do.
  */
 
 import { useEffect, useRef } from 'react';
@@ -31,6 +39,7 @@ import { computeFullSourceHashFromBlob } from '@/utils/sourceContentHash.js';
 import { loadDrawing2DEntry, defaultMarkupPatch, suppressNextSaveFor } from '@/store/slices/drawing2DSlice.persistence.js';
 import { getCachedHash, setCachedHash, notifyDecided } from './drawingMarkupRestorePrecedence.js';
 import { resetSaveState, beginRestore, endRestore, setRestoredSectionConfig, ensureSaveSubscription } from './drawingMarkupSave.js';
+import { ensureDxfUnderlaySaveSubscription, restoreDxfUnderlaysFor } from './dxfUnderlaySave.js';
 
 export { hasPersistedMarkupEntryFor, onLocalStorageDecidedFor } from './drawingMarkupRestorePrecedence.js';
 export { notifyDrawing2DSectionConfig, consumeRestoredSectionConfig } from './drawingMarkupSave.js';
@@ -78,7 +87,10 @@ export function useDrawing2DPersistence(): void {
   const activeModelId = useViewerStore((s) => s.activeModelId);
   const tokenRef = useRef(0);
 
-  useEffect(() => { ensureSaveSubscription(); }, []);
+  useEffect(() => {
+    ensureSaveSubscription();
+    ensureDxfUnderlaySaveSubscription();
+  }, []);
 
   useEffect(() => {
     const token = ++tokenRef.current;
@@ -120,6 +132,15 @@ export function useDrawing2DPersistence(): void {
       if (!stillCurrent()) return;
       endRestore(activeModelId);
       if (!hash) return;
+
+      // dxfUnderlays (issue #4153, reopened) is classified 'preserved' by
+      // `drawing2DSlice.markupTransition.ts` — never cleared or replaced on
+      // a switch — so its restore is independent of whether THIS model has
+      // a saved markup `entry` below, and is additive (see
+      // `dxfUnderlaySave.ts`'s `restoreDxfUnderlaysFor`/`mergeDxfUnderlays`)
+      // rather than a replace. Not awaited: it guards its own staleness via
+      // `stillCurrent`, the same closure every other async step here uses.
+      void restoreDxfUnderlaysFor(activeModelId, hash, stillCurrent);
 
       const defaults = getDefaultDrawing2DState().drawing2DDisplayOptions;
       const entry = loadDrawing2DEntry(hash, defaults);
