@@ -277,6 +277,17 @@ describe('an omitted entity list survives the bridge for export.ifc (#4738)', ()
     expect(seen).toEqual([undefined]);
   });
 
+  it('an explicit undefined is the same absence — the documented migration', async () => {
+    // `ifc(undefined, options)` is what the guide tells callers to write in
+    // place of `ifc([], options)`. The handle exists and dumps to `undefined`,
+    // so an arity-only check would have run `.map` on it and thrown a
+    // TypeError inside the one environment the optional arg type is for.
+    const { sdk, seen } = realSdk();
+    const value = await withSandbox(sdk, (run) => run(`bim.export.ifc(undefined, { schema: 'IFC4' })`));
+    expect(value).toBe('ISO-10303-21;WHOLE');
+    expect(seen).toEqual([undefined]);
+  });
+
   it('bim.export.ifc([]) is still refused, so the distinction is real', async () => {
     const { sdk, seen } = realSdk();
     await expect(withSandbox(sdk, (run) => run(`bim.export.ifc([])`))).rejects.toThrow(/matched nothing/);

@@ -11,6 +11,7 @@ import type { StoreApi } from './types.js';
 import type { ScheduleExtraction, IfcDataStore } from '@ifc-lite/parser';
 import { asSourceBytes } from '@ifc-lite/parser';
 import { createBimContext } from '@ifc-lite/sdk';
+import { LocalBackend } from '../local-backend.js';
 import { useViewerStore } from '../../store/index.js';
 
 test('resolveVisibilityFilterSets honors legacy single-model hidden and isolated state (routed through resolveExportVisibility, #4333 follow-up)', () => {
@@ -848,10 +849,9 @@ describe('sdk.export.ifc() with no ref list exports the whole model (#4738)', ()
     useViewerStore.getState().resetViewerState();
   });
 
-  /** The real namespace over the real export adapter; the rest of the backend is unused here. */
+  /** The shipping assembly: the real namespace over the real viewer backend. */
   function bimOverViewer() {
-    const backend = { export: createExportAdapter(useViewerStore as unknown as StoreApi) };
-    return createBimContext({ backend: backend as unknown as Parameters<typeof createBimContext>[0]['backend'] });
+    return createBimContext({ backend: new LocalBackend(useViewerStore as unknown as StoreApi) });
   }
 
   it('omitting the argument exports every entity of the active model', () => {

@@ -200,7 +200,7 @@ export class ExportNamespace {
    * caller meant (`export-adapter.ts` in the viewer needs exactly that).
    */
   ifc(refs?: EntityRef[] | null, options: ExportStepOptions = {}): string | Uint8Array {
-    if (Array.isArray(refs) && refs.length === 0) {
+    if (refs?.length === 0) {
       throw new Error(
         'export.ifc: the entity list is empty, so an isolation filter matched nothing. '
         + 'Refusing to export the whole model instead. Omit the argument to export the whole model.',

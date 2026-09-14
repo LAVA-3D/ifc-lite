@@ -18,6 +18,7 @@ import { readFile } from 'node:fs/promises';
 
 import { GeometryProcessor, type GeometryResult } from '@ifc-lite/geometry';
 import { ToolErrorCode } from '@ifc-lite/mcp/browser';
+import { countStepEntities } from '@ifc-lite/export';
 import type { Clash } from '@ifc-lite/clash';
 import { dispatch, parsePlaygroundModel, topClashRows, type LoadedPlaygroundModel } from './playground-dispatcher.js';
 import { playgroundFiles } from './playground-files.js';
@@ -179,11 +180,6 @@ describe('count_entities group_by:type universe (#3765)', () => {
  * that matched nothing stays an empty array, and an empty array is refused.
  */
 describe('playground export_ifc with global_ids that match nothing (#4738)', () => {
-  /** STEP instance lines (`#123=`), one per entity in this writer's output. */
-  function stepEntities(text: string): number {
-    return (text.match(/^#\d+=/gm) ?? []).length;
-  }
-
   async function helloWall(): Promise<LoadedPlaygroundModel> {
     const path = new URL('../../../public/samples/hello-wall.ifc', import.meta.url);
     const bytes = new Uint8Array(await readFile(path));
@@ -197,7 +193,7 @@ describe('playground export_ifc with global_ids that match nothing (#4738)', () 
     // exporter is broken: with no allowlist the tool still stages every entity.
     const whole = await dispatch(model, 'export_ifc', {});
     assert.equal(whole.isError, false);
-    const wholeEntities = stepEntities(await playgroundFiles.list()[0].blob.text());
+    const wholeEntities = countStepEntities(new Uint8Array(await playgroundFiles.list()[0].blob.arrayBuffer()));
     assert.ok(wholeEntities > 1, `expected a multi-entity export, got ${wholeEntities}`);
 
     const stagedBefore = playgroundFiles.list().length;
@@ -206,7 +202,7 @@ describe('playground export_ifc with global_ids that match nothing (#4738)', () 
     // RED before the fix: `isError` was false and the newly staged blob held
     // all `wholeEntities` instances — the same bytes as the control above.
     if (!zero.isError) {
-      const wrote = stepEntities(await playgroundFiles.list()[0].blob.text());
+      const wrote = countStepEntities(new Uint8Array(await playgroundFiles.list()[0].blob.arrayBuffer()));
       assert.ok(wrote < wholeEntities, `zero-match export wrote ${wrote} of ${wholeEntities} entities`);
     }
     assert.equal(zero.isError, true);

@@ -74,9 +74,17 @@ export function getAllModelEntries(state: ViewerState): [string, ModelLike][] {
 
 /**
  * The model an SDK call means when it names none — `bim.export.ifc()` with no
- * ref list (#4738). The user's active selection wins, then the first entry of
- * the unified list (which is the legacy single-model store when the federated
- * Map is empty). `undefined` when nothing is loaded.
+ * ref list (#4738). The user's active selection wins (only if it is actually
+ * loaded), then the first entry of the unified list, which is the legacy
+ * single-model store when the federated Map is empty. `undefined` when nothing
+ * is loaded.
+ *
+ * Three neighbours answer the same question with their own precedence and are
+ * deliberately NOT changed here: `model-adapter.ts`'s `activeId` (does not
+ * check the id resolves), and `schedule-adapter.ts` / `structural-adapter.ts`'s
+ * `resolveStore` (legacy store before the active selection). Aligning them
+ * would move which model those namespaces read in a federated session, which
+ * is a behaviour change of its own.
  */
 export function getDefaultModelId(state: ViewerState): string | undefined {
   const active = state.activeModelId;
