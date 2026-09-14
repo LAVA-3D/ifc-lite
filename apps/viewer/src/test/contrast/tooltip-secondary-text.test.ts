@@ -28,10 +28,11 @@
  * NON-VACUOUSNESS: reverting any of the three cherry-picked #4784 fixes back
  * to `text-primary-foreground/{70,80}` reproduces #4783 exactly — measured
  * ratios of ~1.00-1.13 in all three themes (invisible: the "REGRESSION"
- * cases below assert this). Reverting one of the still-in-progress
- * `KNOWN_GAP` fixtures further (e.g. widening `/80` toward `/50`) likewise
- * reddens, because the floor assertions are pinned close to today's measured
- * value, not to an arbitrary looser number.
+ * cases below assert this). BsddCard's dataType line was itself a known gap
+ * (`text-muted-foreground/80` measured 3.29:1 in light theme, below AA)
+ * until the `/80` was dropped to match the sibling description line; the
+ * same fixedCases assertion below reddens if `/80` (or any other opacity
+ * reduction) is reintroduced on that line.
  */
 
 import { describe, it, after } from 'node:test';
@@ -78,6 +79,11 @@ describe('tooltip secondary text meets WCAG AA on the real popover surface (#478
       anchor: '{prop.description && <p ',
     },
     {
+      name: 'BsddCard property dataType',
+      file: BSDD_CARD,
+      anchor: '{prop.dataType && <p ',
+    },
+    {
       name: 'CountBadgeTooltip breakdown line',
       file: COUNT_BADGE_TOOLTIP,
       anchor: '<p key={line} ',
@@ -96,31 +102,6 @@ describe('tooltip secondary text meets WCAG AA on the real popover surface (#478
       });
     }
   }
-});
-
-describe('tooltip secondary text: known pre-existing AA gaps (measured, not asserted-away)', () => {
-  // BsddCard's dataType line is `text-muted-foreground/80` — the reduced
-  // opacity does not clear normal-text AA (4.5:1) at 10px, though it clears
-  // the large-text bar (3:1) with room. Per this task's own instruction: pin
-  // the ACTUAL measured floor rather than asserting a number the code does
-  // not meet. Measured floor (light theme, 2026-09-14): 3.29:1. Asserting
-  // 3.2 leaves ~0.1 margin for float/rendering jitter without hiding a
-  // regression below today's value.
-  it('BsddCard property dataType line: measured floor holds, but does NOT meet normal-text AA', async () => {
-    const className = extractClassNameAfter(BSDD_CARD, '{prop.dataType && <p ');
-    const ratios = await Promise.all(THEMES.map((theme) => measureTooltipTextContrast(theme, className)));
-    const floor = Math.min(...ratios);
-    assert.ok(
-      floor >= 3.2,
-      `regressed below the known floor: measured ${floor.toFixed(2)}:1 (was >=3.2), for className="${className}"`,
-    );
-    assert.ok(
-      floor < WCAG_AA_NORMAL_TEXT,
-      `this fixture pins a KNOWN GAP below AA (${WCAG_AA_NORMAL_TEXT}:1) — it now clears AA (measured ${floor.toFixed(2)}:1). ` +
-        `Delete this test and add BsddCard's dataType line to the fixedCases list above instead of loosening this assertion.`,
-    );
-  });
-
 });
 
 describe('non-vacuousness proof: reintroducing #4783 exactly reddens in every theme', () => {
