@@ -4814,6 +4814,7 @@
     "relationshipGraphFromColumns: function",
     "relationshipGraphFromEdges: function",
     "relationshipGraphToColumns: function",
+    "relationshipTypeName: function",
     "safeUtf8Decode: function",
     "searchEpsgIndex: function",
     "serializeValue: function",
@@ -7639,6 +7640,8 @@
     "IfcQuery: class",
     "PropertyTable: class",
     "QueryBuilder: class",
+    "QueryDescriptorLike: interface",
+    "QueryFilterLike: interface",
     "QueryInterface: class",
     "QueryResultEntity: class",
     "SQLResult: interface",
@@ -7648,6 +7651,7 @@
     "SelectorParseResult: type",
     "SelectorQuery: interface",
     "SelectorText: type",
+    "SelectorUnsupportedError: class",
     "SelectorValue: type",
     "compareFilterValue: function",
     "findAllPropertiesInSets: function",
@@ -7655,7 +7659,8 @@
     "findPropertyInSets: function",
     "findQuantityInSets: function",
     "normalizeBooleanValue: function",
-    "parseSelector: function"
+    "parseSelector: function",
+    "selectorToQueryDescriptor: function"
   ],
   "@ifc-lite/regex-guard": [
     "MAX_GUARDED_REGEX_PATTERN_LENGTH: const",
@@ -8045,6 +8050,7 @@
     "SectionCutOptions: interface",
     "SectionPlane: interface",
     "SelectionBackendMethods: interface",
+    "SelectorUnsupportedError: class",
     "SequenceParams: type",
     "SequenceType: type",
     "SheetOptions: interface",
