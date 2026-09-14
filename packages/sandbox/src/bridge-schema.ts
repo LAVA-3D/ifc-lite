@@ -322,9 +322,10 @@ function unmarshalArgs(vm: QuickJSContext, handles: QuickJSHandle[], argTypes: A
         break;
       }
       case 'entityRefs': case 'entityRefs?': {
-        const raw = handles[i] ? vm.dump(handles[i]) as Array<{ ref?: EntityRef } & EntityRef> | null : null;
-        if (raw == null) { result.push(argTypes[i] === 'entityRefs?' ? undefined : []); break; }
-        result.push(raw.map(r => r.ref ?? r));
+        // `?` (export.ifc only): omitted OR explicitly nullish is `undefined`; plain `entityRefs` keeps `[]` when omitted and still throws on an explicit null.
+        const optional = argTypes[i] === 'entityRefs?';
+        const raw = handles[i] ? vm.dump(handles[i]) as Array<{ ref?: EntityRef } & EntityRef> | null : (optional ? null : []);
+        result.push(raw == null && optional ? undefined : (raw as Array<{ ref?: EntityRef } & EntityRef>).map(r => r.ref ?? r));
         break;
       }
       case '...strings': {

@@ -561,9 +561,10 @@ describe('ExportNamespace', () => {
    * #4738: `refs` carries "is a filter active" as well as "which entities", so
    * the two meanings must not share the empty array. Omitting it asks for the
    * whole model; an empty array is an ACTIVE filter that matched nothing and
-   * is refused here, at the one home every backend's STEP export goes through
-   * (the backends below still read `[]` as their internal whole-model signal,
-   * so the distinction cannot be made down there).
+   * is refused here, at the one home every backend's STEP export goes through,
+   * so no caller has to carry its own guard. Below this point `undefined` is
+   * the only "no filter": `ExportBackendMethods.ifc` is typed for it and both
+   * headless backends branch on `refs != null`.
    *
    * The byte-level proof that the refusal is not cosmetic — the same call used
    * to return all 1045 entities of `hello-wall.ifc` — is in

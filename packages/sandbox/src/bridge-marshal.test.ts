@@ -288,6 +288,16 @@ describe('an omitted entity list survives the bridge for export.ifc (#4738)', ()
     expect(seen).toEqual([undefined]);
   });
 
+  it('leaves the non-optional entityRefs methods loud on an explicit null', async () => {
+    // Scoping the new absence to `export.ifc` matters in both directions: for
+    // `csv`/`json`/`viewer.*` an explicit null is a script bug, and answering
+    // `[]` would turn it into a header-only CSV or a silent no-op. Only an
+    // OMITTED argument is `[]` for those (pinned above).
+    const { sdk } = stubSdk({});
+    await expect(withSandbox(sdk, (run) => run(`bim.export.csv(null, { columns: ['Name'] })`)))
+      .rejects.toThrow(/map/);
+  });
+
   it('bim.export.ifc([]) is still refused, so the distinction is real', async () => {
     const { sdk, seen } = realSdk();
     await expect(withSandbox(sdk, (run) => run(`bim.export.ifc([])`))).rejects.toThrow(/matched nothing/);

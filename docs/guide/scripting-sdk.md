@@ -185,10 +185,12 @@ const refs = bim.query().byType('IfcNonExistentType').refs(); // []
 bim.export.ifc(refs); // throws: the isolation filter matched nothing
 ```
 
-Until `@ifc-lite/sdk` v2 an empty array meant "no filter", so a query that
-matched nothing silently exported every entity in the model and reported
-success. A call that used the empty array to mean the whole model,
-`bim.export.ifc([], options)`, becomes `bim.export.ifc(undefined, options)`.
+An empty array used to mean "no filter", so a query that matched nothing
+silently exported every entity in the model and reported success. The release
+that changed this is the `@ifc-lite/sdk` major carrying issue #4738 in its
+changelog; before it, the refusal above did not happen. A call that used the
+empty array to mean the whole model, `bim.export.ifc([], options)`, becomes
+`bim.export.ifc(undefined, options)`.
 
 The same distinction holds in a sandboxed script (`bim.export.ifc()` with no
 arguments) and behind the CLI's `--format ifc`, which refuses a zero-match

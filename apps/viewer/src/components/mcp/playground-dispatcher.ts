@@ -1195,10 +1195,10 @@ const IMPLS: Record<string, ToolImpl> = {
   async export_ifc(m, args) {
     const filename = coerceFilename(args.file_path as string | undefined, 'ifc', m.id);
     const schema = (args.schema as 'IFC2X3' | 'IFC4' | 'IFC4X3' | undefined) ?? (m.store.schemaVersion as 'IFC2X3' | 'IFC4' | 'IFC4X3');
-    // No `global_ids` omits the ref list; an allowlist that matched nothing stays an
-    // EMPTY one, which `export.ifc` refuses rather than widening to the whole model (#4738).
+    // No `global_ids` omits the ref list; a matched-nothing allowlist stays EMPTY, which `export.ifc` refuses rather than widening to the whole model (#4738). The refusal is repeated below only to answer with the stdio tool's error code and wording.
     const wanted = Array.isArray(args.global_ids) ? new Set(args.global_ids as string[]) : undefined;
     const refs = wanted ? m.bim.query().toArray().filter((e) => wanted.has(e.globalId)).map((e) => e.ref) : undefined;
+    if (refs?.length === 0) throw new ToolExecutionError({ code: ToolErrorCode.ENTITY_NOT_FOUND, message: `No entity matches any of the ${wanted?.size ?? 0} requested global_ids, so there is nothing to export. Refusing to write the whole model instead.` });
     const exported = refs?.length ?? m.store.entityCount;
     const content = m.bim.export.ifc(refs, { schema });
     const text = typeof content === 'string' ? content : new TextDecoder().decode(content);

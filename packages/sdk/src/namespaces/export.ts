@@ -195,9 +195,10 @@ export class ExportNamespace {
    * to fail closed (several keep one anyway, for a better message).
    *
    * The absence travels with the call rather than stopping here: a backend
-   * receives `undefined` for "no filter" and never an empty array, so it can
-   * answer the whole model without having to guess which of the two the
-   * caller meant (`export-adapter.ts` in the viewer needs exactly that).
+   * receives `undefined` for "no filter" and never an empty array, which is
+   * what `ExportBackendMethods.ifc`'s signature says and what lets a backend
+   * that cannot guess a model (`export-adapter.ts` in the viewer) answer the
+   * whole model instead of refusing.
    */
   ifc(refs?: EntityRef[] | null, options: ExportStepOptions = {}): string | Uint8Array {
     if (refs?.length === 0) {

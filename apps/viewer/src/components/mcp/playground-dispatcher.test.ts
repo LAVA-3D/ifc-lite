@@ -206,7 +206,10 @@ describe('playground export_ifc with global_ids that match nothing (#4738)', () 
       assert.ok(wrote < wholeEntities, `zero-match export wrote ${wrote} of ${wholeEntities} entities`);
     }
     assert.equal(zero.isError, true);
-    assert.match(zero.text, /matched nothing/);
+    // The stdio tool's code and wording, not the SDK's message: a client that
+    // branches on `errorCode` must not read bad input as a server fault.
+    assert.equal(zero.errorCode, ToolErrorCode.ENTITY_NOT_FOUND);
+    assert.match(zero.text, /No entity matches any of the 1 requested global_ids/);
     // Nothing reached the Downloads panel, so the user cannot save it either.
     assert.equal(playgroundFiles.list().length, stagedBefore);
   });
