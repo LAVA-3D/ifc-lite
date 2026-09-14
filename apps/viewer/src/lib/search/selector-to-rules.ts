@@ -358,13 +358,10 @@ function adaptLocation(op: SelectorOp, value: SelectorValue, text: string): Filt
   }
   const setOp = setOpFor(op);
   if (!setOp) return `${quote(text)}: "location=" takes only "=" and "!="`;
-  // Storey NAME. Matches an element the storey contains directly, its
-  // aggregated parts, AND — one hop through a containing IfcSpace /
-  // IfcSpatialZone — an element inside a space on that storey (the
-  // widening lives entirely in the evaluator/prefilter's notion of
-  // "which storey", not in this rule shape) — measured in
-  // `filter-evaluate.test.ts`. Does not reach a space nested inside
-  // another space rather than directly under the storey.
+  // Storey NAME. Includes direct elements, aggregated parts, and one hop
+  // through a containing IfcSpace / IfcSpatialZone; the widening is in the
+  // evaluator/prefilter, not this rule shape. Measured in
+  // `filter-evaluate.test.ts`; nested spaces do not extend the reach.
   return Rule.storey([value.text], setOp);
 }
 
@@ -387,4 +384,3 @@ function adaptTypeName(op: SelectorOp, value: SelectorValue, text: string): Filt
   if (invalid) return `${quote(text)}: ${invalid}`;
   return Rule.typeName(stringOp, literalOf(value), regexValueKind(value));
 }
-
