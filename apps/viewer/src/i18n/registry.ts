@@ -21,7 +21,13 @@ export type Catalogue = Partial<Record<TranslationKey, string>>;
 
 const catalogues = new Map<Locale, Catalogue>([['en', en]]);
 let activeLocale: Locale = 'en';
+let revision = 0;
 const listeners = new Set<() => void>();
+
+function notifyLocaleChanged(): void {
+  revision += 1;
+  for (const listener of listeners) listener();
+}
 
 /** Register (or replace) the catalogue for a locale. English cannot be replaced. */
 export function registerLocale(locale: Locale, catalogue: Catalogue): void {
@@ -29,16 +35,23 @@ export function registerLocale(locale: Locale, catalogue: Catalogue): void {
     throw new Error('the "en" catalogue is the fallback and cannot be overridden');
   }
   catalogues.set(locale, catalogue);
+  if (locale === activeLocale) notifyLocaleChanged();
 }
 
 /** Switch the active locale. Falls back to 'en' if the locale was never registered. */
 export function setLocale(locale: Locale): void {
   activeLocale = catalogues.has(locale) ? locale : 'en';
-  for (const listener of listeners) listener();
+  notifyLocaleChanged();
 }
 
 export function getLocale(): Locale {
   return activeLocale;
+}
+
+/** Snapshot identity for `useSyncExternalStore`. The revision changes when an
+ * active catalogue is replaced even though the locale name stays the same. */
+export function getLocaleSnapshot(): string {
+  return `${activeLocale}:${revision}`;
 }
 
 export function subscribeLocale(listener: () => void): () => void {

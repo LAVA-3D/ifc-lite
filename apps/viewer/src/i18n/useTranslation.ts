@@ -8,7 +8,7 @@
  * so a `setLocale` call re-renders every mounted consumer.
  */
 import { useSyncExternalStore } from 'react';
-import { getLocale, resolve, subscribeLocale } from './registry';
+import { getLocale, getLocaleSnapshot, resolve, subscribeLocale } from './registry';
 import type { TranslationKey } from './en';
 
 export interface UseTranslationResult {
@@ -17,6 +17,6 @@ export interface UseTranslationResult {
 }
 
 export function useTranslation(): UseTranslationResult {
-  const locale = useSyncExternalStore(subscribeLocale, getLocale, getLocale);
-  return { t: resolve, locale };
+  useSyncExternalStore(subscribeLocale, getLocaleSnapshot, getLocaleSnapshot);
+  return { t: resolve, locale: getLocale() };
 }

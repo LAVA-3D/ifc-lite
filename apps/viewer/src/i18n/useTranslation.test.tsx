@@ -4,6 +4,7 @@
 import '@/test/setup-dom.js';
 import { it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { act } from 'react';
 import { render, cleanup } from '@/test/render';
 import { useTranslation } from './useTranslation';
 import { registerLocale, setLocale } from './registry';
@@ -40,4 +41,17 @@ it('a translation deliberately set to an empty string is NOT treated as missing 
   const container = render(<Probe tag="blank" />);
   const span = container.querySelector('span[data-key="blank"]');
   assert.equal(span?.textContent, '');
+});
+
+it('re-renders mounted consumers when the active catalogue is replaced (#4785)', () => {
+  registerLocale('replaceable', { 'mergeLayersBanner.reloadButton': 'First' });
+  setLocale('replaceable');
+  const container = render(<Probe tag="replacement" />);
+  const span = container.querySelector('span[data-key="replacement"]');
+  assert.equal(span?.textContent, 'First');
+
+  act(() => {
+    registerLocale('replaceable', { 'mergeLayersBanner.reloadButton': 'Second' });
+  });
+  assert.equal(span?.textContent, 'Second');
 });
