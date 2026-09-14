@@ -240,6 +240,47 @@ describe('evaluateFilterRules — storey & predefinedType resolvers', () => {
     );
     assert.deepStrictEqual(byOtherModelRef.map((r) => r.expressId), []);
   });
+
+  // The pre-existing refs tests above never populate `bySpace` /
+  // `getContainingSpace`, so they cannot see whether the exact-refs path
+  // gets the same one-hop-through-a-space widening the Name-matching path
+  // gets (`storeyIdOf`, shared by both). This fixture gives both storeys
+  // a same-named "Level 3" sibling, each with its OWN space, so a
+  // ref-matched element sitting in the WRONG sibling's space is a
+  // wrong-result test, not a parses-without-error one.
+  it('exact refs widen through a containing space too, and reject a same-named sibling storey\'s space (#4094)', () => {
+    const storeyRows = [
+      ...rows,
+      { expressId: 500, type: 'IFCBUILDINGSTOREY', globalId: '5abcdefghijklmnopqrstu', name: 'Level 3' },
+      { expressId: 700, type: 'IFCBUILDINGSTOREY', globalId: '7abcdefghijklmnopqrstu', name: 'Level 3' },
+      { expressId: 550, type: 'IFCSPACE', globalId: '5abcdefghijklmnopqrstv', name: 'Room-West' },
+      { expressId: 750, type: 'IFCSPACE', globalId: '7abcdefghijklmnopqrstv', name: 'Room-East' },
+      { expressId: 900, type: 'IFCPUMP', globalId: '9abcdefghijklmnopqrstu', name: 'Pump-West' },
+      { expressId: 901, type: 'IFCPUMP', globalId: '9abcdefghijklmnopqrstv', name: 'Pump-East' },
+    ];
+    const store = buildStore(storeyRows);
+    (store as unknown as { spatialHierarchy: unknown }).spatialHierarchy = {
+      byStorey: new Map<number, number[]>([
+        [500, []],
+        [700, []],
+      ]),
+      // Each space is itself mapped to its own storey — same shape
+      // `SpatialHierarchyBuilder` produces for a real parse.
+      elementToStorey: new Map<number, number>([[550, 500], [750, 700]]),
+      bySpace: new Map<number, number[]>([
+        [550, [900]],
+        [750, [901]],
+      ]),
+      getContainingSpace: (expressId: number) => (expressId === 900 ? 550 : expressId === 901 ? 750 : undefined),
+    };
+
+    // Refs pin storey 500's "Level 3" — the pump in ITS space (550) should
+    // widen in, the same-named sibling storey's pump (in space 750) must not.
+    const byRef = evaluateFilterRules(
+      'm1', store, [Rule.storey(['Level 3'], 'in', [{ modelId: 'm1', expressId: 500 }])], 'AND',
+    );
+    assert.deepStrictEqual(byRef.map((r) => r.expressId), [900]);
+  });
 });
 
 describe('evaluateFilterRulesFederated', () => {
@@ -825,6 +866,42 @@ describe('selectIterationSource — index prefilter (AND + op:in)', () => {
     );
     const ids = Array.from(source as Iterable<number>);
     assert.deepStrictEqual(ids.sort(), [10, 30]);
+  });
+
+  // The test above never populates `bySpace`, so it cannot see whether
+  // `unionByStorey`'s ref-branch calls `spaceElementsOfStorey` at all — it
+  // only proves the guard doesn't crash. This fixture gives the ref'd
+  // storey (500) a space-contained element (900) AND gives its same-named
+  // sibling (700) its own space-contained element (901), so a bucket that
+  // widened through the wrong sibling's space would be a wrong-result
+  // failure, not a silent pass.
+  it('unionByStorey ref-branch widens through the ref\'d storey\'s own space, not a same-named sibling\'s (#4094)', () => {
+    const storeyRows = [
+      ...rows,
+      { expressId: 500, type: 'IFCBUILDINGSTOREY', globalId: '5abcdefghijklmnopqrstu', name: 'Level 3' },
+      { expressId: 700, type: 'IFCBUILDINGSTOREY', globalId: '7abcdefghijklmnopqrstu', name: 'Level 3' },
+      { expressId: 550, type: 'IFCSPACE', globalId: '5abcdefghijklmnopqrstv', name: 'Room-West' },
+      { expressId: 750, type: 'IFCSPACE', globalId: '7abcdefghijklmnopqrstv', name: 'Room-East' },
+      { expressId: 900, type: 'IFCPUMP', globalId: '9abcdefghijklmnopqrstu', name: 'Pump-West' },
+      { expressId: 901, type: 'IFCPUMP', globalId: '9abcdefghijklmnopqrstv', name: 'Pump-East' },
+    ];
+    const s2 = buildStore(storeyRows);
+    (s2 as unknown as { spatialHierarchy: unknown }).spatialHierarchy = {
+      byStorey: new Map<number, number[]>([
+        [500, []],
+        [700, []],
+      ]),
+      elementToStorey: new Map<number, number>([[550, 500], [750, 700]]),
+      bySpace: new Map<number, number[]>([
+        [550, [900]],
+        [750, [901]],
+      ]),
+    };
+    const source = select(
+      s2, [Rule.storey(['Level 3'], 'in', [{ modelId: 'm1', expressId: 500 }])], 'AND', undefined, 'm1',
+    );
+    const ids = Array.from(source as Iterable<number>);
+    assert.deepStrictEqual(ids.sort(), [900]);
   });
 });
 
