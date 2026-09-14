@@ -25,26 +25,7 @@ pub(crate) struct ClosureVerdict {
 
 impl ClosureVerdict {
     pub(crate) fn for_mesh(mesh: &Mesh) -> Self {
-        let key = |i: u32| -> QuantizedPoint {
-            let b = i as usize * 3;
-            let q = |v: f32| (v as f64 / 1.0e-4).round() as i64;
-            (
-                q(mesh.positions[b]),
-                q(mesh.positions[b + 1]),
-                q(mesh.positions[b + 2]),
-            )
-        };
-        let mut edges: DirectedEdgeCounts = FxHashMap::default();
-        for tri in mesh.indices.chunks_exact(3) {
-            let (ka, kb, kc) = (key(tri[0]), key(tri[1]), key(tri[2]));
-            if ka == kb || kb == kc || kc == ka {
-                continue;
-            }
-            for (x, y) in [(ka, kb), (kb, kc), (kc, ka)] {
-                *edges.entry((x, y)).or_insert(0) += 1;
-                *edges.entry((y, x)).or_insert(0) -= 1;
-            }
-        }
+        let edges = directed_edge_counts(mesh);
         let has_edges = !edges.is_empty();
         let mut bad = Vec::new();
         for (&(a, b), &count) in &edges {
@@ -64,6 +45,30 @@ impl ClosureVerdict {
     }
 }
 
+fn directed_edge_counts(mesh: &Mesh) -> DirectedEdgeCounts {
+    let key = |i: u32| -> QuantizedPoint {
+        let b = i as usize * 3;
+        let q = |v: f32| (v as f64 / 1.0e-4).round() as i64;
+        (
+            q(mesh.positions[b]),
+            q(mesh.positions[b + 1]),
+            q(mesh.positions[b + 2]),
+        )
+    };
+    let mut edges: DirectedEdgeCounts = FxHashMap::default();
+    for tri in mesh.indices.chunks_exact(3) {
+        let (ka, kb, kc) = (key(tri[0]), key(tri[1]), key(tri[2]));
+        if ka == kb || kb == kc || kc == ka {
+            continue;
+        }
+        for (x, y) in [(ka, kb), (kb, kc), (kc, ka)] {
+            *edges.entry((x, y)).or_insert(0) += 1;
+            *edges.entry((y, x)).or_insert(0) -= 1;
+        }
+    }
+    edges
+}
+
 /// DIRECTED quantized closed-surface audit (0.1 mm grid): every directed edge
 /// must be cancelled by its reverse. Strictly stronger than the undirected
 /// 2-manifold check — it catches inconsistent winding and doubled coincident
@@ -71,7 +76,8 @@ impl ClosureVerdict {
 /// cracks. Triangles that collapse to a degenerate key on the grid are skipped
 /// (their edges net to zero).
 pub(crate) fn directed_closed(mesh: &Mesh) -> bool {
-    ClosureVerdict::for_mesh(mesh).is_directed_closed()
+    let edges = directed_edge_counts(mesh);
+    !edges.is_empty() && edges.values().all(|&count| count == 0)
 }
 
 /// Closed-surface audit with a HAIRLINE tolerance: the surface passes when
