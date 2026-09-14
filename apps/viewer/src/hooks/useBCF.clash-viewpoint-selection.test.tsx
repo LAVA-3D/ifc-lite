@@ -40,13 +40,14 @@ import { useBCF } from './useBCF.js';
 /** Express ids behind the two clashing entities, and their IFC GlobalIds. */
 const CLASH_A_ID = 501;
 const CLASH_B_ID = 502;
+const CLASH_A_ALIAS_ID = 503;
 const CLASH_A_GUID = 'CLASH0A0000000000000A';
 const CLASH_B_GUID = 'CLASH0B0000000000000B';
 
 const dataStore = {
   entities: {
     getGlobalId: (expressId: number): string | undefined => {
-      if (expressId === CLASH_A_ID) return CLASH_A_GUID;
+      if (expressId === CLASH_A_ID || expressId === CLASH_A_ALIAS_ID) return CLASH_A_GUID;
       if (expressId === CLASH_B_ID) return CLASH_B_GUID;
       return undefined;
     },
@@ -261,5 +262,27 @@ describe('useBCF — clash-to-BCF export carries the clashing pair (#4806)', () 
     assert.match(xml, /<Coloring>/);
     assert.match(xml, /Color="FFFF8000"/);
     assert.match(xml, /Color="FF00D1FF"/);
+  });
+
+  it('keeps the first color when distinct federated refs resolve to the same GlobalId', async () => {
+    const viewpoint = await api!.createViewpointFromState({
+      includeSnapshot: false,
+      includeSelection: false,
+      additionalColoredRefs: [
+        { color: 'FFFF8000', refs: [CLASH_A_ID] },
+        { color: 'FF00D1FF', refs: [CLASH_A_ALIAS_ID, CLASH_B_ID] },
+      ],
+    });
+    assert.ok(viewpoint, 'a viewpoint must be produced');
+    assert.deepEqual(
+      viewpoint.components?.coloring?.map((group) => ({
+        color: group.color,
+        guids: group.components.map((component) => component.ifcGuid),
+      })),
+      [
+        { color: 'FFFF8000', guids: [CLASH_A_GUID] },
+        { color: 'FF00D1FF', guids: [CLASH_B_GUID] },
+      ],
+    );
   });
 });

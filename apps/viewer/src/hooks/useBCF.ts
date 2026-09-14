@@ -28,6 +28,7 @@ import type { EntityRef } from '@/store/types';
 import {
   globalIdToExpressId as globalIdToExpressIdLookup,
   expressIdToGlobalId as expressIdToGlobalIdLookup,
+  resolveUniqueGlobalIds,
 } from './bcfIdLookup';
 import { fromGlobalIdFromModels } from '@/store/globalId';
 import { resolvePresentationIds } from '@/lib/presentation/resolvePresentationIds';
@@ -422,13 +423,12 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
       // Extra BCF `<Coloring>` groups (the clash pair's amber/cyan tint,
       // #4806) — independent of any renderer colour-override state, which
       // this app does not otherwise mirror into BCF.
+      const emittedColoredGuids = new Set<string>();
       const coloredGuids: { color: string; guids: string[] }[] | undefined = additionalColoredRefs
         ? additionalColoredRefs
             .map(({ color, refs }) => ({
               color,
-              guids: refs
-                .map((ref) => expressIdToGlobalId(ref))
-                .filter((guid): guid is string => guid !== null),
+              guids: resolveUniqueGlobalIds(refs, expressIdToGlobalId, emittedColoredGuids),
             }))
             .filter((entry) => entry.guids.length > 0)
         : undefined;
