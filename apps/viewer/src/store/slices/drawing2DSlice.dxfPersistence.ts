@@ -258,26 +258,6 @@ export async function loadDxfUnderlaysEntry(modelHash: string): Promise<Persiste
   }
 }
 
-async function listOwnedEntries(db: IDBDatabase): Promise<Array<{ key: IDBValidKey; savedAt: number }>> {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_DXF, 'readonly');
-    const store = tx.objectStore(STORE_DXF);
-    const out: Array<{ key: IDBValidKey; savedAt: number }> = [];
-    const req = store.openCursor();
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (!cursor) return;
-      const value = cursor.value as unknown;
-      if (isValidStoredEntry(value)) out.push({ key: cursor.primaryKey, savedAt: value.savedAt });
-      cursor.continue();
-    };
-    req.onerror = () => reject(req.error);
-    tx.oncomplete = () => resolve(out);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-
 /**
  * Save `dxfUnderlays` (the full array, an explicit `[]` included) for one
  * model's content-hash key, then evict the oldest entries past
@@ -291,17 +271,35 @@ export async function saveDxfUnderlaysEntry(modelHash: string, dxfUnderlays: Dxf
     const db = await openDatabase();
     if (!db) return;
     const entry: PersistedDxfUnderlaysEntry = { dxfUnderlays, savedAt: Date.now() };
-    await runStore(db, 'readwrite', (store) => store.put(entry, modelHash));
-
-    const owned = await listOwnedEntries(db);
-    if (owned.length > MAX_ENTRIES) {
-      const toEvict = owned
-        .sort((a, b) => a.savedAt - b.savedAt)
-        .slice(0, owned.length - MAX_ENTRIES);
-      await runStore(db, 'readwrite', (store) => {
+    // One readwrite transaction makes put+census+eviction atomic and lets
+    // IndexedDB serialize the policy across tabs. A separate readonly census
+    // could go stale before its delete transaction starts.
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_DXF, 'readwrite');
+      const store = tx.objectStore(STORE_DXF);
+      store.put(entry, modelHash);
+      const owned: Array<{ key: IDBValidKey; savedAt: number }> = [];
+      const cursorRequest = store.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          const value = cursor.value as unknown;
+          if (isValidStoredEntry(value)) {
+            owned.push({ key: cursor.primaryKey, savedAt: value.savedAt });
+          }
+          cursor.continue();
+          return;
+        }
+        const toEvict = owned
+          .sort((a, b) => a.savedAt - b.savedAt)
+          .slice(0, Math.max(0, owned.length - MAX_ENTRIES));
         for (const { key } of toEvict) store.delete(key);
-      });
-    }
+      };
+      cursorRequest.onerror = () => tx.abort();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? cursorRequest.error);
+    });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(`[drawing2D] failed to persist dxfUnderlays for model ${modelHash}`, err);
