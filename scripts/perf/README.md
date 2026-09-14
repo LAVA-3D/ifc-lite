@@ -27,6 +27,44 @@ scripts/perf/flame.sh tests/models/ara3d/schependomlaan.ifc
 
 Fetch a fixture first if missing: `pnpm fixtures ara3d/schependomlaan.ifc`.
 
+## Bounded quick-metadata tree and reachable placement (#4689, #4743)
+
+Measured exact merge-base `74ba2f24e664b37b96e871620fbfdbab653042f3`
+against `9a6c88208079c032e577cfd0dfeb401a51ba6542` on AC20-FZK-Haus,
+whose bytes matched the fixture manifest. Both native probes used the pinned
+Rust toolchain, the `profiling` profile and separate build directories on
+x86_64 Windows (Ryzen 9 9900X3D). Five fresh-process pairs per path ran
+interleaved on an otherwise-idle machine, with balanced order from
+`ab-order.mjs` seed 4743; the OS file cache was not purged.
+
+The stock `perf_probe --iters 1 --json --fingerprint` leaves the bootstrap
+disabled. Its base/branch median parse, geometry and pipeline-total times were
+16/16, 19/19 and 35/36 ms; full-call wall time was 36.819/37.348 ms (+1.44%,
+inside the base's 7.00% spread). That alone does not measure the new planner.
+A source-identical probe on both revisions also called
+`process_geometry_streaming_with_options_and_bootstrap` with
+`emit_quick_metadata_bootstrap: true` and all other options at their defaults.
+It used the stock probe's three preparatory index scans, timed callback entry
+before cloning the bootstrap, and fingerprinted the clone and meshes after
+the full-call timer stopped. Full-call time therefore includes the clone.
+
+With the bootstrap enabled, median parse, geometry and pipeline-total times
+were 16/17, 24/24 and 40/42 ms. Full-call wall time was 42.129/43.717 ms:
+an observed **1.59 ms (+3.77%) opt-in cost**, just beyond the base's 3.71%
+spread, not a no-regression result. Callback readiness was 13.066/14.562 ms
+(+11.45%, inside the base's 13.52% spread). This small native cost is accepted
+for bounded stack use and correct placement; it is not a browser worker-pool
+speed claim or a scaling qualification for unusually large spatial graphs.
+
+All 20 samples retained 285 meshes, 35,940 vertices and 19,456 triangles, with
+ordered mesh FNV-1a64 `25ac885b6ff4ad00`. All ten enabled samples retained the
+same 12-node, 12,600-byte serialized bootstrap, FNV-1a64 `2c58a0fc6e20ecec`.
+The mesh hash covers the stock probe's payload fields, not text metadata,
+material definitions, UVs, textures or instancing. The lesson: qualify the
+enabled path as well as ordinary load, and report full-call cost separately
+from callback readiness and the quantized pipeline timer. A disabled feature's
+unchanged load time cannot establish that its new planning pass is free.
+
 ## Boolean operands dispatch from the router's built-in table (#4560)
 
 The boolean operand resolver no longer keeps its own list of meshable operand
@@ -45,6 +83,49 @@ lesson: a second copy of a dispatch table drifts the moment a processor is
 registered in one and not the other, and the drift is invisible because the
 loser is an `UnsupportedOperand` record nobody reads; derive the operand set
 from the registry instead of maintaining it.
+
+## Consolidation keeps small openings on large faces (#4698, #4744)
+
+Measured exact merge-base `2ecf0f096d0f2d6079963040d3293e5964785486`
+against `c7e162d01dc8e59473d8e60ada081eb19abb79ef` on AC20-FZK-Haus and
+ISSUE_129, both verified against the fixture manifest. The source-identical
+stock `perf_probe` was built separately for each revision with the pinned Rust
+toolchain and `profiling` profile on x86_64 Windows (Ryzen 9 9900X3D). Each
+fixture ran five interleaved fresh-process pairs on an otherwise-idle machine,
+using balanced order from `ab-order.mjs` seed 4744 and
+`--iters 1 --json --fingerprint`. The three preparatory index scans and
+uncontrolled OS file cache are the stock probe's warm-cache boundary.
+
+Base/branch median milliseconds:
+
+| Fixture | Parse | Geometry | Pipeline total | Full-call wall |
+|---|---:|---:|---:|---:|
+| AC20-FZK-Haus | 16 / 16 | 19 / 19 | 35 / 35 | 36.935 / 36.908 |
+| ISSUE_129 | 33 / 32 | 889 / 896 | 924 / 929 | 932.971 / 938.638 |
+
+AC20 retained 285 meshes, 35,940 vertices and 19,456 triangles in every run,
+with ordered mesh FNV-1a64 `25ac885b6ff4ad00` on both revisions. ISSUE_129
+retained 1,402 meshes but changed from 218,501 vertices / 132,815 triangles
+to 219,858 / 135,749; its hash changed from `5dbcc345761e87a8` to
+`9138d2efb799991e`, each stable across all five runs of that revision.
+This is intentionally not a byte-identical comparison: the filter keeps real
+opening rings that the plane-relative rule filled, and those rings also affect
+seam conformance and subsequent triangulation. An untimed per-element hash
+comparison found changes only in the seven hosts whose ISSUE_129 census rows
+this PR repins: #7526, #32810, #59111, #139364, #149277, #244479 and #333923.
+Their net increase is 2,934 triangles; every other element's mesh fingerprint
+matched. These hashes cover the stock probe's ordered mesh payload, not text
+metadata, material definitions, UVs, textures or instancing.
+
+Verdict: no median timing move exceeded the base's measured spread on either fixture.
+On ISSUE_129, geometry increased 0.79% against a 2.81% base spread, pipeline
+total 0.54% against 3.03%, and full-call wall 0.61% against 3.01%, despite the
+intentional output increase. This qualifies the observed native cost of a
+correctness fix, not a like-for-like speedup, browser worker-pool result or
+heavy-corpus performance verdict. The lesson: a relative speck filter can erase
+real holes as its plane grows; constrain it by an absolute width as well, keep
+the share guard for load-bearing thin reveal rings, and attribute changed mesh
+bytes before interpreting a timing comparison.
 
 ## Qualified PDF dash expansion (#4406)
 
@@ -1531,3 +1612,16 @@ composition incompatibility before doing either expensive route, while keeping
 the public and pure-2D union operation correct; #4617 owns removing that
 temporary boundary once mixed routing can preserve both union semantics and
 final topology.
+
+## Comment-free STEP point-list scan (#4735)
+
+The record scanner now proves once that a point-list tail contains no STEP
+comments before entering its per-item delimiter loop; commented records retain
+the original comment-aware path. Source-matched interleaved native probes and
+fresh Chromium worker-pool loads of AC20-FZK-Haus retained identical ordered
+geometry fingerprints or mesh counts. Their base/branch phase differences all
+stayed within run-to-run noise, so the verdict is no material full-load
+regression and no demonstrated end-to-end speedup. The useful lesson is that a
+tighter inner loop is not itself a user-visible performance claim: retain the
+single outer proof, but judge it through the full parser and browser worker
+pool, where geometry and startup dominate this small fixture.

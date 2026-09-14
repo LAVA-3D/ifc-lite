@@ -46,8 +46,8 @@ impl BooleanClippingProcessor {
     ///
     /// `subtract_checked` (the #3919 helper `polygonal_prism.rs` already
     /// uses for the batched-chain path) folds in the accept-gate check: a
-    /// gate rejection hands `mesh` back UN-CUT — the identical shape
-    /// `subtract_mesh` uses for "nothing to cut here" — which
+    /// gate rejection used to hand `mesh` back UN-CUT, the identical shape
+    /// `subtract_mesh` used for "nothing to cut here", which
     /// `difference_result_looks_degenerate` cannot tell apart (an unchanged
     /// mesh is trivially non-degenerate relative to itself). Pre-#3923 this
     /// branch accepted that un-cut host as the final clip result instead of
@@ -76,8 +76,9 @@ impl BooleanClippingProcessor {
         mesh: &Mesh,
         bound_mesh: &Mesh,
         solo_step: bool,
+        length_unit_scale: f64,
     ) -> SingleCutterSubtract {
-        let clipper = ClippingProcessor::new();
+        let clipper = ClippingProcessor::with_unit_scale(length_unit_scale);
         let mark = clipper.failure_count();
         let checked = Self::subtract_checked(&clipper, mesh, bound_mesh);
         // Distinguish an accept-gate rejection from the pre-existing
