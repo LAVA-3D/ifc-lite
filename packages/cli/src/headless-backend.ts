@@ -65,7 +65,7 @@ import {
   listStoreys,
   type GenerateSpacesAllOptions,
 } from '@ifc-lite/create';
-import { EntityNode, findPropertyInSets, findQuantityInSets, normalizeBooleanValue } from '@ifc-lite/query';
+import { EntityNode, findPropertyInSets, findQuantityInSets, normalizeBooleanValue, matchesPropertyFilter } from '@ifc-lite/query';
 
 import {
   extractAllEntityAttributes,
@@ -87,7 +87,6 @@ import { edgeSurvives } from '@ifc-lite/data';
 import { exportHbjson, exportDfjson } from './energy-export.js';
 import { foldQueuedRelated } from './query-overlay-relations.js';
 import { overlayEntityData, overlayProperties, overlayQuantities, foldNewEntities } from './query-overlay.js';
-import { matchesPropertyFilter } from './property-filter-match.js';
 
 // `expandTypes` used to be defined here; it now comes from `@ifc-lite/parser`,
 // shared with the other query backends (see `query-backend-maps.ts`). Re-exported
@@ -356,11 +355,25 @@ export class HeadlessBackend implements BimBackend {
             }
             return cached;
           };
+          // A `Qto_` filter (or any psetName with no matching property set)
+          // falls back to quantity sets — see `matchesPropertyFilter` in
+          // `@ifc-lite/query`'s `property-filter-match.ts`. Cached the same
+          // way as `propsCache`; only populated on the fallback path since
+          // most filters resolve from properties alone.
+          const qsetsCache = new Map<number, QuantitySetData[]>();
+          const getCachedQuantities = (ref: EntityRef): QuantitySetData[] => {
+            let cached = qsetsCache.get(ref.expressId);
+            if (!cached) {
+              cached = getQuantities(ref);
+              qsetsCache.set(ref.expressId, cached);
+            }
+            return cached;
+          };
 
           for (const filter of descriptor.filters) {
             filtered = filtered.filter(entity => {
               const props = getCachedProps(entity.ref);
-              return matchesPropertyFilter(props, filter);
+              return matchesPropertyFilter(props, filter, getCachedQuantities(entity.ref));
             });
           }
         }
@@ -706,14 +719,14 @@ export class HeadlessBackend implements BimBackend {
         }
         return result;
       },
-      ifc: (refs: unknown, options: unknown): string => {
-        const entityRefs = refs as EntityRef[];
+      ifc: (refs: EntityRef[] | undefined, options: unknown): string => {
         const opts = (options ?? {}) as Record<string, unknown>;
         const schema = (opts.schema as 'IFC2X3' | 'IFC4' | 'IFC4X3') ?? store.schemaVersion ?? 'IFC4';
-
         const exportOpts: Partial<StepExportOptions> = { schema };
-        if (entityRefs && entityRefs.length > 0) {
-          const isolatedIds = new Set(entityRefs.map(r => r.expressId));
+        // `undefined` is the only "no isolation filter": an empty list is a filter
+        // that matched nothing, refused above in `ExportNamespace.ifc` (#4738).
+        if (refs != null) {
+          const isolatedIds = new Set(refs.map(r => r.expressId));
           exportOpts.visibleOnly = true;
           exportOpts.isolatedEntityIds = isolatedIds;
           exportOpts.hiddenEntityIds = new Set<number>();
