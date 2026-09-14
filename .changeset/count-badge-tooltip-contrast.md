@@ -2,4 +2,4 @@
 "@ifc-lite/viewer": patch
 ---
 
-Fix the storey object-count badge's hover card: the secondary breakdown lines (e.g. "3 Walls") were hardcoded `text-zinc-400 dark:text-zinc-500`, which washes out on the tooltip's `bg-primary` surface (Tokyo Night blue, `#7aa2f7` in both themes) — a recurrence of #1218 in a component that never got that fix. They now derive from `text-primary-foreground/80`, the same convention `BsddCard`, `PropertySetCard` and `QuantitySetCard` already use for this surface, measured at 5.05:1 WCAG contrast in dark mode (AA) and 2.13:1 in light mode (up from 1.04:1/1.92:1 before).
+Fix tooltip contrast across the viewer, including the storey object-count breakdown. The shared tooltip now uses the neutral `bg-popover` / `text-popover-foreground` surface (measured at 19.9:1 in light mode and 8.52:1 in dark mode) instead of the accent-blue primary pair that could reach only 2.52:1 in light mode. Count-badge secondary lines now use `text-muted-foreground` rather than hardcoded zinc shades.
