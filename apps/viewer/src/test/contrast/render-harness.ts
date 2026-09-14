@@ -81,7 +81,19 @@ let browserPromise: Promise<Browser> | undefined;
 
 function getBrowser(): Promise<Browser> {
   if (!browserPromise) {
-    browserPromise = chromium.launch({ headless: true });
+    // `channel: 'chrome'` launches the real, preinstalled Google Chrome
+    // instead of Playwright's own bundled `chromium_headless_shell` — the
+    // same reason every Playwright project in `playwright.config.ts` pins
+    // this channel (see e.g. `viewer-e2e-ci`'s comment). This suite runs
+    // inside `apps/viewer`'s `pnpm test` (tsx --test, sharded across CI's
+    // "Viewer tests" lane, not `playwright test`), and that lane's workflow
+    // step has no `playwright install`, so the bundled browser is never
+    // downloaded there — only `channel: 'chrome'` resolves without one, on
+    // both GitHub-hosted runners (Chrome preinstalled) and the self-hosted
+    // "ifclite" runner (already relied on by the E2E lane's identical
+    // `runs-on` expression). A developer machine needs real Chrome too, same
+    // as running `pnpm test:e2e`.
+    browserPromise = chromium.launch({ headless: true, channel: 'chrome' });
   }
   return browserPromise;
 }
