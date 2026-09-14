@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * The "Other" bucket (#4762): a physical element that belongs in a products
+ * The "Other" bucket (#4764): a physical element that belongs in a products
  * tree but has neither its own geometry nor a geometry-bearing aggregated
  * part used to be dropped outright. The product decision instead grays such
  * a row out and files it under one flat, collapsed "Other" node, following

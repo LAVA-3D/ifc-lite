@@ -5,7 +5,7 @@
 /**
  * Emitting one spatial-tree element row (and its `IfcRelAggregates` subtree,
  * issue #1133), and emitting a whole direct-container list of them split into
- * shaped rows plus one grayed "Other" bucket (#4762) for the ones with no
+ * shaped rows plus one grayed "Other" bucket (#4764) for the ones with no
  * shape. Extracted from `treeDataBuilder.ts` — which had two call sites for
  * this exact split (the single/federated spatial tree and the multi-model
  * Storeys section's per-model contribution) — so the row shape stays one
@@ -76,7 +76,7 @@ export function orderElementIdsByName(
  *
  * `ancestors` is the aggregation path from the storey-level element down to
  * here, used to break malformed `IfcRelAggregates` cycles. `noGeometry` marks
- * a row (and, propagated, its subtree) as known to have no shape (#4762) — set
+ * a row (and, propagated, its subtree) as known to have no shape (#4764) — set
  * only by {@link emitElementsWithOtherBucket} for a row it bucketed under
  * "Other"; every other caller leaves it at the default.
  */
@@ -154,7 +154,7 @@ export function emitElementSubtree(
 /**
  * Emit a list of direct-container elements, splitting off those known to
  * have no shape into one collapsed "Other" bucket row (grayed, BIMcollab
- * Zoom convention — see AGENTS.md's product-owner note on #4762) instead of
+ * Zoom convention — see AGENTS.md's product-owner note on #4764) instead of
  * mixing them in with normal rows or dropping them.
  *
  * `hasShape` is `null` while geometry for this model hasn't loaded yet

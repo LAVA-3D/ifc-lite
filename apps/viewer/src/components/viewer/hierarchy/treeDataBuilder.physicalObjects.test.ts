@@ -210,7 +210,7 @@ describe("storey headline: physical objects that have a shape", () => {
 
   it('still SHOWS every contained entity as a selectable row, the shapeless marker grayed under "Other"', () => {
     // Changing what the number counts must not remove anything from the tree:
-    // the annotation and the shapeless marker stay inspectable. #50 (#4762's
+    // the annotation and the shapeless marker stay inspectable. #50 (#4764's
     // motivating case — a proxy merely NAMED "Group#21", not an IfcGroup) has
     // no shape, so it is bucketed under one collapsed "Other" row instead of
     // mixed in with the normal rows.
@@ -438,7 +438,7 @@ describe('By Class tab never lists a non-object, in either geometry state', () =
     });
   }
 
-  it('has no "Other" bucket at all while geometry is still streaming (#4762)', () => {
+  it('has no "Other" bucket at all while geometry is still streaming (#4764)', () => {
     // Absence is unanswerable mid-load (`isOther`'s own `applyFilter` guard,
     // mirroring `makeAssemblyGeometry`'s `renders`) — #50 is shown as a normal
     // optimistic row instead (already covered above), and no "Other" node
@@ -447,10 +447,10 @@ describe('By Class tab never lists a non-object, in either geometry state', () =
     assert.strictEqual(nodes.find((n) => n.type === 'other-group'), undefined);
   });
 
-  it('leaves a shapeless physical object out of the renders-oriented tab, grayed under "Other" instead (#4762)', () => {
+  it('leaves a shapeless physical object out of the renders-oriented tab, grayed under "Other" instead (#4764)', () => {
     // #50 is an object by schema (IfcBuildingElementProxy carrying only a
     // placement, named "Group#21" — it is NOT an IfcGroup, just a proxy
-    // someone named that way; see AGENTS.md's #4762 motivating case). It has
+    // someone named that way; see AGENTS.md's #4764 motivating case). It has
     // nothing to draw, so neither the tab nor the storey headline counts it —
     // but it stays findable, grayed out under a flat "Other" bucket instead
     // of its own IfcBuildingElementProxy class group or being dropped.

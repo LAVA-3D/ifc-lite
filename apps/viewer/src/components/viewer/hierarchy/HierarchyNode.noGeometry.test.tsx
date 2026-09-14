@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * #4762: an element known to have no geometry — and the "Other" bucket that
+ * #4764: an element known to have no geometry — and the "Other" bucket that
  * holds it — must render grayed out, using the SAME `opacity-50 grayscale`
  * convention a hidden-in-3D row already uses (never a new colour). The class
  * pair is a CSS filter/opacity, not a colour token, so it renders identically
@@ -67,7 +67,7 @@ function rowEl(container: HTMLElement): HTMLElement {
   return el as HTMLElement;
 }
 
-describe('HierarchyNode — no-geometry rows are grayed out (#4762)', () => {
+describe('HierarchyNode — no-geometry rows are grayed out (#4764)', () => {
   it('grays an element row flagged noGeometry', () => {
     const el = rowEl(mountRow(baseNode({ ifcType: 'IfcBuildingElementProxy', noGeometry: true })));
     assert.ok(el.className.includes('opacity-50'), 'opacity-50 applied');

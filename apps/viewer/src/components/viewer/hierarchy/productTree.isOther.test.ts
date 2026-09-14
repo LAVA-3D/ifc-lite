@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * `AssemblyGeometry.isOther` (#4762) directly, rather than only through
+ * `AssemblyGeometry.isOther` (#4764) directly, rather than only through
  * `buildTypeTree`/`buildIfcTypeTree`. Those callers only reach `isOther`
  * after `renders` has already said no, and `renders` itself already returns
  * `true` for every physical type while the geometry filter is inert — so the
@@ -18,7 +18,7 @@ import type { IfcDataStore } from '@ifc-lite/parser';
 import { makeAssemblyGeometry } from './productTree.js';
 
 const TYPES: Record<number, string> = {
-  1: 'IfcBuildingElementProxy', // physical, no shape, no children — the #4762 case
+  1: 'IfcBuildingElementProxy', // physical, no shape, no children — the #4764 case
   2: 'IfcGroup',                // not a product-tree class at all
 };
 

@@ -1363,7 +1363,7 @@ describe('buildIfcTypeTree — geometry-less assembly occurrences (By Type tab)'
     assert.strictEqual(classNode.elementCount, 0, 'an assembly with no renderable part contributes nothing');
   });
 
-  it('buckets that same occurrence under "Other" instead of dropping it (#4762)', () => {
+  it('buckets that same occurrence under "Other" instead of dropping it (#4764)', () => {
     const ds = createDecompositionDataStore();
     const rel = ds.relationships as unknown as {
       getRelated: (id: number, t: RelationshipType, d: 'forward' | 'inverse') => number[];

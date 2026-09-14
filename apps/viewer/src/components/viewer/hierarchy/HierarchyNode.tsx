@@ -95,7 +95,7 @@ export function HierarchyNode({
   const strikeWhenHidden = nodeHidden && 'line-through decoration-zinc-400 dark:decoration-zinc-600';
   // A physical element known to have no shape, or the "Other" bucket holding
   // them — grayed out with the same muted convention a hidden row already
-  // uses (#4762), distinct from `nodeHidden`'s 3D-visibility toggle: this
+  // uses (#4764), distinct from `nodeHidden`'s 3D-visibility toggle: this
   // reflects a fact about the model (no geometry), not a user action.
   const noGeometry = node.noGeometry || node.type === 'other-group';
 

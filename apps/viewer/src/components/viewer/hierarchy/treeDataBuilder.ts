@@ -615,7 +615,7 @@ export function buildTypeTree(
   const typeGroups = new Map<string, Array<{ expressId: number; globalId: number; name: string; modelId: string; parts?: number[] }>>();
   // Physical elements with no shape (own or aggregated) — grayed out and
   // bucketed under one flat "Other" node rather than dropped or mixed into a
-  // class group (#4762). Empty while geometry hasn't loaded for a model yet
+  // class group (#4764). Empty while geometry hasn't loaded for a model yet
   // — `isOther` returns `false` for everything during that window.
   const otherEntities: OtherBucketEntry[] = [];
 
@@ -739,7 +739,7 @@ export function buildTypeTree(
   }
 
   // "Other" bucket — geometry-less physical elements, grayed out, after every
-  // real class group rather than sorted alphabetically among them (#4762).
+  // real class group rather than sorted alphabetically among them (#4764).
   nodes.push(...buildOtherGroupNodes(otherEntities, 'type-group-other', expandedNodes, isMultiModel, models));
 
   return nodes;
@@ -770,7 +770,7 @@ export function buildIfcTypeTree(
   // Group by type class name (e.g. "IfcWallType") → individual types
   const typeClassGroups = new Map<string, TypeEntry[]>();
   // Typed occurrences with no shape (own or aggregated) — grayed out, bucketed
-  // under one flat "Other" node instead of dropped (#4762). Same rule as
+  // under one flat "Other" node instead of dropped (#4764). Same rule as
   // `buildTypeTree`'s bucket, applied to occurrences instead of top-level
   // entities.
   const otherInstances: OtherBucketEntry[] = [];
@@ -936,7 +936,7 @@ export function buildIfcTypeTree(
   }
 
   // "Other" bucket — geometry-less typed occurrences, grayed out, listed
-  // after every real class group (#4762). Flat, not re-nested under their
+  // after every real class group (#4764). Flat, not re-nested under their
   // original type, since the point of this row is that it fell out of the
   // class it belongs to.
   nodes.push(...buildOtherGroupNodes(otherInstances, 'typeclass-other', expandedNodes, isMultiModel, models));

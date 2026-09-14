@@ -46,7 +46,7 @@ export interface AssemblyGeometry {
    * own geometry nor a geometry-bearing aggregated part — the row `renders`
    * drops. `false` while the geometry filter is inert (streaming): absence
    * is unanswerable until geometry is known, so nothing is "other" yet
-   * (#4762's mid-load requirement — see `makeShapeTest`'s `geometryKnown`
+   * (#4764's mid-load requirement — see `makeShapeTest`'s `geometryKnown`
    * gate, the same contract). A caller that gets `false` from BOTH `renders`
    * and `isOther` should drop the row entirely — it never belonged in a
    * products tree (not a product-tree class, or a non-physical class with no
