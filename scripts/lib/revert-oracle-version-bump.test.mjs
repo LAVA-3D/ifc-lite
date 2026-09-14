@@ -166,6 +166,8 @@ test('an empty diff (no hunks) is not version-only', () => {
   assert.equal(isVersionOnlyManifestDiff('package.json', ''), false);
 });
 
+// Regression coverage for #4790: the release orchestrator's Rust-major offset
+// must be recognized without making unrelated production edits revert-exempt.
 test('rust offset: the real trailing-comma shape is version-only by decoded structure', () => {
   const before = offsetText();
   const after = offsetText({
