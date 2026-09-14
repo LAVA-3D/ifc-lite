@@ -2385,3 +2385,33 @@ fn repaired_office_covering_matches_independent_solid_3925() {
     assert!((75_500..=75_900).contains(&volume_cm3(&mesh)),
         "office covering volume must agree with the independent solid: {} cm³", volume_cm3(&mesh));
 }
+
+// #4754: cleaning before the ulp weld repairs three boundary edges on this
+// real heavy-corpus host. The old weld-before-clean finalizer reports 14 open
+// edges; the fixed-point hygiene path reports 11 without shrinking geometry.
+#[cfg(not(any(feature = "csg_topology_gate", feature = "csg_manifold_gate")))]
+#[test]
+fn issue_068_prism_cut_hygiene_repairs_host_43810_4754() {
+    let _serial = CENSUS_SWEEP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    set_alt(false);
+    let path = crate_dir().join("../../tests/models/ara3d/ISSUE_068_ARK_NUS_skolebygg.ifc");
+    if !oracle_fixture_present(&path) {
+        eprintln!("Skipping #4754 heavy-host oracle: run pnpm fixtures");
+        return;
+    }
+    let content = std::fs::read_to_string(path).expect("read ISSUE_068 fixture");
+    let frame = ModelFrame::new(&content);
+    let mesh = process(&frame, 43_810, &void_index(&content)).expect("mesh ISSUE_068 host #43810");
+    let stats = edge_stats(&mesh);
+
+    assert!(
+        stats.open < 14,
+        "clean-before-weld must repair the old 14-edge tear; got {} open edges",
+        stats.open
+    );
+    assert!(
+        mesh.triangle_count() >= 1_384,
+        "the repair must not trade closure for geometry loss; got {} triangles",
+        mesh.triangle_count()
+    );
+}
