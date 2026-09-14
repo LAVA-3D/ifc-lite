@@ -15,6 +15,37 @@
 import { readFileSync } from 'node:fs';
 
 /**
+ * Bounds a post-anchor slice of source to the anchor's own JSX opening-tag
+ * boundary — up to and including the next `>` — so a scan cannot fall
+ * through past the tag it is meant to read and match a `className` (or
+ * other literal) belonging to unrelated markup further down the file. This
+ * covers both shapes the anchors in this directory use:
+ *  - the anchor already closed its own tag (e.g. `<TooltipContent ...>`),
+ *    in which case the next `>` is the end of the immediately-following
+ *    child element's opening tag;
+ *  - the anchor ends mid-tag, right before the attribute we want (e.g.
+ *    `{prop.description && <p `), in which case the next `>` is that same
+ *    tag's own close.
+ * Either way, "the next `>`" is exactly the boundary of the one tag the
+ * anchor identifies. If no `>` follows, the scan is left unbounded (the
+ * existing "not found" error below still fires).
+ */
+function boundToNextTagClose(rest: string): string {
+  const tagEnd = rest.indexOf('>');
+  return tagEnd < 0 ? rest : rest.slice(0, tagEnd + 1);
+}
+
+/** True when `anchor` ends right at (or inside) a JSX opening tag start,
+ *  e.g. `<TooltipContent` or `<TooltipPrimitive.Content` possibly followed
+ *  by trailing whitespace — as opposed to a generic anchor into plain
+ *  JS/TSX code, where a `>` boundary would be wrong (an arrow function's
+ *  `=>` contains `>` too, and a multi-line `cn(...)` call outside JSX has
+ *  no enclosing tag to bound against). */
+function anchorIsJsxTagStart(anchor: string): boolean {
+  return /<[A-Za-z][\w.]*\s*$/.test(anchor);
+}
+
+/**
  * @param filePath Absolute path to the component source file.
  * @param anchor A literal substring that appears once, immediately before
  *   the `className="..."` to extract (e.g. a distinctive piece of JSX text
@@ -26,13 +57,15 @@ export function extractClassNameAfter(filePath: string, anchor: string): string 
   if (anchorIndex < 0) {
     throw new Error(`Anchor not found in ${filePath}: ${JSON.stringify(anchor)}`);
   }
-  const rest = src.slice(anchorIndex + anchor.length);
+  const rest = boundToNextTagClose(src.slice(anchorIndex + anchor.length));
   const m = rest.match(/className=(["'])(.*?)\1/s);
   if (!m) {
     throw new Error(
-      `No literal className="..." found after anchor in ${filePath}: ${JSON.stringify(anchor)}. ` +
-        `If this component switched to a template literal or cn(...), this extractor needs updating — ` +
-        `do not hardcode the expected class instead, that reintroduces the untestable-string problem.`,
+      `No literal className="..." found after anchor in ${filePath}: ${JSON.stringify(anchor)}, within its ` +
+        `own JSX opening tag. If this component switched to a template literal or cn(...), this extractor ` +
+        `needs updating — do not hardcode the expected class instead, that reintroduces the untestable-string ` +
+        `problem. If the className moved to a different tag than the anchor's, widen the anchor instead of ` +
+        `removing this boundary — it exists to stop matching unrelated markup further down the file.`,
     );
   }
   return m[2];
@@ -42,6 +75,14 @@ export function extractClassNameAfter(filePath: string, anchor: string): string 
  * Like {@link extractClassNameAfter}, but for the first quoted string literal
  * after `anchor` — for a `cn('...', className)` call (`tooltip.tsx`'s
  * `TooltipContent`) rather than a plain JSX `className="..."` attribute.
+ *
+ * The tag-boundary restriction only applies when `anchor` itself identifies
+ * a JSX opening tag (e.g. `<TooltipContent` / `<TooltipPrimitive.Content`).
+ * `cn(...)` calls routinely span multiple lines — that's fine, the boundary
+ * is the tag's closing `>`, not a newline. For a non-JSX anchor (a plain
+ * string/array/object literal elsewhere in the file) there is no enclosing
+ * tag to bound against, and a `>` boundary would misfire on an arrow
+ * function's `=>`, so the scan stays unbounded in that case.
  */
 export function extractFirstStringLiteralAfter(filePath: string, anchor: string): string {
   const src = readFileSync(filePath, 'utf-8');
@@ -49,7 +90,10 @@ export function extractFirstStringLiteralAfter(filePath: string, anchor: string)
   if (anchorIndex < 0) {
     throw new Error(`Anchor not found in ${filePath}: ${JSON.stringify(anchor)}`);
   }
-  const rest = src.slice(anchorIndex + anchor.length);
+  let rest = src.slice(anchorIndex + anchor.length);
+  if (anchorIsJsxTagStart(anchor)) {
+    rest = boundToNextTagClose(rest);
+  }
   const m = rest.match(/(['"`])(.*?)\1/s);
   if (!m) {
     throw new Error(`No string literal found after anchor in ${filePath}: ${JSON.stringify(anchor)}`);
