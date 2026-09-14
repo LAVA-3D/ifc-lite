@@ -26,8 +26,8 @@ const queryEntities: Tool = {
   name: 'query_entities',
   description:
     'Filter entities by IFC type, property, material, or spatial container. Returns matching IDs and minimal metadata. ' +
-    '`selector` (an IfcOpenShell-style selector string, e.g. "IfcWall, Pset_WallCommon.FireRating=2HR") ANDs with ' +
-    '`type`/`types`/`property` — its classes join the same type list, its property comparison joins the same filter list. ' +
+    '`selector` (an IfcOpenShell-style selector string, e.g. "IfcWall, Pset_WallCommon.FireRating=2HR") composes with ' +
+    '`type`/`types`/`property` — classes union in the same type list; property comparisons AND in the same filter list. ' +
     'Only a lossless subset of the selector grammar is supported here (exact-name Pset_/Qto_ comparisons and class terms, ' +
     'not regex pset/property names, attribute terms, material=/classification=/location=, parent=, query:, "!*=", or "!" class ' +
     'negation) — an unsupported construct is rejected with an error naming it, never silently dropped or run as an empty filter.',
@@ -53,7 +53,7 @@ const queryEntities: Tool = {
         type: 'string',
         description:
           'IfcOpenShell-style selector, e.g. "IfcWall, Pset_WallCommon.FireRating=2HR" or "Qto_WallBaseQuantities.NetVolume>1". ' +
-          'ANDs with type/types/property. See this tool\'s description for the supported subset.',
+          'Classes union with type/types; property comparisons AND with property. See this tool\'s description for the supported subset.',
       },
       in_storey: { type: 'string', description: 'GlobalId of containing storey.' },
       limit: { type: 'integer', default: 1000, minimum: 1, maximum: 10000 },

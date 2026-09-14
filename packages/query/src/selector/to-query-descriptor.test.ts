@@ -80,12 +80,9 @@ describe('selectorToQueryDescriptor', () => {
     expect(() => selectorToQueryDescriptor('Pset_WallCommon.Status=NULL')).toThrow(SelectorUnsupportedError);
   });
 
-  it('a class-only selector yields types (expanded to subtypes) and no filters', () => {
+  it('leaves class terms unexpanded so each backend can expand them for its model schema', () => {
     const result = selectorToQueryDescriptor('IfcWall');
-    expect(result.types).toContain('IfcWall');
-    // Proves class expansion actually ran (expandTypes), not just a pass-through
-    // of the literal term typed.
-    expect(result.types).toContain('IfcWallStandardCase');
+    expect(result.types).toEqual(['IfcWall']);
     expect(result.filters).toEqual([]);
   });
 });

@@ -486,10 +486,25 @@ describe('QueryBuilder.select()', () => {
     const { ns, seen } = setup([]);
     ns.create().byType('IfcDoor').where('Pset_DoorCommon', 'FireRating', '=', '1HR').select('IfcWall').toArray();
     expect(seen[0].types?.[0]).toBe('IfcDoor');
-    expect(seen[0].types).toContain('IfcWall'); // expanded to include subtypes too, e.g. IfcWallStandardCase
+    expect(seen[0].types).toContain('IfcWall');
     expect(seen[0].filters).toEqual([
       { psetName: 'Pset_DoorCommon', propName: 'FireRating', operator: '=', value: '1HR' },
     ]);
+  });
+
+  it('defers class expansion to the executing backend instead of consulting the active/first model', () => {
+    const seen: QueryDescriptor[] = [];
+    const backend = {
+      query: { entities: vi.fn((d: QueryDescriptor) => { seen.push(structuredClone(d)); return []; }) },
+      model: {
+        list: vi.fn(() => { throw new Error('select must not pick a schema from model order'); }),
+        activeId: vi.fn(() => { throw new Error('select must not pick the active model schema'); }),
+      },
+    } as unknown as BimBackend;
+
+    new QueryNamespace(backend).create().select('IfcBuildingElement').model('ifc2x3-model').toArray();
+
+    expect(seen[0]).toMatchObject({ modelId: 'ifc2x3-model', types: ['IfcBuildingElement'] });
   });
 
   it('throws SelectorUnsupportedError for a construct with no lossless QueryDescriptor target, rather than running a partial query', () => {

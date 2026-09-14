@@ -205,7 +205,7 @@
    547 packages/cli/src/commands/ask.ts
    495 packages/cli/src/commands/create.ts
    458 packages/cli/src/commands/extract-entities.ts
-   502 packages/cli/src/commands/query.ts
+   501 packages/cli/src/commands/query.ts
    803 packages/cli/src/headless-backend.ts
    457 packages/codegen/src/express-parser.ts
    660 packages/codegen/src/rust-generator.ts

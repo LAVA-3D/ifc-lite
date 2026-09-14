@@ -132,6 +132,18 @@ describe('query_entities selector param', () => {
     expect(content.entities[0].name).toBe('Wall B');
   });
 
+  it('unions a selector class with type, matching repeated byType semantics', async () => {
+    const result = await call('query_entities', {
+      type: 'IfcDoor',
+      selector: 'IfcWall',
+      fields: ['type'],
+    });
+    expect(result.isError).toBeUndefined();
+    const content = result.structuredContent as { count: number; entities: Array<{ type: string }> };
+    expect(content.count).toBe(3);
+    expect(new Set(content.entities.map((entity) => entity.type))).toEqual(new Set(['IfcWall', 'IfcDoor']));
+  });
+
   // `SelectorUnsupportedError` propagates as a thrown Error out of the raw
   // handler, the same shape `entity_create`'s abstract-type rejection takes
   // (`overlay.test.ts`) — the server's tool-call dispatch (`server.ts`,

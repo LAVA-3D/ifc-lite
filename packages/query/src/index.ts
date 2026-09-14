@@ -22,7 +22,6 @@ export {
   SelectorUnsupportedError,
   type QueryFilterLike,
   type QueryDescriptorLike,
-  type SelectorToQueryDescriptorOptions,
 } from './selector/to-query-descriptor.js';
 // The union and the result types only: a caller narrows on `filter.kind`
 // rather than naming each member interface, so those stay module-internal

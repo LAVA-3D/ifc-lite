@@ -61,8 +61,10 @@ export class QueryBuilder {
    * either order — a selector's classes join `descriptor.types` (OR'd
    * together by `entities()`, exactly like two `.byType()` calls: `.byType
    * ('IfcDoor').select('IfcWall')` matches doors OR walls, not their
-   * intersection) and its property comparisons join `descriptor.filters`
-   * (AND'd together, exactly like two `.where()` calls).
+   * intersection). The base class names remain unexpanded until execution,
+   * when each backend expands them against each model's own schema. Property
+   * comparisons join `descriptor.filters` (AND'd together, exactly like two
+   * `.where()` calls).
    *
    * Throws `SelectorUnsupportedError` (re-exported from this package) for
    * any construct with no lossless target in `QueryDescriptor` — a regex
@@ -73,12 +75,7 @@ export class QueryBuilder {
    * fails to parse.
    */
   select(text: string): this {
-    const modelId = this.descriptor.modelId;
-    const models = this.backend.model.list();
-    const model = modelId
-      ? models.find(m => m.id === modelId)
-      : models.find(m => m.id === this.backend.model.activeId()) ?? models[0];
-    const { types, filters } = selectorToQueryDescriptor(text, { schemaVersion: model?.schemaVersion });
+    const { types, filters } = selectorToQueryDescriptor(text);
     if (types.length > 0) this.descriptor.types = [...(this.descriptor.types ?? []), ...types];
     if (filters.length > 0) {
       this.descriptor.filters = [...(this.descriptor.filters ?? []), ...(filters as QueryFilter[])];

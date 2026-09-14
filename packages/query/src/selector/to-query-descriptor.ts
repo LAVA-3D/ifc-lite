@@ -29,8 +29,9 @@
  * rather than degrading to a partial or empty descriptor.
  *
  * The lossless subset:
- *   - Class terms: `IfcWall`, comma unions (`IfcWall, IfcSlab`), expanded to
- *     subtypes via `@ifc-lite/parser`'s `expandTypes`.
+ *   - Class terms: `IfcWall`, comma unions (`IfcWall, IfcSlab`). The
+ *     descriptor keeps the normalized base names; each query backend expands
+ *     them against the schema of the model it is currently evaluating.
  *   - Exact-name property/quantity comparisons: `Pset_WallCommon.
  *     FireRating=2HR`, `Qto_WallBaseQuantities.NetVolume>1` — both read as
  *     the same `QueryFilter` shape; the quantity fallback lives in the
@@ -54,7 +55,7 @@
  * `classification=`, `location=`.
  */
 
-import { expandTypes, isKnownType, normalizeIfcTypeName } from '@ifc-lite/parser';
+import { isKnownType, normalizeIfcTypeName } from '@ifc-lite/parser';
 import { parseSelector } from './parse.js';
 import type { SelectorFilter, SelectorOp, SelectorText } from './ast.js';
 import type { FilterComparisonOp } from '../filter-predicate.js';
@@ -79,11 +80,6 @@ export interface QueryFilterLike {
 export interface QueryDescriptorLike {
   types: string[];
   filters: QueryFilterLike[];
-}
-
-export interface SelectorToQueryDescriptorOptions {
-  /** The model's IFC schema, so class expansion picks the right subtype table. */
-  schemaVersion?: string;
 }
 
 /**
@@ -116,7 +112,6 @@ export class SelectorUnsupportedError extends Error {
  */
 export function selectorToQueryDescriptor(
   text: string,
-  options: SelectorToQueryDescriptorOptions = {},
 ): QueryDescriptorLike {
   const parsed = parseSelector(text);
   if (!parsed.ok) {
@@ -166,7 +161,12 @@ export function selectorToQueryDescriptor(
   if (unsupported.length > 0) throw new SelectorUnsupportedError(text, unsupported);
 
   return {
-    types: classAdds.length > 0 ? expandTypes(classAdds, options.schemaVersion).map(normalizeIfcTypeName) : [],
+    // QueryDescriptor types are intentionally unexpanded. A descriptor may
+    // execute across an IFC2X3 + IFC4/4X3 federation, and every backend already
+    // expands this list against each model's own schema. Expanding here from
+    // the active/first model would leak that schema's descendants into the
+    // others and would make `.model().select()` differ from `.select().model()`.
+    types: classAdds.map(normalizeIfcTypeName),
     filters,
   };
 }

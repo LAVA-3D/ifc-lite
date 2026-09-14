@@ -124,6 +124,17 @@ describe('query --select', () => {
     expect(rows[0].name).toBe('Wall B');
   });
 
+  it('unions a selector class with --type, matching repeated byType semantics', async () => {
+    const stdout = captureStdout();
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    await queryCommand([file, '--type', 'IfcDoor', '--select', 'IfcWall', '--json']);
+
+    const rows = JSON.parse(stdout.out);
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((row: { type: string }) => row.type))).toEqual(new Set(['IfcWall', 'IfcDoor']));
+  });
+
   it('exits 1 naming the unsupported construct, rather than silently running an empty or partial query', async () => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);

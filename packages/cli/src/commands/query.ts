@@ -55,10 +55,9 @@ export async function queryCommand(args: string[]): Promise<void> {
   const offset = validateLimit(getFlag(args, '--offset'), '--offset');
   const propFilter = getFlag(args, '--where');
   // #4094: an IfcOpenShell-style selector, e.g. "IfcWall, Pset_WallCommon.
-  // FireRating=2HR". ANDs with --type/--where (below, at "Build query") —
-  // its classes join the same `types` list --type populates, its property
-  // comparisons join the same `filters` list --where's manual application
-  // reads from `q.toArray()`.
+  // FireRating=2HR". Its classes union with the same `types` list --type
+  // populates; its property comparisons AND with the query, as does --where's
+  // manual application to `q.toArray()` below.
   const select = getFlag(args, '--select');
   const jsonOutput = hasFlag(args, '--json');
   const countOnly = hasFlag(args, '--count');
