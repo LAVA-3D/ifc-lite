@@ -90,6 +90,45 @@ describe('mesh_coordinate_space is the server enum, not a string', () => {
     >();
   });
 
+  it('hands back the same shape with the tag RETYPED, not the caller\'s own type', () => {
+    // The case the return type exists for: an unvalidated wire shape, the kind
+    // `JSON.parse` and a hand-written interface produce. Returning the
+    // argument's own `T` would hand the `string` straight back, and a caller
+    // switching on the three tiers would still be holding a value the compiler
+    // believes is any string. Fails typecheck if the signature goes back to
+    // `(wire: T) => T`.
+    const wire: { cache_key: string; mesh_coordinate_space?: string } = {
+      cache_key: 'abc',
+      mesh_coordinate_space: 'site_local',
+    };
+    const narrowed = withNarrowedCoordinateSpace(wire);
+    expectTypeOf<typeof narrowed['mesh_coordinate_space']>().toEqualTypeOf<
+      MeshCoordinateSpace | undefined
+    >();
+    // The rest of the shape survives: this is one property retyped, not a cast
+    // through `unknown` that forgets everything else.
+    expectTypeOf<typeof narrowed['cache_key']>().toEqualTypeOf<string>();
+    expect(narrowed.mesh_coordinate_space).toBe('site_local');
+  });
+
+  it('keeps every member of a union argument whole', () => {
+    // `Omit<T, 'mesh_coordinate_space'>` is NOT distributive: over a union it
+    // collapses to the shared keys, so a caller holding two response shapes
+    // would lose every property they do not share. An intersection
+    // distributes, and this pins that it does. Fails typecheck (TS2339) if the
+    // return type goes back to an `Omit`-based one.
+    const either = { cache_key: 'a', meshes: [], mesh_coordinate_space: 'raw_ifc' } as
+      | { cache_key: string; meshes: unknown[]; mesh_coordinate_space?: string }
+      | { cache_key: string; optimized: true; mesh_coordinate_space?: string };
+    const narrowed = withNarrowedCoordinateSpace(either);
+    expectTypeOf<typeof narrowed['mesh_coordinate_space']>().toEqualTypeOf<
+      MeshCoordinateSpace | undefined
+    >();
+    // The member-only properties survive, reachable after a discriminating check.
+    if ('meshes' in narrowed) expect(narrowed.meshes).toEqual([]);
+    else expect(narrowed.optimized).toBe(true);
+  });
+
   it('recognises exactly the three tiers', () => {
     expect(asMeshCoordinateSpace('site_local')).toBe('site_local');
     expect(asMeshCoordinateSpace('model_rtc')).toBe('model_rtc');
