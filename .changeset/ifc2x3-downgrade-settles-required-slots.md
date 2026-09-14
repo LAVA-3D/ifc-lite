@@ -12,3 +12,5 @@ The count reaches the caller through the channels #4686 added: `StepExportResult
 Also fixes the property sets the Rust `export_step` synthesizes from `property_mutations`. They are built after the emit loop and never went through the converter, so an IFC2X3 export with property mutations wrote `$` in their `OwnerHistory` even when the file had one to point them at. They now go through the same fill, including when the source is already IFC2X3 and no conversion runs.
 
 A record whose attribute count is not the one IFC2X3 declares is left untouched and not counted: its slots were never reconciled to that list, so writing into one could land on the wrong attribute.
+
+`convertStepLine` now applies these defaults on every conversion to IFC2X3, including the argument forms that pass no fill object. The fill object is still how a caller gets the `OwnerHistory` reuse and the counts; the slots the schema itself can settle no longer depend on passing one. A call whose source schema already IS IFC2X3 still returns the line untouched, in TypeScript: it converts nothing. The Rust `export_step` does cover that case for the records it synthesizes, as described above.

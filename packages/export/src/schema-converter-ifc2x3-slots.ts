@@ -15,22 +15,6 @@ const BY_TYPE: ReadonlyMap<string, { arity: number; slots: readonly Ifc2x3Requir
   new Map(IFC2X3_REQUIRED_SLOTS.map(([type, arity, slots]) => [type, { arity, slots }]));
 
 /**
- * The value a downgrade writes into `attribute` of `entityType` when the
- * source has none, or null when IFC2X3 requires a value no default can stand
- * in for.
- *
- * The by-name attribute remap (`schema-converter-attr-remap.ts`) asks this for
- * the RENAME TARGET's slots. It cannot wait for {@link Ifc2x3SlotFill.apply}:
- * `convertStepLine` is public and its fill argument is optional, so a slot the
- * remap leaves `$` would stay `$` for a caller that passes none.
- */
-export function ifc2x3MandatoryDefault(entityType: string, attribute: string): string | null {
-  const row = BY_TYPE.get(entityType);
-  if (row === undefined) return null;
-  return row.slots.find(([, name]) => name === attribute)?.[2] ?? null;
-}
-
-/**
  * Slots IFC2X3 requires a value in, on a downgrade to IFC2X3 (#4714).
  *
  * IFC4 made attributes optional that IFC2X3 declares mandatory, so a valid

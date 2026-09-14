@@ -103,10 +103,19 @@ fn by_name_attr_remap_names(entity_type: &str) -> Option<(&'static [&'static str
 /// and `IfcDoorType`/`IfcWindowType` have no `ConstructionType` or `Sizeable`
 /// at all; [`Ifc2x3SlotFill`] settles all four from the generated
 /// required-slot table straight after this runs, because the remap's output
-/// carries exactly the target's attribute count. The TypeScript twin
-/// (`remapRenamedAttributesByName`) writes those defaults itself instead: its
-/// `convertStepLine` takes the fill as an OPTIONAL argument, so a caller that
-/// passes none would otherwise get a `$` there.
+/// carries exactly the target's attribute count. Same policy and same shape as
+/// the TypeScript twin's `remapRenamedAttributesByName`, which reaches it
+/// through its own fill: `convertStepLine` applies one on every IFC2X3 target,
+/// substituting a throwaway when the caller passes none.
+///
+/// The `trim` below has no twin, and that is a real divergence rather than a
+/// compensation: NEITHER splitter trims its tokens (measured:
+/// `splitTopLevelStepArguments("'a' ,  $  , #3 ")` returns
+/// `["'a' ", "  $  ", " #3 "]`). So a source slot written `  $  ` is
+/// normalised to `$` here and passed through verbatim there. It predates
+/// #4714, it is whitespace-only, and the four mandatory slots this doc is
+/// about are overwritten by the fill either way; left as found rather than
+/// changed on the way past.
 fn remap_attrs_by_name(attrs: &str, src_names: &[&str], tgt_names: &[&str]) -> Option<String> {
     let values = split_top_level_args(attrs)?;
     let mut by_name: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();

@@ -95,9 +95,9 @@ describe('IFC2X3 downgrade settles the slots IFC2X3 requires a value in (#4714)'
     expect(unfilledFrom(result.stats.warnings), out).toBe(0);
   });
 
-  // `convertStepLine`'s fill argument is optional, so the by-name remap reads
-  // the same generated table itself rather than leaving IfcDoorStyle's four
-  // mandatory slots to a fill the caller may not have passed.
+  // The by-name remap leaves IfcDoorStyle's four mandatory slots `$`; the fill
+  // settles them from the same generated table straight afterwards, on the
+  // public call as much as on the exporter path.
   it('fills the by-name remap target\'s mandatory slots with no fill passed', () => {
     const line = convertStepLine(
       "#1=IFCDOORTYPE('1abcdefghijklmnopqrstu',$,'D',$,$,$,$,$,$,.DOOR.,.SINGLE_SWING_LEFT.,$,$);",
@@ -109,6 +109,26 @@ describe('IFC2X3 downgrade settles the slots IFC2X3 requires a value in (#4714)'
     expect(slot(line, 9)).toBe('.NOTDEFINED.');
     expect(slot(line, 10)).toBe('.F.');
     expect(slot(line, 11)).toBe('.F.');
+  });
+
+  // A type that reaches the fill through no rename, so it covers the hole the
+  // door case above cannot: that one passed before #4750's review round.
+  it('applies the required-slot defaults in its public three-argument form', () => {
+    const line = convertStepLine(
+      "#10=IFCFOOTING('2O2Fr$t4X7Zf8NOew3FLOH',#5,'F',$,$,$,$,$,$);",
+      'IFC4',
+      'IFC2X3',
+    );
+    expect(slot(line, 8), line).toBe('.NOTDEFINED.');
+    // The four-argument form takes the same branch; pinned so "both forms" in
+    // the changeset is a claim a test carries rather than one a reader checks.
+    const seeded = convertStepLine(
+      "#10=IFCFOOTING('2O2Fr$t4X7Zf8NOew3FLOH',#5,'F',$,$,$,$,$,$);",
+      'IFC4',
+      'IFC2X3',
+      undefined,
+    );
+    expect(slot(seeded, 8), seeded).toBe('.NOTDEFINED.');
   });
 
   it('leaves a target that is not IFC2X3 alone', () => {

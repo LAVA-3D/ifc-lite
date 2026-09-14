@@ -3,7 +3,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { splitTopLevelStepArguments } from './step-argument-parser.js';
-import { ifc2x3MandatoryDefault } from './schema-converter-ifc2x3-slots.js';
 
 /**
  * Attribute-list reconciliation for a genuine cross-schema entity RENAME
@@ -23,8 +22,10 @@ import { ifc2x3MandatoryDefault } from './schema-converter-ifc2x3-slots.js';
  * without retaining a fourth parser (LTplus-AG/ifc-lite#4125/#4200).
  *
  * The validated splitter preserves an empty trailing slot so malformed
- * fixed-arity records cannot shift positional meaning, and trims legal STEP
- * whitespace around each token. Pinned by the adjacent tests.
+ * fixed-arity records cannot shift positional meaning. It does NOT trim
+ * whitespace around a token, whatever this comment used to say: measured,
+ * `splitTopLevelStepArguments("'a' ,  $  , #3 ")` returns
+ * `["'a' ", "  $  ", " #3 "]`, and no test pinned the trimming half.
  */
 export function splitTopLevelAttributes(attrsRaw: string): string[] | null {
   return splitTopLevelStepArguments(attrsRaw);
@@ -66,24 +67,23 @@ export const BY_NAME_ATTR_REMAP_TYPES = new Set(['IFCDOORTYPE', 'IFCWINDOWTYPE']
  * prefix of the other.
  *
  * A target attribute with no same-named source attribute becomes `$`
- * (unknown) rather than a guess, unless IFC2X3 requires a value in that slot
- * of `tgtType` and the generated required-slot table records a default that
- * claims nothing ({@link ifc2x3MandatoryDefault}); a source attribute with no
- * same-named target slot is dropped. Both are honest data loss for attributes
- * the target schema's OWN shape does not carry under that name — never a
- * misplaced value.
+ * (unknown) rather than a guess; a source attribute with no same-named target
+ * slot is dropped. Both are honest data loss for attributes the target
+ * schema's OWN shape does not carry under that name — never a misplaced value.
  *
- * `IfcDoorStyle`/`IfcWindowStyle` are why the defaults matter: both declare
- * `OperationType`, `ConstructionType`, `ParameterTakesPrecedence` and
- * `Sizeable` mandatory, and `IfcDoorType`/`IfcWindowType` have no
- * `ConstructionType` or `Sizeable` at all, so a plain `$` there made a record
- * a strict Part 21 reader rejects.
+ * That `$` is not the last word on a slot IFC2X3 requires a value in.
+ * `IfcDoorStyle`/`IfcWindowStyle` declare `OperationType`, `ConstructionType`,
+ * `ParameterTakesPrecedence` and `Sizeable` mandatory, and
+ * `IfcDoorType`/`IfcWindowType` have no `ConstructionType` or `Sizeable` at
+ * all; `Ifc2x3SlotFill` settles all four from the generated required-slot
+ * table straight after this runs — on every conversion to IFC2X3, fill
+ * argument or not — because this output carries exactly the target's
+ * attribute count. Same policy and shape as the Rust `remap_attrs_by_name`.
  */
 export function remapRenamedAttributesByName(
   attrsRaw: string,
   srcNames: readonly string[],
   tgtNames: readonly string[],
-  tgtType: string,
 ): string | null {
   const values = splitTopLevelAttributes(attrsRaw);
   if (values === null) return null;
@@ -91,10 +91,5 @@ export function remapRenamedAttributesByName(
   for (let i = 0; i < srcNames.length && i < values.length; i++) {
     byName.set(srcNames[i], values[i]);
   }
-  return tgtNames
-    .map((name) => {
-      const given = byName.get(name);
-      return given !== undefined && given !== '$' ? given : (ifc2x3MandatoryDefault(tgtType, name) ?? '$');
-    })
-    .join(',');
+  return tgtNames.map((name) => byName.get(name) ?? '$').join(',');
 }
