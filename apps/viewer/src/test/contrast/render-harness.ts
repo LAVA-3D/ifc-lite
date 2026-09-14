@@ -46,17 +46,28 @@ import tailwindcss from '@tailwindcss/postcss';
 import autoprefixer from 'autoprefixer';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import { contrastRatio, type Rgba } from './wcag';
+import { extractFirstStringLiteralAfter } from './extract-classname';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEWER_ROOT = join(__dirname, '../../../');
 const INDEX_CSS_PATH = join(VIEWER_ROOT, 'src/index.css');
+const TOOLTIP_TSX_PATH = join(VIEWER_ROOT, 'src/components/ui/tooltip.tsx');
 
-/** The real `TooltipContent` surface class, `apps/viewer/src/components/ui/tooltip.tsx`
- *  (`cn('...', className)`'s base string) — kept here as one literal so every
- *  contrast test in this directory renders the actual shared surface rather
- *  than each re-typing an approximation of it. */
-export const TOOLTIP_CONTENT_SURFACE_CLASS =
-  'z-50 overflow-hidden rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md';
+/** The real `TooltipContent` surface class, pulled from
+ *  `apps/viewer/src/components/ui/tooltip.tsx`'s SOURCE (`extract-classname.ts`)
+ *  rather than typed here — so if `TooltipContent`'s `cn('...', className)`
+ *  base string ever changes again (the way #4767 changed it from
+ *  `bg-primary` to `bg-popover`), every contrast test in this directory
+ *  renders the surface production actually ships today, not a string this
+ *  file guessed at and could fall out of sync with. The anchor
+ *  `<TooltipPrimitive.Content` identifies that component's own JSX opening
+ *  tag, so `extractFirstStringLiteralAfter` reads the first quoted literal
+ *  inside it — the `cn(...)` call's base-class argument — and nothing past
+ *  that tag's closing `>`. */
+export const TOOLTIP_CONTENT_SURFACE_CLASS = extractFirstStringLiteralAfter(
+  TOOLTIP_TSX_PATH,
+  '<TooltipPrimitive.Content',
+);
 
 let compiledCssPromise: Promise<string> | undefined;
 
