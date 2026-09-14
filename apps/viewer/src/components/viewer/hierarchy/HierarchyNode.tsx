@@ -88,10 +88,16 @@ export function HierarchyNode({
     node.type === 'unified-storey' ||
     node.type === 'type-group' ||
     node.type === 'material-group' ||
-    node.type === 'group'
+    node.type === 'group' ||
+    node.type === 'other-group'
       ? 'font-medium text-zinc-900 dark:text-zinc-100'
       : 'text-zinc-700 dark:text-zinc-300';
   const strikeWhenHidden = nodeHidden && 'line-through decoration-zinc-400 dark:decoration-zinc-600';
+  // A physical element known to have no shape, or the "Other" bucket holding
+  // them — grayed out with the same muted convention a hidden row already
+  // uses (#4762), distinct from `nodeHidden`'s 3D-visibility toggle: this
+  // reflects a fact about the model (no geometry), not a user action.
+  const noGeometry = node.noGeometry || node.type === 'other-group';
 
   if (node.type === 'model-tag-group') return <ModelTagGroupRow node={node} virtualRow={virtualRow} />;
   // Model header nodes (for visibility control and expansion)
@@ -247,7 +253,7 @@ export function HierarchyNode({
                 'cursor-pointer',
                 isSelected ? 'border-l-primary font-medium selected' : 'border-transparent'
               ),
-          nodeHidden && 'opacity-50 grayscale'
+          (nodeHidden || noGeometry) && 'opacity-50 grayscale'
         )}
         style={{
           paddingLeft: `${node.depth * 16 + 8}px`,

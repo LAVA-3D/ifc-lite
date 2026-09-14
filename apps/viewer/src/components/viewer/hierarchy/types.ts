@@ -31,6 +31,7 @@ export type NodeType =
   | 'group'               // IfcGroup/IfcSystem/IfcZone entity row from the Groups tab (#1622)
   | 'group-member'        // Member row under an expanded group (#1622)
   | 'model-tag-group'     // Model-tag group header in the Models section's "By tag" view (#4215)
+  | 'other-group'         // "Other" bucket header for geometry-less physical elements (#4762)
   | 'element';            // Individual element
 
 export interface TreeNode {
@@ -107,6 +108,18 @@ export interface TreeNode {
    * frame / isolate the whole assembly at once (issue #1133).
    */
   assemblyChildGlobalIds?: number[];
+  /**
+   * True when this row is a physical element that is known to have no shape
+   * — its own Representation is `$` and, if it decomposes via
+   * `IfcRelAggregates`, none of its parts has one either. Set only once
+   * geometry is known (never during streaming, when absence is
+   * unanswerable — see `makeShapeTest`'s `geometryKnown` gate). The row
+   * renderer grays these out and the tree builders bucket them under an
+   * "Other" node instead of dropping them (#4762); the headline object
+   * count (`elementCount`) already excludes them via the shape test, so
+   * this flag changes only how a row is *shown*, never what is *counted*.
+   */
+  noGeometry?: boolean;
 }
 
 /** Data for a storey from a single model */

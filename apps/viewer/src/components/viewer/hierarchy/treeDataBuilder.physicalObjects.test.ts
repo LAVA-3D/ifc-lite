@@ -117,8 +117,8 @@ function createStoreyDataStore(): IfcDataStore {
 
 const EXPANDED = new Set(['root-1', 'root-1-2', 'root-1-2-3', 'root-1-2-3-4', 'root-1-2-3-4-40']);
 
-function storeyNodeOf(ds: IfcDataStore, geometricIds?: Set<number>) {
-  const nodes = buildTreeData(new Map(), ds, EXPANDED, false, [], undefined, geometricIds);
+function storeyNodeOf(ds: IfcDataStore, geometricIds?: Set<number>, expandedNodes: Set<string> = EXPANDED) {
+  const nodes = buildTreeData(new Map(), ds, expandedNodes, false, [], undefined, geometricIds);
   const storey = nodes.find((n) => n.type === 'IfcBuildingStorey');
   assert.ok(storey, 'the storey row exists');
   return { nodes, storey };
@@ -208,17 +208,43 @@ describe("storey headline: physical objects that have a shape", () => {
     );
   });
 
-  it('still SHOWS every contained entity as a selectable row', () => {
+  it('still SHOWS every contained entity as a selectable row, the shapeless marker grayed under "Other"', () => {
     // Changing what the number counts must not remove anything from the tree:
-    // the annotation and the shapeless marker stay inspectable.
-    const { nodes } = storeyNodeOf(createStoreyDataStore(), GEOMETRY_LOADED);
+    // the annotation and the shapeless marker stay inspectable. #50 (#4762's
+    // motivating case — a proxy merely NAMED "Group#21", not an IfcGroup) has
+    // no shape, so it is bucketed under one collapsed "Other" row instead of
+    // mixed in with the normal rows.
+    const expandedWithOther = new Set([...EXPANDED, 'root-1-2-3-4-other']);
+    const { nodes } = storeyNodeOf(createStoreyDataStore(), GEOMETRY_LOADED, expandedWithOther);
     const rows = nodes.filter((n) => n.type === 'element').map((n) => n.expressIds[0]);
-    assert.deepStrictEqual(rows, [41, 10, 11, 12, 50, 60], 'the space subtree first, then the storey\'s own rows');
+    assert.deepStrictEqual(
+      rows,
+      [41, 10, 11, 12, 60, 50],
+      'the space subtree first, then the storey\'s own shaped rows, then the expanded Other bucket',
+    );
+    const otherGroup = nodes.find((n) => n.type === 'other-group');
+    assert.ok(otherGroup, 'the shapeless marker is bucketed under an "Other" node, not dropped');
+    assert.strictEqual(otherGroup?.elementCount, 1);
+    const markerRow = nodes.find((n) => n.type === 'element' && n.expressIds[0] === 50);
+    assert.strictEqual(markerRow?.noGeometry, true, 'the row is flagged so it renders grayed out');
     assert.strictEqual(
       storeyNodeOf(createStoreyDataStore(), GEOMETRY_LOADED).storey.countSummary?.rows,
       5,
-      'five contained rows behind a headline of three',
+      'five contained rows behind a headline of three — the bucket does not change the count',
     );
+  });
+
+  it('leaves every row where it was, with no "Other" bucket, while geometry is still loading', () => {
+    // Absence is unanswerable mid-load — see `makeShapeTest`'s `geometryKnown`
+    // gate — so nothing is grayed or bucketed yet, exactly like the count.
+    const { nodes } = storeyNodeOf(createStoreyDataStore(), GEOMETRY_ABSENT);
+    assert.strictEqual(nodes.find((n) => n.type === 'other-group'), undefined);
+    const rows = nodes.filter((n) => n.type === 'element').map((n) => n.expressIds[0]);
+    assert.deepStrictEqual(rows, [41, 10, 11, 12, 50, 60]);
+    assert.ok(rows.every((id) => {
+      const row = nodes.find((n) => n.type === 'element' && n.expressIds[0] === id);
+      return !row?.noGeometry;
+    }), 'no row is grayed while geometry is unknown');
   });
 });
 
@@ -412,22 +438,41 @@ describe('By Class tab never lists a non-object, in either geometry state', () =
     });
   }
 
-  it('leaves a shapeless physical object out of the renders-oriented tab', () => {
+  it('has no "Other" bucket at all while geometry is still streaming (#4762)', () => {
+    // Absence is unanswerable mid-load (`isOther`'s own `applyFilter` guard,
+    // mirroring `makeAssemblyGeometry`'s `renders`) — #50 is shown as a normal
+    // optimistic row instead (already covered above), and no "Other" node
+    // exists to gray anything under.
+    const nodes = buildTypeTree(new Map(), createStoreyDataStore(), new Set(), false, GEOMETRY_ABSENT);
+    assert.strictEqual(nodes.find((n) => n.type === 'other-group'), undefined);
+  });
+
+  it('leaves a shapeless physical object out of the renders-oriented tab, grayed under "Other" instead (#4762)', () => {
     // #50 is an object by schema (IfcBuildingElementProxy carrying only a
-    // placement — the marker real exporters emit for a flattened authoring
-    // group). It has nothing to draw, so neither the tab nor the storey
-    // headline counts it — but it stays a row in the spatial tree, because
-    // changing what a number counts must not remove data from the UI.
-    const nodes = buildTypeTree(new Map(), createStoreyDataStore(), new Set(), false, GEOMETRY_LOADED);
+    // placement, named "Group#21" — it is NOT an IfcGroup, just a proxy
+    // someone named that way; see AGENTS.md's #4762 motivating case). It has
+    // nothing to draw, so neither the tab nor the storey headline counts it —
+    // but it stays findable, grayed out under a flat "Other" bucket instead
+    // of its own IfcBuildingElementProxy class group or being dropped.
+    const nodes = buildTypeTree(new Map(), createStoreyDataStore(), new Set(['type-group-other']), false, GEOMETRY_LOADED);
     assert.strictEqual(
       nodes.find((n) => n.type === 'type-group' && n.ifcType === 'IfcBuildingElementProxy'),
       undefined,
+      'never its own class group — that would count it among the objects it is excluded from',
     );
-    const { storey, nodes: spatialNodes } = storeyNodeOf(createStoreyDataStore(), GEOMETRY_LOADED);
+    const otherGroup = nodes.find((n) => n.type === 'other-group');
+    assert.ok(otherGroup, 'the By Class tab has an "Other" bucket');
+    const markerRow = nodes.find((n) => n.type === 'element' && n.expressIds[0] === 50);
+    assert.ok(markerRow, 'the marker is a row under it');
+    assert.strictEqual(markerRow?.noGeometry, true);
+    assert.strictEqual(markerRow?.ifcType, 'IfcBuildingElementProxy', 'its own class still rides along for context');
+
+    const expandedWithOther = new Set([...EXPANDED, 'root-1-2-3-4-other']);
+    const { storey, nodes: spatialNodes } = storeyNodeOf(createStoreyDataStore(), GEOMETRY_LOADED, expandedWithOther);
     assert.strictEqual(storey.elementCount, 3, 'the storey badge counts the objects that render');
     assert.ok(
       spatialNodes.some((n) => n.type === 'element' && n.expressIds[0] === 50),
-      'and the spatial tab still lists it, so it remains findable',
+      'and the spatial tab still lists it (under its own "Other" bucket), so it remains findable',
     );
   });
 
