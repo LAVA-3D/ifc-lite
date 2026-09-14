@@ -530,10 +530,11 @@ fn aspect(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
 /// only the bisection midpoints go on the kernel grid ([`SNAP_GRID`], 1/65536 of
 /// a unit) — and rebuilds EVERY triangle from those, so it closes
 /// near-duplicate cracks and drops a triangle two of whose corners land in one
-/// cell. Both are intended. Over 117 local fixtures, 552 of 2227 rebuilds
-/// moved 48085 vertices and dropped 4097 triangles, and writing back only the
-/// bisected vertices moved `various/rvt01.ifc` #13797 from 88 to 92 open edges
-/// (#4640). The rebuild also de-shares vertices and re-derives flat per-face
+/// cell. Both are intended: measured over 117 local fixtures at f4e69c67d (before
+/// #4745 changed what the weld upstream writes back, so read them as the order of
+/// magnitude, not today's exact counts), 552 of 2227 rebuilds moved 48085
+/// vertices and dropped 4097 triangles; #4640 recorded that writing back only the
+/// bisected vertices moved `various/rvt01.ifc` #13797 from 88 to 92 open edges. The rebuild also de-shares vertices and re-derives flat per-face
 /// normals. A caller that needs the input's sub-100 µm vertex spread, its shared
 /// vertices or its authored normals must not run this pass.
 ///
@@ -550,7 +551,8 @@ pub fn refine_high_aspect_slivers(mesh: &Mesh) -> Mesh {
 }
 
 /// Region-scoped [`refine_high_aspect_slivers`]: only triangles whose AABB
-/// intersects one of `boxes` are sliver CANDIDATES; nothing outside is bisected.
+/// intersects one of `boxes`, grown by the canonicalization slack below, are
+/// sliver CANDIDATES.
 /// The rebuild is still whole-mesh, so once any sliver fires, the cell dedup
 /// documented on [`refine_high_aspect_slivers`] applies to the rest of the host.
 ///

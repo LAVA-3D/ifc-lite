@@ -32,11 +32,13 @@ use ring_ops::{ring_is_noise, weld_near_coincident_2d};
 /// with the needles — 7.8 mm across a 64 m span, so a 64 m × 5 mm plate edge
 /// does not survive the needle filter, on any of the paths that call it, and its
 /// removal DOES leave a gap — the framing argument above covers a needle, not a
-/// face. An absolute floor cannot replace the rule: this runs in the CALLER's unit
+/// face. No absolute floor is threaded here: this runs in the CALLER's unit
 /// (metres on the void path, millimetres on the file-unit boolean path, #2684),
 /// and the corpus needles it must keep dropping reach 1.7 mm (ISSUE_129
 /// #296868) and 0.054 file units (S_Office #92642) — within 3× of a plausible
 /// real thin face. Every absolute floor from 2⁻¹² to 2⁻²⁰ re-tore both hosts.
+/// #4744 did thread a metres-per-unit scale into the sibling RING gate; doing the
+/// same here would still need that call, since the `aabb_clip` site has no scale.
 pub(crate) fn tri_is_needle(v: &[Point3<f64>; 3]) -> bool {
     let d = |a: &Point3<f64>, b: &Point3<f64>| (a - b).norm();
     let (e0, e1, e2) = (d(&v[0], &v[1]), d(&v[1], &v[2]), d(&v[2], &v[0]));

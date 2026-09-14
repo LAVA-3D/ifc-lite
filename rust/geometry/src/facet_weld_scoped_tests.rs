@@ -218,6 +218,11 @@ fn scoped_refinement_still_dedups_vertices_outside_the_region_4698() {
 
     assert!(out.indices.len() > mesh.indices.len(), "the in-region slivers must refine");
     assert_eq!(spread(&out), 1, "the out-of-region corner must come back on one position");
+    // ...because it was deduped onto the bar's corner, not because the fin left.
+    assert!(
+        out.positions.chunks_exact(3).any(|p| (p[1] + 1.0).abs() < 1.0e-6),
+        "the fin must still be in the output"
+    );
 }
 
 #[test]
