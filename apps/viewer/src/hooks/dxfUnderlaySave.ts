@@ -100,11 +100,12 @@ export function ensureDxfUnderlaySaveSubscription(): void {
   });
 }
 
-/** Flush the latest edit captured while `modelId` was still hashing. */
-export function settleDxfUnderlayHash(modelId: string, hash: string | null): void {
+/** Flush the latest edit captured while `modelId` was still hashing. Returns whether a pending live value superseded restore. */
+export function settleDxfUnderlayHash(modelId: string, hash: string | null): boolean {
   const pending = pendingByModelId.get(modelId);
   pendingByModelId.delete(modelId);
-  if (hash && pending) enqueueSave(hash, pending);
+  if (hash && pending !== undefined) enqueueSave(hash, pending);
+  return pending !== undefined;
 }
 
 // ── Restore ──────────────────────────────────────────────────────────

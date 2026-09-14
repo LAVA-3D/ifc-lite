@@ -307,6 +307,41 @@ describe('dxfUnderlays save while model hash is unresolved', () => {
     );
   });
 
+  it('does not restore stale saved underlays over a removal made while hashing', async () => {
+    const fileA = fileWithBytes(22, 'pending-removal.ifc');
+    const expectedHash = (await computeFullSourceHashFromBlob(fileA))!;
+    const old = sampleUnderlay('removed-before-hash');
+    await rawPut(expectedHash, [old]);
+
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+    const release = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const originalArrayBuffer = fileA.arrayBuffer.bind(fileA);
+    Object.defineProperty(fileA, 'arrayBuffer', {
+      value: async () => {
+        markReadStarted();
+        await release;
+        return originalArrayBuffer();
+      },
+    });
+
+    const modelA = stubModel('pending-removal-model', fileA);
+    useViewerStore.setState({
+      models: new Map([[modelA.id, modelA]]),
+      dxfUnderlays: [old],
+    });
+    await mount();
+    useViewerStore.getState().setActiveModel(modelA.id);
+    await readStarted;
+    useViewerStore.setState({ dxfUnderlays: [] });
+    releaseRead();
+    await flushDeep();
+
+    assert.deepStrictEqual(useViewerStore.getState().dxfUnderlays, []);
+    assert.deepStrictEqual((await rawGet(expectedHash))?.dxfUnderlays, []);
+  });
+
   it('keeps unresolved edits isolated when models switch before either hash settles', async () => {
     const fileA = fileWithBytes(30, 'isolated-a.ifc');
     const fileB = fileWithBytes(31, 'isolated-b.ifc');
