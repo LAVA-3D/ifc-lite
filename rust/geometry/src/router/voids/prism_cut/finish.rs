@@ -104,6 +104,22 @@ mod tests {
     }
 
     #[test]
+    fn cleaned_orphan_cannot_seed_the_weld_pool_4754() {
+        let mut candidate = Mesh::new();
+        candidate.add_vertex(Point3::new(100.000_02, 0.0, 0.0), Vector3::zeros());
+        candidate.merge(&tetrahedron(100.000_04));
+        candidate.indices.extend_from_slice(&[0, 1, 1]);
+        let referenced_x = candidate.positions[3];
+
+        let finished = finish_cut(candidate, &Mesh::new()).expect("the tetrahedron is closed");
+        assert_eq!(
+            finished.positions[3], referenced_x,
+            "an unreferenced earlier vertex must not displace a surviving seam vertex"
+        );
+        assert!(closed_enough(&finished));
+    }
+
+    #[test]
     fn closed_unclean_candidate_remains_the_compatibility_fallback_4754() {
         let mut candidate = Mesh::new();
         // Each tetrahedron has one face split through D. A-B-D is only 12 µm
