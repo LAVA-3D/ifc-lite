@@ -657,12 +657,12 @@ async fn issue_4459_old_json_response_is_reparsed_without_changing_request_ident
 /// therefore left every file already on disk serving old-frame symbols from
 /// the main endpoint, indefinitely.
 ///
-/// The control is an entry planted under the CURRENT key holding what a
-/// pre-change deployment wrote: the same response with its symbols in the
-/// frame the overlay extractor chooses (still the browser path's entry point,
-/// so this is the real old value, not a hand-written one). Serving it back is
-/// the defect; re-parsing past it is the fix. With `json_response_cache_key`
-/// reverted to `-json-v4` this fails, replaying the axis at (500, -300) where
+/// The control is what a pre-change deployment actually wrote: this response
+/// with its symbols in the frame the overlay extractor chooses, taken from
+/// that extractor (still the browser path's entry point) rather than
+/// hand-written. It is planted under the retired `-json-v4` suffix once the
+/// current entry is gone, so a reverted bump - where `-json-v4` IS the current
+/// key - replays it. That run fails here with the axis at (500, -300) where
 /// the live parse puts it at (0, 0).
 #[tokio::test]
 async fn issue_4706_a_response_cached_before_the_frame_fix_is_not_replayed() {
@@ -680,15 +680,22 @@ async fn issue_4706_a_response_cached_before_the_frame_fix_is_not_replayed() {
         serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await.unwrap()).unwrap();
     let live_axes = grid_axis_endpoints(&live["symbolic_data"], "live parse");
     // The route writes in a spawned cache task; wait for that write before
-    // overwriting it, so the plant cannot be raced away.
-    for _ in 0..100 {
+    // replacing it, so the plant cannot be raced away. Same budget as
+    // `json_tests.rs`'s wait on this exact write (400 x 25 ms): a loaded
+    // runner with `cargo test`'s thread fan-out does miss a 500 ms one.
+    for _ in 0..400 {
         if state.cache.get_bytes(&current).await.unwrap().is_some() {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    let mut stale: Value =
-        serde_json::from_slice(&state.cache.get_bytes(&current).await.unwrap().unwrap()).unwrap();
+    let written = state
+        .cache
+        .get_bytes(&current)
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("the parse must write {current} within 10 s"));
+    let mut stale: Value = serde_json::from_slice(&written).unwrap();
     stale["symbolic_data"] = serde_json::to_value(
         ifc_lite_processing::extract_symbolic_data_with_provenance(SITE_LOCAL_FIXTURE),
     )
@@ -712,13 +719,19 @@ async fn issue_4706_a_response_cached_before_the_frame_fix_is_not_replayed() {
     assert_eq!(second.status(), StatusCode::OK);
     let served: Value =
         serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await.unwrap()).unwrap();
-    assert_eq!(
-        served["stats"]["from_cache"], false,
-        "a response cached under the retired key must not be replayed"
-    );
+    // The damage first, so a reverted bump reports the 579 m rather than a
+    // bare boolean. `from_cache` after it is the mechanism, and the two are
+    // redundant by construction: a response that is not a replay is a fresh
+    // parse of these bytes, which is what produced `live_axes`. Both are kept
+    // because the frame is what a client suffers and the flag is what the
+    // route decides.
     assert_axes_match(
         &grid_axis_endpoints(&served["symbolic_data"], "after the plant"),
         &live_axes,
         "the re-parsed response",
+    );
+    assert_eq!(
+        served["stats"]["from_cache"], false,
+        "a response cached under the retired key must not be replayed"
     );
 }
