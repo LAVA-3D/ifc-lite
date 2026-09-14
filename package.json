@@ -1,6 +1,6 @@
 {
   "name": "ifc-lite",
-  "version": "8.0.1",
+  "version": "9.0.0",
   "description": "High-performance browser IFC parser & renderer",
   "private": true,
   "type": "module",
@@ -65,6 +65,8 @@
     "check:tla-chunk-await": "node scripts/check-tla-chunk-await.mjs",
     "generate:server-attr-indices": "pnpm turbo build --filter=@ifc-lite/parser && node scripts/generate-server-attr-indices.mjs",
     "check:server-attr-indices": "pnpm turbo build --filter=@ifc-lite/parser && node scripts/generate-server-attr-indices.mjs --check",
+    "generate:server-relationship-slots": "pnpm turbo build --filter=@ifc-lite/parser && node scripts/generate-server-relationship-slots.mjs",
+    "check:server-relationship-slots": "pnpm turbo build --filter=@ifc-lite/parser && node scripts/generate-server-relationship-slots.mjs --check",
     "test:regression": "node scripts/test-geometry-regression.mjs",
     "test:esm": "node scripts/verify-esm-entrypoints.mjs",
     "test:ids-corpus": "node scripts/test-ids-corpus.mjs",
