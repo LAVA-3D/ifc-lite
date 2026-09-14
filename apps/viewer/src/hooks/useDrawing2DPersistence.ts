@@ -39,7 +39,11 @@ import { computeFullSourceHashFromBlob } from '@/utils/sourceContentHash.js';
 import { loadDrawing2DEntry, defaultMarkupPatch, suppressNextSaveFor } from '@/store/slices/drawing2DSlice.persistence.js';
 import { getCachedHash, setCachedHash, notifyDecided } from './drawingMarkupRestorePrecedence.js';
 import { resetSaveState, beginRestore, endRestore, setRestoredSectionConfig, ensureSaveSubscription } from './drawingMarkupSave.js';
-import { ensureDxfUnderlaySaveSubscription, restoreDxfUnderlaysFor } from './dxfUnderlaySave.js';
+import {
+  ensureDxfUnderlaySaveSubscription,
+  restoreDxfUnderlaysFor,
+  settleDxfUnderlayHash,
+} from './dxfUnderlaySave.js';
 
 export { hasPersistedMarkupEntryFor, onLocalStorageDecidedFor } from './drawingMarkupRestorePrecedence.js';
 export { notifyDrawing2DSectionConfig, consumeRestoredSectionConfig } from './drawingMarkupSave.js';
@@ -140,7 +144,7 @@ export function useDrawing2DPersistence(): void {
       // `dxfUnderlaySave.ts`'s `restoreDxfUnderlaysFor`/`mergeDxfUnderlays`)
       // rather than a replace. Not awaited: it guards its own staleness via
       // `stillCurrent`, the same closure every other async step here uses.
-      void restoreDxfUnderlaysFor(activeModelId, hash, stillCurrent);
+      void restoreDxfUnderlaysFor(hash, stillCurrent);
 
       const defaults = getDefaultDrawing2DState().drawing2DDisplayOptions;
       const entry = loadDrawing2DEntry(hash, defaults);
@@ -172,6 +176,7 @@ export function useDrawing2DPersistence(): void {
     const sourceFile = model?.sourceFile;
     if (!sourceFile) {
       setCachedHash(activeModelId, null);
+      settleDxfUnderlayHash(activeModelId, null);
       applyHash(null);
       notifyDecided(activeModelId);
       return;
@@ -180,6 +185,7 @@ export function useDrawing2DPersistence(): void {
     computeFullSourceHashFromBlob(sourceFile)
       .then((hash) => {
         setCachedHash(activeModelId, hash);
+        settleDxfUnderlayHash(activeModelId, hash);
         applyHash(hash);
         notifyDecided(activeModelId);
       })
@@ -187,6 +193,7 @@ export function useDrawing2DPersistence(): void {
         // eslint-disable-next-line no-console
         console.warn('[drawing2D] failed to hash model for markup restore', err);
         setCachedHash(activeModelId, null);
+        settleDxfUnderlayHash(activeModelId, null);
         applyHash(null);
         notifyDecided(activeModelId);
       });

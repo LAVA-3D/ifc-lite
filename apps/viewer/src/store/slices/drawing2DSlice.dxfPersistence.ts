@@ -328,19 +328,11 @@ export function mergeDxfUnderlays(
 ): DxfUnderlayState[] {
   if (saved.length === 0) return existing;
   const existingIds = new Set(existing.map((u) => u.id));
-  const toAdd = saved.filter((u) => !existingIds.has(u.id));
+  const toAdd = saved.filter((u) => {
+    if (existingIds.has(u.id)) return false;
+    existingIds.add(u.id);
+    return true;
+  });
   if (toAdd.length === 0) return existing;
   return [...existing, ...toAdd];
-}
-
-/** Test/diagnostic helper — not used by the persistence hook itself. */
-export async function clearAllDxfUnderlaysEntries(): Promise<void> {
-  const db = await openDatabase();
-  if (!db) return;
-  await runStore(db, 'readwrite', (store) => store.clear());
-}
-
-/** Test-only: force the module to re-open the database on next access (a fresh `fake-indexeddb` instance per test file/run). */
-export function __resetDxfUnderlaysDbForTests(): void {
-  dbPromise = null;
 }

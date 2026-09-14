@@ -22,15 +22,63 @@ import { useViewerStore } from '@/store';
 import type { FederatedModel } from '@/store';
 import type { DxfUnderlayState } from '@/store/slices/drawing2DSlice.js';
 import { useDrawing2DPersistence } from './useDrawing2DPersistence.js';
-import { restoreDxfUnderlaysFor } from './dxfUnderlaySave.js';
 import { clearAllDrawing2DEntries } from '@/store/slices/drawing2DSlice.persistence.js';
-import {
-  loadDxfUnderlaysEntry,
-  saveDxfUnderlaysEntry,
-  clearAllDxfUnderlaysEntries,
-  __resetDxfUnderlaysDbForTests,
-} from '@/store/slices/drawing2DSlice.dxfPersistence.js';
 import { computeFullSourceHashFromBlob } from '@/utils/sourceContentHash.js';
+
+const DB_NAME = 'ifc-lite-drawing2d-dxf';
+const STORE_DXF = 'dxf-underlays';
+
+interface RawEntry {
+  dxfUnderlays: DxfUnderlayState[];
+  savedAt: number;
+}
+
+async function openTestDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_DXF)) {
+        request.result.createObjectStore(STORE_DXF);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function rawPut(hash: string, dxfUnderlays: DxfUnderlayState[]): Promise<void> {
+  const db = await openTestDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_DXF, 'readwrite');
+    tx.objectStore(STORE_DXF).put({ dxfUnderlays, savedAt: Date.now() }, hash);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function rawGet(hash: string): Promise<RawEntry | undefined> {
+  const db = await openTestDb();
+  const value = await new Promise<RawEntry | undefined>((resolve, reject) => {
+    const tx = db.transaction(STORE_DXF, 'readonly');
+    const request = tx.objectStore(STORE_DXF).get(hash);
+    request.onsuccess = () => resolve(request.result as RawEntry | undefined);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return value;
+}
+
+async function rawClear(): Promise<void> {
+  const db = await openTestDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_DXF, 'readwrite');
+    tx.objectStore(STORE_DXF).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
 
 function stubModel(id: string, sourceFile: File): FederatedModel {
   return {
@@ -92,13 +140,6 @@ async function mount(): Promise<void> {
   });
 }
 
-async function flush(): Promise<void> {
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
-  });
-}
-
 async function flushDeep(): Promise<void> {
   await act(async () => {
     for (let i = 0; i < 40; i++) {
@@ -107,8 +148,8 @@ async function flushDeep(): Promise<void> {
   });
 }
 
-beforeEach(() => {
-  __resetDxfUnderlaysDbForTests();
+beforeEach(async () => {
+  await rawClear();
   clearAllDrawing2DEntries();
   useViewerStore.getState().resetViewerState();
   useViewerStore.getState().clearAllModels();
@@ -121,14 +162,14 @@ afterEach(async () => {
   if (current) await act(async () => current.unmount());
   if (container) { container.remove(); container = null; }
   clearAllDrawing2DEntries();
-  await clearAllDxfUnderlaysEntries();
+  await rawClear();
 });
 
 describe('dxfUnderlays restore on model activate', () => {
   it('populates dxfUnderlays from IndexedDB once the active model\'s hash resolves', async () => {
     const fileA = fileWithBytes(1, 'a.ifc');
     const hashA = (await computeFullSourceHashFromBlob(fileA))!;
-    await saveDxfUnderlaysEntry(hashA, [sampleUnderlay('saved-a')]);
+    await rawPut(hashA, [sampleUnderlay('saved-a')]);
 
     const modelA = stubModel('populate-model-a', fileA);
     useViewerStore.setState({ models: new Map([['populate-model-a', modelA]]) });
@@ -161,7 +202,7 @@ describe('dxfUnderlays restore on model activate', () => {
   it('does not add anything until the hash resolves — no premature restore', async () => {
     const fileA = fileWithBytes(3, 'c.ifc');
     const hashA = (await computeFullSourceHashFromBlob(fileA))!;
-    await saveDxfUnderlaysEntry(hashA, [sampleUnderlay('saved-c')]);
+    await rawPut(hashA, [sampleUnderlay('saved-c')]);
 
     const modelA = stubModel('premature-model-a', fileA);
     useViewerStore.setState({ models: new Map([['premature-model-a', modelA]]) });
@@ -180,30 +221,43 @@ describe('dxfUnderlays restore on model activate', () => {
   });
 });
 
-// This first describe exercises `useDrawing2DPersistence.ts`'s OUTER
+// This describe exercises `useDrawing2DPersistence.ts`'s OUTER
 // `stillCurrent()` guard (in `applyHash`, unmodified by this feature): a
 // model switch during the HASH computation itself already stops `applyHash`
-// from ever calling `restoreDxfUnderlaysFor` for the stale model, so
-// `dxfUnderlaySave.ts`'s OWN inner `stillCurrent` check is never reached by
-// this scenario. The second describe below targets that inner guard
-// directly — see its own comment for why a full-hook race can't reach it
-// deterministically.
+// from ever starting a restore for the stale model. The controlled
+// `arrayBuffer()` promise proves hashing has begun before the switch, so this
+// cannot pass merely because the A effect never ran.
 describe('dxfUnderlays restore — fast model switch during hash resolution (outer guard)', () => {
   it('a slow lookup for the model switched AWAY FROM must not land on the newly active model', async () => {
     const fileA = fileWithBytes(10, 'race-a.ifc');
     const fileB = fileWithBytes(11, 'race-b.ifc');
     const hashA = (await computeFullSourceHashFromBlob(fileA))!;
-    await saveDxfUnderlaysEntry(hashA, [sampleUnderlay('saved-a')]);
+    await rawPut(hashA, [sampleUnderlay('saved-a')]);
 
     const modelA = stubModel('race-model-a', fileA);
     const modelB = stubModel('race-model-b', fileB);
     useViewerStore.setState({ models: new Map([['race-model-a', modelA], ['race-model-b', modelB]]) });
     await mount();
 
-    // Activate A (its IndexedDB lookup starts), then immediately switch to B
-    // before A's lookup can resolve — no `flush()` in between.
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+    const release = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const originalArrayBuffer = fileA.arrayBuffer.bind(fileA);
+    Object.defineProperty(fileA, 'arrayBuffer', {
+      value: async () => {
+        markReadStarted();
+        await release;
+        return originalArrayBuffer();
+      },
+    });
+
+    // Do not switch until A's production hash read has definitely started.
+    // Removing applyHash's outer stillCurrent guard then lets A restore here.
     useViewerStore.getState().setActiveModel('race-model-a');
+    await readStarted;
     useViewerStore.getState().setActiveModel('race-model-b');
+    releaseRead();
 
     // Let every pending microtask/timer (including A's now-stale lookup)
     // settle.
@@ -217,30 +271,99 @@ describe('dxfUnderlays restore — fast model switch during hash resolution (out
   });
 });
 
-// MUTATION TARGET: `dxfUnderlaySave.ts`'s OWN `if (!stillCurrent()) return;`
-// inside `restoreDxfUnderlaysFor`, called directly here (not through the
-// full hook) so the race window is the IndexedDB lookup ITSELF, not the
-// hash computation the outer guard above already closes — a full-hook test
-// can't force that narrower window deterministically since both steps
-// resolve near-instantly against `fake-indexeddb`. Delete the guard and
-// this test must fail.
-describe('dxfUnderlays restore — stillCurrent guards the IndexedDB lookup itself', () => {
-  it('a stillCurrent() that flips false while the load is in flight must prevent the merge', async () => {
-    await saveDxfUnderlaysEntry('direct-hash', [sampleUnderlay('direct-saved')]);
-    useViewerStore.setState({ dxfUnderlays: [] });
+describe('dxfUnderlays save while model hash is unresolved', () => {
+  it('flushes the latest edit under the correct model hash after hashing settles', async () => {
+    const fileA = fileWithBytes(20, 'pending-a.ifc');
+    const expectedHash = (await computeFullSourceHashFromBlob(fileA))!;
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+    const release = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const originalArrayBuffer = fileA.arrayBuffer.bind(fileA);
+    Object.defineProperty(fileA, 'arrayBuffer', {
+      value: async () => {
+        markReadStarted();
+        await release;
+        return originalArrayBuffer();
+      },
+    });
 
-    let current = true;
-    await restoreDxfUnderlaysFor('direct-model', 'direct-hash', () => current);
-    // Sanity: with the guard passing throughout, the merge does happen.
-    assert.deepStrictEqual(useViewerStore.getState().dxfUnderlays.map((u) => u.id), ['direct-saved']);
+    const modelA = stubModel('pending-save-model-a', fileA);
+    useViewerStore.setState({ models: new Map([['pending-save-model-a', modelA]]) });
+    await mount();
+    useViewerStore.getState().setActiveModel('pending-save-model-a');
+    await readStarted;
 
-    useViewerStore.setState({ dxfUnderlays: [] });
-    current = false; // simulate "the model changed while this load was in flight"
-    await restoreDxfUnderlaysFor('direct-model', 'direct-hash', () => current);
+    useViewerStore.setState({ dxfUnderlays: [sampleUnderlay('superseded-before-hash')] });
+    useViewerStore.setState({ dxfUnderlays: [sampleUnderlay('latest-before-hash')] });
+    releaseRead();
+    await flushDeep();
+
+    const saved = await rawGet(expectedHash);
     assert.deepStrictEqual(
-      useViewerStore.getState().dxfUnderlays,
-      [],
-      'a stillCurrent() that has gone false must prevent the merge from ever being applied',
+      saved?.dxfUnderlays.map((u) => u.id),
+      ['latest-before-hash'],
+      'an edit made before hash resolution must be replayed to IndexedDB once the model hash is known',
+    );
+  });
+
+  it('keeps unresolved edits isolated when models switch before either hash settles', async () => {
+    const fileA = fileWithBytes(30, 'isolated-a.ifc');
+    const fileB = fileWithBytes(31, 'isolated-b.ifc');
+    const hashA = (await computeFullSourceHashFromBlob(fileA))!;
+    const hashB = (await computeFullSourceHashFromBlob(fileB))!;
+
+    const controls = new Map<File, { started: Promise<void>; release: () => void }>();
+    for (const file of [fileA, fileB]) {
+      let markStarted!: () => void;
+      let releaseRead!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const release = new Promise<void>((resolve) => { releaseRead = resolve; });
+      const originalArrayBuffer = file.arrayBuffer.bind(file);
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: async () => {
+          markStarted();
+          await release;
+          return originalArrayBuffer();
+        },
+      });
+      controls.set(file, { started, release: releaseRead });
+    }
+
+    const modelA = stubModel('isolated-model-a', fileA);
+    const modelB = stubModel('isolated-model-b', fileB);
+    useViewerStore.setState({ models: new Map([[modelA.id, modelA], [modelB.id, modelB]]) });
+    await mount();
+
+    useViewerStore.getState().setActiveModel(modelA.id);
+    await controls.get(fileA)!.started;
+    useViewerStore.setState({ dxfUnderlays: [sampleUnderlay('only-a')] });
+    useViewerStore.getState().setActiveModel(modelB.id);
+    await controls.get(fileB)!.started;
+    useViewerStore.setState({ dxfUnderlays: [sampleUnderlay('only-b')] });
+
+    controls.get(fileA)!.release();
+    controls.get(fileB)!.release();
+    await flushDeep();
+
+    assert.deepStrictEqual((await rawGet(hashA))?.dxfUnderlays.map((u) => u.id), ['only-a']);
+    assert.deepStrictEqual((await rawGet(hashB))?.dxfUnderlays.map((u) => u.id), ['only-b']);
+  });
+
+  it('deduplicates repeated ids inside one restored entry', async () => {
+    const fileA = fileWithBytes(21, 'duplicate-a.ifc');
+    const hashA = (await computeFullSourceHashFromBlob(fileA))!;
+    await rawPut(hashA, [sampleUnderlay('duplicate'), sampleUnderlay('duplicate')]);
+
+    const modelA = stubModel('duplicate-model-a', fileA);
+    useViewerStore.setState({ models: new Map([['duplicate-model-a', modelA]]) });
+    await mount();
+    useViewerStore.getState().setActiveModel('duplicate-model-a');
+    await flushDeep();
+
+    assert.deepStrictEqual(
+      useViewerStore.getState().dxfUnderlays.map((u) => u.id),
+      ['duplicate'],
     );
   });
 });

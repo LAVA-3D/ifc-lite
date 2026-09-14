@@ -51,6 +51,8 @@ import { getCachedHash } from './drawingMarkupRestorePrecedence.js';
 const pendingByHash = new Map<string, DxfUnderlayState[]>();
 /** hash -> whether a write loop is currently draining {@link pendingByHash} for it. */
 const writingHashes = new Set<string>();
+/** model id -> latest edit made while that model's content hash was unresolved. */
+const pendingByModelId = new Map<string, DxfUnderlayState[]>();
 
 async function drain(hash: string): Promise<void> {
   if (writingHashes.has(hash)) return; // a loop for this hash is already running and will pick up the latest pending value itself
@@ -84,21 +86,25 @@ export function ensureDxfUnderlaySaveSubscription(): void {
     const modelId = state.activeModelId;
     prev = state;
     if (!changed || !modelId) return;
-    // No hash resolved yet for the active model (still hashing, or no
-    // `sourceFile` at all) -> nothing to key this save on. Matches
-    // `drawingMarkupSave.ts`'s "no hash, no save" degrade: the edit stays
-    // live in memory but is not persisted until a hash becomes available.
+    // Retain the latest value while hashing. Dropping it here loses edits
+    // made immediately after model activation because no later store change
+    // is guaranteed to replay them once the hash resolves.
     const hash = getCachedHash(modelId);
+    if (hash === undefined) {
+      pendingByModelId.set(modelId, state.dxfUnderlays);
+      return;
+    }
+    pendingByModelId.delete(modelId);
     if (!hash) return;
     enqueueSave(hash, state.dxfUnderlays);
   });
 }
 
-/** Test-only: drop all save-path bookkeeping between tests. */
-export function __resetDxfUnderlaySaveStateForTests(): void {
-  saveSubscriptionStarted = false;
-  pendingByHash.clear();
-  writingHashes.clear();
+/** Flush the latest edit captured while `modelId` was still hashing. */
+export function settleDxfUnderlayHash(modelId: string, hash: string | null): void {
+  const pending = pendingByModelId.get(modelId);
+  pendingByModelId.delete(modelId);
+  if (hash && pending) enqueueSave(hash, pending);
 }
 
 // ── Restore ──────────────────────────────────────────────────────────
@@ -122,7 +128,6 @@ export function __resetDxfUnderlaySaveStateForTests(): void {
  * this function does not even reach that branch for `null`.
  */
 export async function restoreDxfUnderlaysFor(
-  modelId: string,
   hash: string,
   stillCurrent: () => boolean,
 ): Promise<void> {
