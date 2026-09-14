@@ -2389,7 +2389,7 @@ fn repaired_office_covering_matches_independent_solid_3925() {
 // #4754: cleaning before the ulp weld repairs three boundary edges on this
 // real heavy-corpus host. The old weld-before-clean finalizer reports 14 open
 // edges; the fixed-point hygiene path reports 11 without shrinking geometry.
-#[cfg(not(any(feature = "csg_topology_gate", feature = "csg_manifold_gate")))]
+#[cfg(feature = "triangulation-alt")]
 #[test]
 fn issue_068_prism_cut_hygiene_repairs_host_43810_4754() {
     let _serial = CENSUS_SWEEP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
