@@ -332,10 +332,12 @@ function adaptMaterial(op: SelectorOp, value: SelectorValue, text: string): Filt
   if (!stringOp) return unsupportedOp(text, op, value);
   const invalid = regexProblem(value);
   if (invalid) return `${quote(text)}: ${invalid}`;
-  // Matched against each material NAME the element exposes. IfcOpenShell also
-  // accepts a material Category here; ifc-lite does not read Category yet
-  // (#4094), so a Category-only match still finds nothing — stated in the docs
-  // rather than silently approximated.
+  // Matched against each material NAME the element exposes, AND each
+  // material Category (`filter-evaluate.ts`'s `matNamesFor` unions both into
+  // one candidate set), matching IfcOpenShell's `material=`, which reads
+  // either surface. No rule-shape change here: the adapter still builds one
+  // `material` rule, the widening lives entirely in what the evaluator
+  // compares it against (#4094).
   return Rule.material(stringOp, literalOf(value), regexValueKind(value));
 }
 
