@@ -22,8 +22,13 @@ export function CountBadgeTooltip({
   return (
     <>
       <p className="text-xs">{headline}</p>
+      {/* Tooltip surface is bg-primary, so secondary lines must derive from
+          primary-foreground (opacity tiers) — hardcoded zinc was washed out
+          on the blue/purple bg and inverted in dark mode where the
+          foreground flips dark (issue #1218; same fix as BsddCard,
+          PropertySetCard and QuantitySetCard). */}
       {rest.map((line) => (
-        <p key={line} className="text-[10px] text-zinc-400 dark:text-zinc-500">{line}</p>
+        <p key={line} className="text-[10px] text-primary-foreground/80">{line}</p>
       ))}
     </>
   );
