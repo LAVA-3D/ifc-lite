@@ -77,6 +77,7 @@ describe('Scene.getEntityLocalBounds', () => {
     scene['instancedTemplateCpu'] = [
       {
         modelIndex: 0,
+        boundingSpheres: new Float32Array(),
         positions: new Float32Array(),
         normals: new Float32Array(),
         indices: new Uint32Array(),
@@ -111,11 +112,13 @@ describe('Scene.getEntityLocalBounds', () => {
     scene['instancedTemplateCpu'] = [
       {
         modelIndex: 0,
+        boundingSpheres: new Float32Array(),
         positions: new Float32Array(), normals: new Float32Array(), indices: new Uint32Array(),
         instanceData: new ArrayBuffer(0), localMin: [0, 0, 0], localMax: [1, 1, 1],
       },
       {
         modelIndex: 0,
+        boundingSpheres: new Float32Array(),
         positions: new Float32Array(), normals: new Float32Array(), indices: new Uint32Array(),
         instanceData: new ArrayBuffer(0), localMin: [-1, 0.5, 0], localMax: [0.5, 2, 1],
       },
@@ -188,6 +191,7 @@ describe('Scene.getEntityTransform', () => {
     scene['instancedTemplateCpu'] = [
       {
         modelIndex: 0,
+        boundingSpheres: new Float32Array(),
         positions: new Float32Array(),
         normals: new Float32Array(),
         indices: new Uint32Array(),

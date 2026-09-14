@@ -50,6 +50,7 @@ function quantBatch(id: number): BatchedMesh {
 function instancedTemplate(): InstancedTemplateGPU {
   return {
     modelIndex: 0,
+    boundingSpheres: new Float32Array(),
     vertexBuffer: buf('inst-v'),
     indexBuffer: buf('inst-i'),
     indexCount: 24,

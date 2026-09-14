@@ -35,12 +35,16 @@ function fakeBuffer(size: number, usage = 0): GPUBuffer {
 
 function fakeTemplate(instanceCount: number): InstancedTemplateGPU {
   return {
+    modelIndex: 0,
     vertexBuffer: fakeBuffer(28),
     indexBuffer: fakeBuffer(12),
     indexCount: 3,
     instanceBuffer: fakeBuffer(instanceCount * 88, USAGE.VERTEX | USAGE.STORAGE),
     boundingSpheres: new Float32Array(instanceCount * 4),
     instanceCount,
+    bounds: null,
+    maxOccRadius: 1,
+    selectedCount: 0,
   };
 }
 
@@ -56,7 +60,7 @@ function fakeDevice(
   const descriptors: GPUBufferDescriptor[] = [];
   const pipeline = {
     getBindGroupLayout: () => ({} as GPUBindGroupLayout),
-  } as GPUComputePipeline;
+  } as unknown as GPUComputePipeline;
   const device = {
     limits: {
       maxStorageBufferBindingSize,
