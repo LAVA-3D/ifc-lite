@@ -358,10 +358,13 @@ function adaptLocation(op: SelectorOp, value: SelectorValue, text: string): Filt
   }
   const setOp = setOpFor(op);
   if (!setOp) return `${quote(text)}: "location=" takes only "=" and "!="`;
-  // Storey NAME only, and only for elements the storey contains directly (or
-  // their aggregated parts) — measured in `filter-evaluate.test.ts`. An element
-  // inside a space on that storey does NOT match, which is where this differs
-  // from IfcOpenShell's "directly or indirectly" (#4094).
+  // Storey NAME. Matches an element the storey contains directly, its
+  // aggregated parts, AND — one hop through a containing IfcSpace /
+  // IfcSpatialZone — an element inside a space on that storey (the
+  // widening lives entirely in the evaluator/prefilter's notion of
+  // "which storey", not in this rule shape) — measured in
+  // `filter-evaluate.test.ts`. Does not reach a space nested inside
+  // another space rather than directly under the storey.
   return Rule.storey([value.text], setOp);
 }
 
