@@ -68,7 +68,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 
@@ -94,11 +94,15 @@ if (!process.env.IFC2X3_REQUIRED_SLOTS_TSX) {
 const RS_REL = 'rust/export/src/generated/ifc2x3_required_slots.rs';
 const TS_REL = 'packages/export/src/generated/ifc2x3-required-slots.ts';
 
+// `pathToFileURL`, not the bare path: Node's ESM loader parses a Windows
+// `C:\...` specifier as protocol `c:` and refuses it with
+// ERR_UNSUPPORTED_ESM_URL_SCHEME, so this generator and its `--check` would
+// fail before reading either registry (CodeRabbit on PR #4750).
 const { SCHEMA_REGISTRY: IFC2X3 } = await import(
-  join(ROOT, 'packages/parser/src/generated/ifc2x3/schema-registry.ts')
+  pathToFileURL(join(ROOT, 'packages/parser/src/generated/ifc2x3/schema-registry.ts')).href
 );
 const { ENTITIES_IFC2X3 } = await import(
-  join(ROOT, 'packages/data/src/ifc-schema/generated/entities-ifc2x3.ts')
+  pathToFileURL(join(ROOT, 'packages/data/src/ifc-schema/generated/entities-ifc2x3.ts')).href
 );
 
 /** Follow a chain of IFC2X3 defined types down to its EXPRESS base type. */

@@ -3,7 +3,7 @@
 "@ifc-lite/wasm": patch
 ---
 
-Fix STEP export to IFC2X3 keeping `$` in every slot IFC2X3 requires a value in other than `OwnerHistory`, which #4686 covered. IFC4 made attributes optional that IFC2X3 declares mandatory, so a valid IFC4 record legitimately carries `$` there: an IFC4 footing written `#10=IFCFOOTING('2O2Fr$t4X7Zf8NOew3FLOH',$,'F',$,$,$,$,$,$);` came out of an IFC2X3 export unchanged, with `$` in the mandatory `PredefinedType`, which a strict IFC2X3 reader rejects (#4714).
+Fixed a STEP export to IFC2X3: it kept `$` in every slot IFC2X3 requires a value in other than `OwnerHistory`, which #4686 covered. IFC4 made attributes optional that IFC2X3 declares mandatory, so a valid IFC4 record legitimately carries `$` there: an IFC4 footing written `#10=IFCFOOTING('2O2Fr$t4X7Zf8NOew3FLOH',$,'F',$,$,$,$,$,$);` came out of an IFC2X3 export unchanged, with `$` in the mandatory `PredefinedType`, which a strict IFC2X3 reader rejects (#4714).
 
 Each slot now gets a recorded policy, driven by a generated table (`scripts/generate-ifc2x3-required-slots.mjs`, from the EXPRESS-derived IFC2X3 schema registry) rather than a hand-kept list: an enum whose IFC2X3 declaration has a `NOTDEFINED` member takes `.NOTDEFINED.`, a BOOLEAN takes `.F.`, and everything else keeps `$` and is counted. Nothing is invented: no measure, label, identifier or entity reference is fabricated, and an enum without a `NOTDEFINED` member — `IfcBuildingStorey.CompositionType`, for one — keeps `$` rather than being guessed. The table also feeds the `IfcDoorType` -> `IfcDoorStyle` attribute remap, replacing the four-entry map each language kept by hand.
 
