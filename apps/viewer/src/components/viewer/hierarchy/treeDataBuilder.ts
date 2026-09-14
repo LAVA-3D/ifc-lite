@@ -21,15 +21,10 @@ import type { IfcDataStore } from '@ifc-lite/parser';
 import { buildMaterialUsageIndex, extractGroupMembersOnDemand } from '@ifc-lite/parser';
 import type { FederatedModel } from '@/store';
 import { toGlobalIdFromModels } from '@/store/globalId';
-import {
-  collectAggregatedDescendants,
-  getAggregatedChildren,
-  type AggregationRelationships,
-} from '@/utils/aggregation';
 import { countBadgeLines } from './countBadgeLabel';
 import { mergeObjectCounts, summarizeObjects } from './objectCountSummary';
 import { buildOtherGroupNodes, type OtherBucketEntry } from './otherBucket';
-import { emitElementSubtree, emitElementsWithOtherBucket, orderElementIdsByName } from './elementSubtree';
+import { emitElementsWithOtherBucket } from './elementSubtree';
 import {
   makeAssemblyGeometry,
   partsOrOwnIds,

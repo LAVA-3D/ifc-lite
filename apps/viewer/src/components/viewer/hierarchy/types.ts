@@ -184,3 +184,7 @@ const SPATIAL_CONTAINER_TYPES: Set<NodeType> = new Set([
   'IfcFacilityPartCommon',
 ]);
 export const isSpatialContainer = (type: NodeType): boolean => SPATIAL_CONTAINER_TYPES.has(type);
+
+/** Rows muted because they represent known geometry-less physical objects. */
+export const isNoGeometryNode = (node: TreeNode): boolean =>
+  node.noGeometry === true || node.type === 'other-group';

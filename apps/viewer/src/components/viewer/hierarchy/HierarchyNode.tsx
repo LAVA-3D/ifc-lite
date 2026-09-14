@@ -15,7 +15,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { openRepositionModels } from '@/lib/model-placement/commands';
 import { cn } from '@/lib/utils';
-import { isSpatialContainer, type TreeNode } from './types';
+import { isNoGeometryNode, isSpatialContainer, type TreeNode } from './types';
 import { CountBadgeTooltip } from './CountBadgeTooltip';
 import { IFC_ICON_CODEPOINTS, IFC_ICON_DEFAULT } from './ifc-icons';
 import { ModelRowTags } from './ModelRowTags';
@@ -93,12 +93,7 @@ export function HierarchyNode({
       ? 'font-medium text-zinc-900 dark:text-zinc-100'
       : 'text-zinc-700 dark:text-zinc-300';
   const strikeWhenHidden = nodeHidden && 'line-through decoration-zinc-400 dark:decoration-zinc-600';
-  // A physical element known to have no shape, or the "Other" bucket holding
-  // them — grayed out with the same muted convention a hidden row already
-  // uses (#4764), distinct from `nodeHidden`'s 3D-visibility toggle: this
-  // reflects a fact about the model (no geometry), not a user action.
-  const noGeometry = node.noGeometry || node.type === 'other-group';
-
+  const noGeometry = isNoGeometryNode(node);
   if (node.type === 'model-tag-group') return <ModelTagGroupRow node={node} virtualRow={virtualRow} />;
   // Model header nodes (for visibility control and expansion)
   if (node.type === 'model-header' && node.id.startsWith('model-')) {
