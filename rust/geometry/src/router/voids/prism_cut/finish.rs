@@ -23,7 +23,7 @@ pub(in crate::router::voids) fn finish_cut(candidate: Mesh, host: &Mesh) -> Opti
     let mut hygienic = candidate.clone();
     let before = hygienic.indices.len();
     hygienic.clean_degenerate();
-    if hygienic.indices.len() > before || hygienic.indices.len() % 3 != 0 {
+    if hygienic.indices.len() > before || !hygienic.indices.len().is_multiple_of(3) {
         return None;
     }
     hygienic = dedup_cut_vertices(&hygienic, host);
@@ -32,7 +32,7 @@ pub(in crate::router::voids) fn finish_cut(candidate: Mesh, host: &Mesh) -> Opti
         let before = hygienic.indices.len();
         hygienic.clean_degenerate();
         let after = hygienic.indices.len();
-        if after > before || after % 3 != 0 {
+        if after > before || !after.is_multiple_of(3) {
             return None;
         }
         if after == before {
