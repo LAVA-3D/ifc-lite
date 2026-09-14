@@ -366,17 +366,30 @@ describe('selectorToFilterRules — nothing is dropped in silence', () => {
     ]);
   });
 
-  it('GlobalId written as a comparison, not a bare term, is still reported', () => {
-    // `GlobalId=X` parses as a generic attribute term, but the on-demand
+  it('GlobalId= and GlobalId!= reuse the same globalId rule the bare term builds', () => {
+    // `GlobalId=X` parses as a generic attribute term, and the on-demand
     // extraction the attribute rule reads never surfaces GlobalId (it's
-    // skipped as a structural/display attribute), so routing it there would
-    // silently match nothing. The bare-GlobalId literal is the supported
-    // spelling for "find this element by id".
-    const out = adapt(`GlobalId=${GUID}`);
-    assert.deepEqual(out.rules, []);
-    assert.equal(out.unsupported.length, 1);
-    assert.match(out.unsupported[0] ?? '', /GlobalId=/);
-    assert.match(out.unsupported[0] ?? '', /bare GlobalId/);
+    // skipped as a structural/display attribute), so routing it through
+    // `Rule.attribute` would silently match nothing. Routed through
+    // `Rule.globalId` instead — the same rule kind, and the same
+    // `globalIdOpMatches` evaluator, the bare-GlobalId literal already uses —
+    // "=" and "!=" are exact-identity comparisons anyway, so this is not a
+    // new matcher, just a second spelling reaching the existing one.
+    assert.deepEqual(rulesOf(`GlobalId=${GUID}`), [Rule.globalId([GUID], 'in')]);
+    assert.deepEqual(rulesOf(`GlobalId!=${GUID}`), [Rule.globalId([GUID], 'notIn')]);
+  });
+
+  it('GlobalId compared with anything other than = or != is reported, not approximated', () => {
+    // A GlobalId is an exact 22-character identity, not text to search
+    // within or order — "*=", ">", a regex, or NULL all imply a kind of
+    // comparison `globalIdOpMatches` cannot express, so each is refused by
+    // name rather than silently taking the wrong branch.
+    for (const text of [`GlobalId*=${GUID}`, `GlobalId>${GUID}`, `GlobalId=/${GUID}/`, 'GlobalId=NULL']) {
+      const out = adapt(text);
+      assert.deepEqual(out.rules, [], text);
+      assert.equal(out.unsupported.length, 1, text);
+      assert.match(out.unsupported[0] ?? '', /GlobalId/, text);
+    }
   });
 
   it('an unknown class name', () => {
