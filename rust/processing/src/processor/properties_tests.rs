@@ -71,3 +71,64 @@ fn collects_a_single_bare_relating_property_definition() {
     assert_eq!(link.property_set_ids, vec![20]);
     assert_eq!(link.related_object_ids, vec![50]);
 }
+
+#[test]
+fn direct_assignment_applies_every_grouped_property_set() {
+    let mut jobs = vec![EntityJob {
+        id: 50,
+        ifc_type: IfcType::IfcSpace,
+        start: 0,
+        end: 0,
+        product_definition_shape_id: None,
+        element_color: [0.0; 4],
+        global_id: None,
+        name: None,
+        presentation_layer: None,
+        space_zone_properties: None,
+        representation_map_id: None,
+    }];
+    let property_values_by_id = FxHashMap::from_iter([
+        (30, ("PropA".to_string(), "value-a".to_string())),
+        (31, ("PropB".to_string(), "value-b".to_string())),
+    ]);
+    let property_sets_by_id = FxHashMap::from_iter([
+        (
+            20,
+            PropertySetDefinition {
+                name: Some("Pset_A".to_string()),
+                property_ids: vec![30],
+            },
+        ),
+        (
+            22,
+            PropertySetDefinition {
+                name: Some("Pset_B".to_string()),
+                property_ids: vec![31],
+            },
+        ),
+    ]);
+    let links = [RelDefinesByPropertiesLink {
+        property_set_ids: vec![20, 22],
+        related_object_ids: vec![50],
+    }];
+
+    assign_space_zone_properties(
+        &mut jobs,
+        &property_values_by_id,
+        &property_sets_by_id,
+        &links,
+    );
+
+    let properties = jobs[0]
+        .space_zone_properties
+        .as_ref()
+        .expect("direct assignment should retain both grouped property sets");
+    assert_eq!(
+        properties.get("Pset_A.PropA").map(String::as_str),
+        Some("value-a")
+    );
+    assert_eq!(
+        properties.get("Pset_B.PropB").map(String::as_str),
+        Some("value-b")
+    );
+}
