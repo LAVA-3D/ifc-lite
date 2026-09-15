@@ -476,6 +476,7 @@ as well as JavaScript errors, and stop memory sampling on every exit path.
   Raw samples, executable and source hashes, environment, schedule, and metric
   semantics are in
   [`docs/architecture/evidence/closure-verdict/performance-controlled.json`](../../docs/architecture/evidence/closure-verdict/performance-controlled.json).
+  The superseded uncontrolled run is retained beside it as `performance.json`.
 - **Entity indexes built and never read** (`index_vs_scan.rs`): `relationships()`
   built a full parallel index and handed it to the decoder, but every decode in it
   is `decode_at_with_id` over the scanner's own spans and only `decode_by_id`
