@@ -8,17 +8,14 @@ import { RelationshipType, createLogger, flattenRelationshipEdges } from '@ifc-l
 import { EntityExtractor, type IfcDataStore } from '@ifc-lite/parser';
 import type { MutablePropertyView, NewEntity } from '@ifc-lite/mutations';
 import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index.js';
-
 const CYCLE_CHECK_VISIT_BUDGET = 2_000_000;
 const log = createLogger('Ifc5TreeScope');
 interface SpatialTreeNode { expressId: number; name?: string; children: SpatialTreeNode[] }
-
 interface RelationEdges {
   childrenByParent: Map<number, number[]>;
   parentsByChild: Map<number, number[]>;
   parentSetsByChild: Map<number, Set<number>>;
 }
-
 interface EffectiveTreeGraph {
   decomposition: RelationEdges;
   containment: RelationEdges;
@@ -27,7 +24,6 @@ interface EffectiveTreeGraph {
   decompositionModified: boolean;
   containmentModified: boolean;
 }
-
 /** All tree answers used by one IFC5 export. */
 export interface Ifc5TreeScope {
   treeIds: Set<number>;
@@ -141,8 +137,6 @@ function addRawEdges(
   if (!relationships) return;
   const relations = new Map<number, { type: RelationshipType; parent: number; children: number[] }>();
   for (const row of flattenRelationshipEdges(relationships.forward)) {
-    if (row.type !== RelationshipType.Aggregates && row.type !== RelationshipType.Nests
-      && row.type !== RelationshipType.ContainsElements) continue;
     const relation = relations.get(row.relationshipId)
       ?? { type: row.type, parent: row.sourceId, children: [] };
     relation.children.push(row.targetId);
@@ -153,33 +147,39 @@ function addRawEdges(
     if (!declarationOrder.has(row.relationshipId)) declarationOrder.set(row.relationshipId, declarationOrder.size);
   }
   const created = new Map((view?.getNewEntities() ?? []).map((entity) => [entity.expressId, entity]));
-  const orderedRelations = [...relations].sort(
-    ([left], [right]) => (declarationOrder.get(left) ?? 0) - (declarationOrder.get(right) ?? 0),
-  );
+  const orderedRelations = [...relations].sort(([left], [right]) =>
+    (declarationOrder.get(left) ?? 0) - (declarationOrder.get(right) ?? 0));
   for (const [id, relation] of orderedRelations) {
-    const decomposition = relation.type !== RelationshipType.ContainsElements;
-    const rawType = relation.type === RelationshipType.Nests
-      ? 'IFCRELNESTS'
-      : decomposition ? 'IFCRELAGGREGATES' : 'IFCRELCONTAINEDINSPATIALSTRUCTURE';
+    const rawDecomposition = relation.type === RelationshipType.Aggregates || relation.type === RelationshipType.Nests;
+    const rawContainment = relation.type === RelationshipType.ContainsElements;
+    const rawType = relation.type === RelationshipType.Nests ? 'IFCRELNESTS'
+      : rawDecomposition ? 'IFCRELAGGREGATES' : rawContainment
+        ? 'IFCRELCONTAINEDINSPATIALSTRUCTURE' : dataStore.entityIndex.byId.get(id)?.type ?? '';
     const effectiveType = effective.typeOf(id);
-    const parentIndex = decomposition ? 4 : 5;
-    const childrenIndex = decomposition ? 5 : 4;
-    const modified = effective.isDeleted(id)
-      || (effectiveType !== undefined && effectiveType !== rawType)
-      || slotIsAuthored(id, parentIndex, decomposition ? 'RelatingObject' : 'RelatingStructure', undefined, view)
-      || slotIsAuthored(id, childrenIndex, decomposition ? 'RelatedObjects' : 'RelatedElements', undefined, view);
-    if (modified) {
-      if (decomposition) graph.decompositionModified = true;
-      else graph.containmentModified = true;
-    }
-    if (effective.isDeleted(id)) continue;
     const type = effectiveType ?? rawType;
     const isDecomposition = type === 'IFCRELAGGREGATES' || type === 'IFCRELNESTS';
     const isContainment = type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE';
+    if (!rawDecomposition && !rawContainment && !isDecomposition && !isContainment) continue;
+    const typeChanged = effectiveType !== undefined && effectiveType !== rawType;
+    const parentIndex = isDecomposition ? 4 : 5;
+    const childrenIndex = isDecomposition ? 5 : 4;
+    const endpointsAuthored = slotIsAuthored(
+      id, parentIndex, isDecomposition ? 'RelatingObject' : 'RelatingStructure', undefined, view,
+    ) || slotIsAuthored(
+      id, childrenIndex, isDecomposition ? 'RelatedObjects' : 'RelatedElements', undefined, view,
+    );
+    const modified = effective.isDeleted(id) || typeChanged || endpointsAuthored;
+    if (rawDecomposition && modified) graph.decompositionModified = true;
+    if (rawContainment && modified) graph.containmentModified = true;
+    if (isDecomposition && (typeChanged || endpointsAuthored)) graph.decompositionModified = true;
+    if (isContainment && (typeChanged || endpointsAuthored)) graph.containmentModified = true;
+    if (effective.isDeleted(id)) continue;
     if (!isDecomposition && !isContainment) continue;
-    const source = isDecomposition
+    const source = rawDecomposition && isDecomposition
       ? [null, null, null, null, relation.parent, relation.children]
-      : [null, null, null, null, relation.children, relation.parent];
+      : rawContainment && isContainment
+        ? [null, null, null, null, relation.children, relation.parent]
+        : new Array<unknown>(6).fill(null);
     const attributes = effectiveAttributes(id, source, undefined, view) as unknown[];
     const parentId = refs(attributes[isDecomposition ? 4 : 5], modified)[0];
     const edges = isDecomposition ? graph.decomposition : graph.containment;

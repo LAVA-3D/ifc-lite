@@ -152,12 +152,13 @@ function nodeNamed(file: IfcxFileLike, name: string): IfcxNodeLike | undefined {
  */
 function sourcelessRoofStore(): IfcDataStore {
   const strings = new StringTable();
-  const entityBuilder = new EntityTableBuilder(5, strings);
+  const entityBuilder = new EntityTableBuilder(6, strings);
   entityBuilder.add(10, 'IFCPROJECT', guid(10), 'Project', '', '');
   entityBuilder.add(20, 'IFCSITE', guid(20), 'Site', '', '');
   entityBuilder.add(40, 'IFCBUILDINGSTOREY', guid(40), 'Storey', '', '');
   entityBuilder.add(50, 'IFCROOF', guid(50), 'Roof', '', '');
   entityBuilder.add(60, 'IFCSLAB', guid(60), 'Roof Slab A', '', '');
+  entityBuilder.add(61, 'IFCWALL', guid(61), 'Retyped Child', '', '');
 
   const relBuilder = new RelationshipGraphBuilder();
   // The site's containment is declared FIRST, so a reader that takes the
@@ -165,18 +166,20 @@ function sourcelessRoofStore(): IfcDataStore {
   relBuilder.addEdge(20, 50, RelationshipType.ContainsElements, 71);
   relBuilder.addEdge(40, 50, RelationshipType.ContainsElements, 70);
   relBuilder.addEdge(50, 60, RelationshipType.Aggregates, 83);
+  relBuilder.addEdge(50, 61, RelationshipType.DefinesByType, 90);
 
   // Zero-length refs: a server parse indexes every entity by id but has no
   // bytes behind them, which is exactly the state under test.
   const byId = new Map<number, { type: string; byteOffset: number; byteLength: number }>([
     [10, 'IFCPROJECT'], [20, 'IFCSITE'], [40, 'IFCBUILDINGSTOREY'],
-    [50, 'IFCROOF'], [60, 'IFCSLAB'],
+    [50, 'IFCROOF'], [60, 'IFCSLAB'], [61, 'IFCWALL'],
     [70, 'IFCRELCONTAINEDINSPATIALSTRUCTURE'], [71, 'IFCRELCONTAINEDINSPATIALSTRUCTURE'],
     [83, 'IFCRELAGGREGATES'],
+    [90, 'IFCRELDEFINESBYTYPE'],
   ].map(([id, type]) => [id as number, { type: type as string, byteOffset: 0, byteLength: 0 }]));
 
   return {
-    fileSize: 0, schemaVersion: 'IFC4', entityCount: 5, parseTime: 0,
+    fileSize: 0, schemaVersion: 'IFC4', entityCount: 6, parseTime: 0,
     source: EMPTY_SOURCE_BYTES,
     entityIndex: { byId, byType: new Map() },
     strings,
@@ -474,5 +477,19 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     const roof = nodeNamed(file, 'Roof');
     expect(Object.values(nodeNamed(file, 'Storey')?.children ?? {})).toContain(roof?.path);
     expect(Object.values(nodeNamed(file, 'Site')?.children ?? {})).not.toContain(roof?.path);
+  });
+
+  it('follows a source-less relationship retyped into decomposition', () => {
+    const store = sourcelessRoofStore();
+    const view = new MutablePropertyView(null, 'ifc5-sourceless-retype');
+    view.setEntityType(90, 'IfcRelAggregates', null, 'IfcRelDefinesByType');
+    view.setPositionalAttribute(90, 4, '#50');
+    view.setPositionalAttribute(90, 5, ['#61']);
+    const file: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store, null, view).export({ includeGeometry: false }).content,
+    );
+    const child = nodeNamed(file, 'Retyped Child');
+    expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(child?.path);
+    expect(reachablePaths(file).has(child?.path as string)).toBe(true);
   });
 });
