@@ -112,7 +112,8 @@ export { extractGeoreferencing, transformToWorld, transformToLocal, getCoordinat
 export { extractClassifications, getClassificationsForElement, getClassificationCodeForElement, getClassificationPath, groupElementsByClassification, type ClassificationsData, type Classification, type ClassificationReference } from './classification-extractor.js';
 
 // 4D / scheduling extractor — IfcTask, IfcTaskTime, IfcRelSequence, IfcRelAssignsToProcess,
-// IfcRelAssignsToControl, IfcRelNests, IfcWorkSchedule, IfcWorkPlan, IfcLagTime.
+// IfcRelAssignsToControl, IfcRelNests, IfcWorkSchedule, IfcWorkPlan, IfcWorkCalendar
+// (with IfcWorkTime / IfcRecurrencePattern / IfcTimePeriod), IfcLagTime.
 export {
   extractScheduleOnDemand,
   parseIso8601Duration,
@@ -121,6 +122,10 @@ export {
   type ScheduleTaskTimeInfo,
   type ScheduleSequenceInfo,
   type WorkScheduleInfo,
+  type WorkCalendarInfo,
+  type WorkTimeInfo,
+  type RecurrencePatternInfo,
+  type TimePeriodInfo,
   type SequenceTypeEnum,
   type TaskDurationType,
 } from './schedule-extractor.js';
