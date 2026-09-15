@@ -493,9 +493,14 @@ export const createSheetSlice: StateCreator<SheetSlice, [], [], SheetSlice> = (
     const current = get().activeSheet;
     if (!current) return;
 
+    const usedIds = new Set(get().savedSheetTemplates.map((template) => template.id));
+    const baseId = `template-${Date.now()}`;
+    let id = baseId;
+    for (let suffix = 2; usedIds.has(id); suffix++) id = `${baseId}-${suffix}`;
+
     const template: DrawingSheet = {
       ...current,
-      id: `template-${Date.now()}`,
+      id,
       name,
     };
     set((s) => ({

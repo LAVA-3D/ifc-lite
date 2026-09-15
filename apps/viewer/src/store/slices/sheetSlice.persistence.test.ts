@@ -85,6 +85,17 @@ describe('sheet storage (#4836)', () => {
     assert.deepEqual(loadSheetTemplates(), [sheet]);
   });
 
+  it('retains sheets by save order when multiple writes share a timestamp', () => {
+    const now = mock.method(Date, 'now', () => 100);
+    const sheet = createDefaultSheet();
+    for (let i = 0; i < 20; i++) saveSheet(`z-old-${i}`, { ...sheet, name: `Old ${i}` });
+    saveSheet('a-new', { ...sheet, name: 'Newest' });
+    now.mock.restore();
+    assert.equal(loadSheet('z-old-0'), null);
+    assert.equal(loadSheet('a-new')?.name, 'Newest');
+    assert.equal(loadSheet('z-old-19')?.name, 'Old 19');
+  });
+
   it('clears without consuming an eviction slot, and logs failed removals', () => {
     const sheet = createDefaultSheet();
     for (let i = 0; i < 20; i++) saveSheet(`kept-${i}`, sheet);

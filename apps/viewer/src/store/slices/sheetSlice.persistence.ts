@@ -49,6 +49,21 @@ export function saveSheetTemplates(templates: readonly DrawingSheet[]): void {
   write(SHEET_TEMPLATES_KEY, { templates });
 }
 
+function nextSaveOrder(): number {
+  if (typeof localStorage === 'undefined') return Date.now();
+  let latest = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const candidate = localStorage.key(i);
+    if (!candidate?.startsWith(PREFIX)) continue;
+    const entry = record(read(candidate));
+    const order = typeof entry.savedOrder === 'number'
+      ? entry.savedOrder
+      : typeof entry.savedAt === 'number' ? entry.savedAt : 0;
+    latest = Math.max(latest, order);
+  }
+  return Math.max(Date.now(), latest + 1);
+}
+
 export function saveSheet(hash: string, sheet: DrawingSheet | null): void {
   const key = sheetStorageKey(hash);
   if (sheet === null) {
@@ -59,17 +74,23 @@ export function saveSheet(hash: string, sheet: DrawingSheet | null): void {
     }
     return;
   }
-  if (!write(key, { sheet, savedAt: Date.now() })) return;
+  const savedAt = Date.now();
+  if (!write(key, { sheet, savedAt, savedOrder: nextSaveOrder() })) return;
   // Match the drawing markup cache's 20-model limit. Templates are never evicted.
   try {
-    const entries: { key: string; savedAt: number }[] = [];
+    const entries: { key: string; savedOrder: number }[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const candidate = localStorage.key(i);
       if (!candidate?.startsWith(PREFIX)) continue;
       const entry = record(read(candidate));
-      entries.push({ key: candidate, savedAt: typeof entry.savedAt === 'number' ? entry.savedAt : 0 });
+      entries.push({
+        key: candidate,
+        savedOrder: typeof entry.savedOrder === 'number'
+          ? entry.savedOrder
+          : typeof entry.savedAt === 'number' ? entry.savedAt : 0,
+      });
     }
-    entries.sort((a, b) => a.savedAt - b.savedAt || a.key.localeCompare(b.key));
+    entries.sort((a, b) => a.savedOrder - b.savedOrder || a.key.localeCompare(b.key));
     for (const entry of entries.filter((entry) => entry.key !== key).slice(0, Math.max(0, entries.length - MAX_MODELS))) {
       localStorage.removeItem(entry.key);
     }
