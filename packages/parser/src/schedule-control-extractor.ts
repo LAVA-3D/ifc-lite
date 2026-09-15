@@ -3,23 +3,61 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * Calendar-specific cross-entity orchestration, split out of
- * `schedule-extractor.ts` purely to keep both files under the ~400-line
- * module-size guideline (see AGENTS.md) — same reason
- * `schedule-calendar-types.ts` was split from `schedule-types.ts`. This file
- * owns the two calendar-specific steps of the walk: collecting every
- * IFCWORKCALENDAR into a lookup map, and — given one already-decoded
- * IfcRelAssignsToControl — deciding whether it's a calendar assignment
- * (as opposed to the schedule/work-plan control relation
- * `schedule-extractor.ts` handles inline) and if so wiring it onto the
- * related tasks/schedules.
+ * The IfcControl side of the schedule walk — the three IfcControl subtypes
+ * `schedule-extractor.ts` resolves (IfcWorkSchedule, IfcWorkPlan,
+ * IfcWorkCalendar), plus the calendar branch of its IfcRelAssignsToControl
+ * pass. Split out of `schedule-extractor.ts` purely to keep both files
+ * under the ~400-line module-size guideline (see AGENTS.md) — same reason
+ * `schedule-calendar-types.ts` was split from `schedule-types.ts`.
  */
 
 import { EntityExtractor } from './entity-extractor.js';
 import type { IfcDataStore } from './columnar-parser.js';
 import type { ScheduleTaskInfo, WorkScheduleInfo } from './schedule-types.js';
+import { WORK_SCHEDULE_ATTR, WORK_PLAN_ATTR, asString, asEnum } from './schedule-types.js';
 import { extractWorkCalendar } from './schedule-calendar-types.js';
 import type { WorkCalendarInfo } from './schedule-calendar-types.js';
+
+/**
+ * Decode one IfcWorkSchedule or IfcWorkPlan. Both go through IfcWorkControl
+ * and share an identical attribute layout, so `kind` picks the record's
+ * label rather than a different set of indices. `globalIdByExpressId` is the
+ * caller's shared express-id -> GlobalId map, recorded here so the later
+ * passes can resolve a schedule by either key.
+ */
+export function extractWorkScheduleInfo(
+  extractor: EntityExtractor,
+  store: IfcDataStore,
+  expressId: number,
+  kind: 'WorkSchedule' | 'WorkPlan',
+  globalIdByExpressId: Map<number, string>,
+): WorkScheduleInfo | null {
+  const ref = store.entityIndex.byId.get(expressId);
+  if (!ref) return null;
+  const entity = extractor.extractEntity(ref);
+  if (!entity) return null;
+  const a = entity.attributes || [];
+  const layout = kind === 'WorkPlan' ? WORK_PLAN_ATTR : WORK_SCHEDULE_ATTR;
+  const globalId = asString(a[layout.GlobalId]) ?? '';
+  const info: WorkScheduleInfo = {
+    expressId,
+    kind,
+    globalId,
+    name: asString(a[layout.Name]) ?? kind,
+    description: asString(a[layout.Description]),
+    identification: asString(a[layout.Identification]),
+    creationDate: asString(a[layout.CreationDate]),
+    purpose: asString(a[layout.Purpose]),
+    duration: asString(a[layout.Duration]),
+    startTime: asString(a[layout.StartTime]),
+    finishTime: asString(a[layout.FinishTime]),
+    predefinedType: asEnum(a[layout.PredefinedType]),
+    taskGlobalIds: [],
+    childScheduleGlobalIds: [],
+  };
+  if (globalId) globalIdByExpressId.set(expressId, globalId);
+  return info;
+}
 
 /** Extract every IFCWORKCALENDAR express id into a WorkCalendarInfo, keyed both as a flat list and by express id (for the assignment walk below). */
 export function extractWorkCalendars(

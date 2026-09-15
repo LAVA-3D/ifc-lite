@@ -10,6 +10,9 @@
  */
 
 import type { StructuralBackendMethods } from './structural-types.js';
+// Re-exported below via `export * from './schedule-types.js'`; imported by name
+// too because `BimBackend` references it in this file's own scope.
+import type { ScheduleBackendMethods } from './schedule-types.js';
 import type { SpacesBackendMethods, StyleBackendMethods } from './backend-extension-types.js';
 
 // ============================================================================
@@ -656,143 +659,7 @@ export interface FilesBackendMethods {
 // layer stays serializable across the sandbox/transport boundary without
 // pulling the parser into consumer bundles.
 // ============================================================================
-
-export type ScheduleSequenceType =
-  | 'START_START' | 'START_FINISH' | 'FINISH_START' | 'FINISH_FINISH'
-  | 'USERDEFINED' | 'NOTDEFINED';
-
-export type ScheduleTaskDurationType =
-  | 'WORKTIME' | 'ELAPSEDTIME' | 'NOTDEFINED';
-
-export interface ScheduleTaskTimeData {
-  scheduleStart?: string;
-  scheduleFinish?: string;
-  scheduleDuration?: string;
-  actualStart?: string;
-  actualFinish?: string;
-  actualDuration?: string;
-  earlyStart?: string;
-  earlyFinish?: string;
-  lateStart?: string;
-  lateFinish?: string;
-  freeFloat?: string;
-  totalFloat?: string;
-  remainingTime?: string;
-  statusTime?: string;
-  durationType?: ScheduleTaskDurationType;
-  isCritical?: boolean;
-  completion?: number;
-}
-
-export interface ScheduleTaskData {
-  expressId: number;
-  globalId: string;
-  name: string;
-  description?: string;
-  objectType?: string;
-  identification?: string;
-  longDescription?: string;
-  status?: string;
-  workMethod?: string;
-  isMilestone: boolean;
-  priority?: number;
-  predefinedType?: string;
-  taskTime?: ScheduleTaskTimeData;
-  parentGlobalId?: string;
-  childGlobalIds: string[];
-  productExpressIds: number[];
-  productGlobalIds: string[];
-  controllingScheduleGlobalIds: string[];
-  /** IfcWorkCalendar globalIds assigned to this task via IfcRelAssignsToControl. */
-  calendarGlobalIds?: string[];
-}
-
-export interface ScheduleSequenceData {
-  globalId: string;
-  relatingTaskGlobalId: string;
-  relatedTaskGlobalId: string;
-  sequenceType: ScheduleSequenceType;
-  userDefinedSequenceType?: string;
-  timeLagSeconds?: number;
-  timeLagDuration?: string;
-}
-
-export interface WorkScheduleData {
-  expressId: number;
-  globalId: string;
-  kind: 'WorkSchedule' | 'WorkPlan';
-  name: string;
-  description?: string;
-  identification?: string;
-  creationDate?: string;
-  purpose?: string;
-  duration?: string;
-  startTime?: string;
-  finishTime?: string;
-  predefinedType?: string;
-  taskGlobalIds: string[];
-  /** IfcWorkCalendar globalIds assigned to this schedule/plan via IfcRelAssignsToControl. */
-  calendarGlobalIds?: string[];
-}
-
-/** One StartTime/EndTime pair from an IfcRecurrencePattern's TimePeriods list. */
-export interface TimePeriodData {
-  start: string;
-  end: string;
-}
-
-/** IfcRecurrencePattern — the repeat rule an IfcWorkTime may carry. */
-export interface RecurrencePatternData {
-  recurrenceType?: string;
-  dayComponent: number[];
-  weekdayComponent: number[];
-  monthComponent: number[];
-  position?: number;
-  interval?: number;
-  occurrences?: number;
-  timePeriods: TimePeriodData[];
-}
-
-/** IfcWorkTime — one working or exception period on an IfcWorkCalendar. */
-export interface WorkTimeData {
-  name?: string;
-  dataOrigin?: string;
-  userDefinedDataOrigin?: string;
-  recurrencePattern?: RecurrencePatternData;
-  start?: string;
-  finish?: string;
-}
-
-export interface WorkCalendarData {
-  expressId: number;
-  globalId: string;
-  name: string;
-  description?: string;
-  objectType?: string;
-  identification?: string;
-  predefinedType?: string;
-  workingTimes: WorkTimeData[];
-  exceptionTimes: WorkTimeData[];
-}
-
-export interface ScheduleExtractionData {
-  workSchedules: WorkScheduleData[];
-  tasks: ScheduleTaskData[];
-  sequences: ScheduleSequenceData[];
-  workCalendars: WorkCalendarData[];
-  hasSchedule: boolean;
-}
-
-export interface ScheduleBackendMethods {
-  /** Extract the full schedule graph from the active or specified model. */
-  data(modelId?: string): ScheduleExtractionData;
-  /** Convenience — just the task list. */
-  tasks(modelId?: string): ScheduleTaskData[];
-  /** Convenience — just the work schedules / work plans. */
-  workSchedules(modelId?: string): WorkScheduleData[];
-  /** Convenience — just the task dependency edges. */
-  sequences(modelId?: string): ScheduleSequenceData[];
-}
+export * from './schedule-types.js';
 
 // ============================================================================
 // Structural analysis — IfcStructuralAnalysisModel, IfcStructuralMember /

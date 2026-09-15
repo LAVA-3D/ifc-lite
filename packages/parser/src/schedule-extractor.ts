@@ -33,8 +33,6 @@ import {
   REL_ASSIGNS_TO_PROCESS_ATTR,
   REL_ASSIGNS_TO_CONTROL_ATTR,
   REL_NESTS_ATTR,
-  WORK_SCHEDULE_ATTR,
-  WORK_PLAN_ATTR,
   asString,
   asNumber,
   asBoolean,
@@ -54,7 +52,11 @@ import type {
   WorkScheduleInfo,
   ScheduleExtraction,
 } from './schedule-types.js';
-import { extractWorkCalendars, tryAssignCalendar } from './schedule-calendar-extractor.js';
+import {
+  extractWorkScheduleInfo,
+  extractWorkCalendars,
+  tryAssignCalendar,
+} from './schedule-control-extractor.js';
 
 // Re-exported for backward compatibility — this is where consumers
 // (including this package's own public surface, see index.ts) have always
@@ -234,55 +236,20 @@ export function extractScheduleOnDemand(store: IfcDataStore): ScheduleExtraction
     }
   }
 
-  // Pass 4: extract work schedules / work plans.
+  // Pass 4: extract work schedules / work plans. The per-entity decode
+  // lives in `schedule-control-extractor.ts` alongside the calendar one.
   const workSchedules: WorkScheduleInfo[] = [];
   const scheduleByExpressId = new Map<number, WorkScheduleInfo>();
-
-  const extractSchedule = (
-    expressId: number,
-    kind: 'WorkSchedule' | 'WorkPlan',
-  ): WorkScheduleInfo | null => {
-    const ref = store.entityIndex.byId.get(expressId);
-    if (!ref) return null;
-    const entity = extractor.extractEntity(ref);
-    if (!entity) return null;
-    const a = entity.attributes || [];
-    const layout = kind === 'WorkPlan' ? WORK_PLAN_ATTR : WORK_SCHEDULE_ATTR;
-    const globalId = asString(a[layout.GlobalId]) ?? '';
-    const info: WorkScheduleInfo = {
-      expressId,
-      kind,
-      globalId,
-      name: asString(a[layout.Name]) ?? kind,
-      description: asString(a[layout.Description]),
-      identification: asString(a[layout.Identification]),
-      creationDate: asString(a[layout.CreationDate]),
-      purpose: asString(a[layout.Purpose]),
-      duration: asString(a[layout.Duration]),
-      startTime: asString(a[layout.StartTime]),
-      finishTime: asString(a[layout.FinishTime]),
-      predefinedType: asEnum(a[layout.PredefinedType]),
-      taskGlobalIds: [],
-      childScheduleGlobalIds: [],
-    };
-    if (globalId) globalIdByExpressId.set(expressId, globalId);
-    return info;
+  const collectSchedules = (ids: number[], kind: 'WorkSchedule' | 'WorkPlan') => {
+    for (const id of ids) {
+      const info = extractWorkScheduleInfo(extractor, store, id, kind, globalIdByExpressId);
+      if (!info) continue;
+      workSchedules.push(info);
+      scheduleByExpressId.set(id, info);
+    }
   };
-
-  for (const id of workScheduleIds) {
-    const info = extractSchedule(id, 'WorkSchedule');
-    if (info) {
-      workSchedules.push(info);
-      scheduleByExpressId.set(id, info);
-    }
-  }
-  for (const id of workPlanIds) {
-    const info = extractSchedule(id, 'WorkPlan');
-    if (info) {
-      workSchedules.push(info);
-      scheduleByExpressId.set(id, info);
-    }
-  }
+  collectSchedules(workScheduleIds, 'WorkSchedule');
+  collectSchedules(workPlanIds, 'WorkPlan');
 
   // Pass 4b: walk IfcRelNests again — IfcWorkPlan nesting IfcWorkSchedule.
   // Real-world files use IfcRelNests for this grouping (confirmed against the
