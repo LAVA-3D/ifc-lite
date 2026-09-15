@@ -9,20 +9,22 @@ import { EntityExtractor, type IfcDataStore } from '@ifc-lite/parser';
 import type { MutablePropertyView, NewEntity } from '@ifc-lite/mutations';
 import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index.js';
 
-const RELATING_OBJECT_INDEX = 4;
-const RELATED_OBJECTS_INDEX = 5;
 const CYCLE_CHECK_VISIT_BUDGET = 2_000_000;
 const log = createLogger('Ifc5TreeScope');
 
-interface SpatialTreeNode {
-  expressId: number;
-  name?: string;
-  children: SpatialTreeNode[];
-}
+interface SpatialTreeNode { expressId: number; name?: string; children: SpatialTreeNode[] }
 
-interface DecompositionGraph {
+interface RelationEdges {
   childrenByParent: Map<number, number[]>;
   parentsByChild: Map<number, number[]>;
+  parentSetsByChild: Map<number, Set<number>>;
+}
+
+interface EffectiveTreeGraph {
+  decomposition: RelationEdges;
+  containment: RelationEdges;
+  hasDecompositionRecords: boolean;
+  hasContainmentRecords: boolean;
 }
 
 /** All tree answers used by one IFC5 export. */
@@ -30,6 +32,10 @@ export interface Ifc5TreeScope {
   treeIds: Set<number>;
   parentOf: Map<number, number>;
   spatialNodeNames: Map<number, string>;
+}
+
+function newEdges(): RelationEdges {
+  return { childrenByParent: new Map(), parentsByChild: new Map(), parentSetsByChild: new Map() };
 }
 
 function parsedSingleRef(value: unknown): number | undefined {
@@ -42,7 +48,42 @@ function parsedRefs(value: unknown): number[] {
   return id === undefined ? [] : [id];
 }
 
-function effectiveRelationshipAttributes(
+function authoredKnownRefs(value: unknown): number[] {
+  if (Array.isArray(value)) return value.flatMap(authoredKnownRefs);
+  const numeric = parsedSingleRef(value);
+  return numeric === undefined
+    ? authoredEntityRefs(value as Parameters<typeof authoredEntityRefs>[0])
+    : [numeric];
+}
+
+function refs(value: unknown, authored: boolean): number[] {
+  return authored ? authoredKnownRefs(value) : parsedRefs(value);
+}
+
+function appendChild(edges: RelationEdges, parentId: number, childId: number): void {
+  if (parentId === childId) return;
+  const children = edges.childrenByParent.get(parentId) ?? [];
+  children.push(childId); // duplicates are harmless to the visited-set closure
+  edges.childrenByParent.set(parentId, children);
+}
+
+function appendCandidate(edges: RelationEdges, childId: number, parentId: number): void {
+  if (parentId === childId) return;
+  const seen = edges.parentSetsByChild.get(childId) ?? new Set<number>();
+  if (seen.has(parentId)) return;
+  seen.add(parentId);
+  edges.parentSetsByChild.set(childId, seen);
+  const parents = edges.parentsByChild.get(childId) ?? [];
+  parents.push(parentId);
+  edges.parentsByChild.set(childId, parents);
+}
+
+function addEdge(edges: RelationEdges, parentId: number, childId: number): void {
+  appendChild(edges, parentId, childId);
+  appendCandidate(edges, childId, parentId);
+}
+
+function effectiveAttributes(
   id: number,
   sourceAttributes: unknown[] | undefined,
   created: NewEntity | undefined,
@@ -50,171 +91,207 @@ function effectiveRelationshipAttributes(
 ): unknown[] | undefined {
   const attributes = created ? [...created.attributes] : sourceAttributes?.slice();
   if (!attributes || !view) return attributes;
-  const positional = view.getPositionalMutationsForEntity(id);
-  if (positional) {
-    for (const [index, value] of positional) attributes[index] = value;
-  }
-  // Named mutations are more specific and win over positional ones, matching
-  // the effective-index and STEP-export paths.
+  for (const [index, value] of view.getPositionalMutationsForEntity(id) ?? []) attributes[index] = value;
+  const slots = new Map<string, number>([
+    ['RelatingObject', 4], ['RelatedObjects', 5],
+    ['RelatedElements', 4], ['RelatingStructure', 5],
+  ]);
   for (const { name, value } of view.getAttributeMutationsForEntity(id)) {
-    if (name === 'RelatingObject') attributes[RELATING_OBJECT_INDEX] = value;
-    if (name === 'RelatedObjects') attributes[RELATED_OBJECTS_INDEX] = value;
+    const index = slots.get(name);
+    if (index !== undefined) attributes[index] = value;
   }
   return attributes;
 }
 
-function authoredKnownRefs(value: unknown): number[] {
-  if (Array.isArray(value)) return value.flatMap(authoredKnownRefs);
-  const numeric = parsedSingleRef(value);
-  if (numeric !== undefined) return [numeric];
-  return authoredEntityRefs(value as Parameters<typeof authoredEntityRefs>[0]);
+function slotIsAuthored(
+  id: number,
+  index: number,
+  name: string,
+  created: NewEntity | undefined,
+  view: MutablePropertyView | null,
+): boolean {
+  return created !== undefined
+    || view?.getPositionalMutationsForEntity(id)?.has(index) === true
+    || view?.getAttributeMutationsForEntity(id).some((change) => change.name === name) === true;
 }
 
-function authoredOrParsedSingleRef(value: unknown, authored: boolean): number | undefined {
-  return authored ? authoredKnownRefs(value)[0] : parsedSingleRef(value);
+function addRawEdges(dataStore: IfcDataStore, graph: EffectiveTreeGraph): void {
+  const relationships = dataStore.relationships;
+  if (!relationships) return;
+  const addType = (edges: RelationEdges, type: RelationshipType): void => {
+    for (const parentId of relationships.forward.offsets.keys()) {
+      for (const childId of relationships.getRelated(parentId, type, 'forward')) appendChild(edges, parentId, childId);
+    }
+    // Inverse edge order is stable source declaration order; keep it for the
+    // first-declared parent tie-break rather than deriving candidates by parent.
+    for (const childId of relationships.inverse.offsets.keys()) {
+      for (const parentId of relationships.getRelated(childId, type, 'inverse')) appendCandidate(edges, childId, parentId);
+    }
+  };
+  addType(graph.decomposition, RelationshipType.Aggregates);
+  addType(graph.containment, RelationshipType.ContainsElements);
 }
 
-function authoredOrParsedRefs(value: unknown, authored: boolean): number[] {
-  return authored ? authoredKnownRefs(value) : parsedRefs(value);
-}
-
-function addEdge(graph: DecompositionGraph, parentId: number, childId: number): void {
-  if (parentId === childId) return;
-  const children = graph.childrenByParent.get(parentId) ?? [];
-  // Do not scan a potentially huge sibling list to deduplicate. Duplicate
-  // malformed edges are harmless to the visited-set closure; keeping this
-  // append O(1) avoids quadratic graph construction for large assemblies.
-  children.push(childId);
-  graph.childrenByParent.set(parentId, children);
-  const parents = graph.parentsByChild.get(childId) ?? [];
-  if (!parents.includes(parentId)) {
-    parents.push(parentId);
-    graph.parentsByChild.set(childId, parents);
-  }
-}
-
-function buildEffectiveDecompositionGraph(
+function buildEffectiveTreeGraph(
   dataStore: IfcDataStore,
   effective: EffectiveEntityIndex,
   view: MutablePropertyView | null,
-): DecompositionGraph {
-  const graph: DecompositionGraph = { childrenByParent: new Map(), parentsByChild: new Map() };
-  const extractor = dataStore.source ? new EntityExtractor(dataStore.source) : null;
-  const created = new Map<number, NewEntity>();
-  for (const entity of view?.getNewEntities() ?? []) created.set(entity.expressId, entity);
-
-  if (!extractor) {
-    const relationships = dataStore.relationships;
-    if (!relationships) return graph;
-    for (const parentId of relationships.forward.offsets.keys()) {
-      for (const childId of relationships.getRelated(parentId, RelationshipType.Aggregates, 'forward')) {
-        addEdge(graph, parentId, childId);
-      }
-    }
+): EffectiveTreeGraph {
+  const sourceTypes = dataStore.entityIndex.byType;
+  const graph: EffectiveTreeGraph = {
+    decomposition: newEdges(), containment: newEdges(),
+    // Source records still establish authority after an overlay tombstones
+    // every one of them; otherwise an empty effective graph would resurrect
+    // their stale parsed hierarchy through the synthetic-store fallback.
+    hasDecompositionRecords:
+      (sourceTypes.get('IFCRELAGGREGATES')?.length ?? 0) > 0
+      || (sourceTypes.get('IFCRELNESTS')?.length ?? 0) > 0,
+    hasContainmentRecords:
+      (sourceTypes.get('IFCRELCONTAINEDINSPATIALSTRUCTURE')?.length ?? 0) > 0,
+  };
+  // Server/synthetic stores retain a truthy zero-byte source object. In that
+  // state the parsed RelationshipGraph is the only relationship authority.
+  if (dataStore.source.byteLength === 0) {
+    addRawEdges(dataStore, graph);
     return graph;
   }
 
-  // Effective-index iteration preserves source declaration order and appends
-  // overlay-created records, so candidate parents retain first-declared order.
+  const extractor = new EntityExtractor(dataStore.source);
+  const created = new Map<number, NewEntity>();
+  for (const entity of view?.getNewEntities() ?? []) created.set(entity.expressId, entity);
+
+  // Effective iteration preserves declaration order and appends creations.
   for (const [id, record] of effective) {
     const type = effective.effectiveType(id, record.type);
-    if (type !== 'IFCRELAGGREGATES' && type !== 'IFCRELNESTS') continue;
-    const newEntity = created.get(id);
-    const sourceRef = newEntity ? undefined : dataStore.entityIndex.byId.get(id);
+    const decomposition = type === 'IFCRELAGGREGATES' || type === 'IFCRELNESTS';
+    const containment = type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE';
+    if (!decomposition && !containment) continue;
+    if (decomposition) graph.hasDecompositionRecords = true;
+    if (containment) graph.hasContainmentRecords = true;
+    const createdEntity = created.get(id);
+    const sourceRef = createdEntity ? undefined : dataStore.entityIndex.byId.get(id);
     const sourceEntity = sourceRef ? extractor.extractEntity(sourceRef) : null;
-    const attributes = effectiveRelationshipAttributes(id, sourceEntity?.attributes, newEntity, view);
+    const attributes = effectiveAttributes(id, sourceEntity?.attributes, createdEntity, view);
     if (!attributes) continue;
 
-    const named = view?.getAttributeMutationsForEntity(id) ?? [];
-    const parentAuthored = newEntity !== undefined
-      || view?.getPositionalMutationsForEntity(id)?.has(RELATING_OBJECT_INDEX) === true
-      || named.some(({ name }) => name === 'RelatingObject');
-    const parentId = authoredOrParsedSingleRef(attributes[RELATING_OBJECT_INDEX], parentAuthored);
+    const parentIndex = decomposition ? 4 : 5;
+    const childrenIndex = decomposition ? 5 : 4;
+    const parentName = decomposition ? 'RelatingObject' : 'RelatingStructure';
+    const childrenName = decomposition ? 'RelatedObjects' : 'RelatedElements';
+    const parentId = refs(
+      attributes[parentIndex],
+      slotIsAuthored(id, parentIndex, parentName, createdEntity, view),
+    )[0];
     if (parentId === undefined || !effective.has(parentId)) continue;
-
-    const childrenAuthored = newEntity !== undefined
-      || view?.getPositionalMutationsForEntity(id)?.has(RELATED_OBJECTS_INDEX) === true
-      || named.some(({ name }) => name === 'RelatedObjects');
-    for (const childId of authoredOrParsedRefs(attributes[RELATED_OBJECTS_INDEX], childrenAuthored)) {
-      if (effective.has(childId)) addEdge(graph, parentId, childId);
+    const edges = decomposition ? graph.decomposition : graph.containment;
+    for (const childId of refs(
+      attributes[childrenIndex],
+      slotIsAuthored(id, childrenIndex, childrenName, createdEntity, view),
+    )) {
+      if (effective.has(childId)) addEdge(edges, parentId, childId);
     }
   }
   return graph;
 }
 
-function addSpatialHierarchy(
+function seedProjectAndNames(dataStore: IfcDataStore, treeIds: Set<number>, names: Map<number, string>): boolean {
+  const project = dataStore.spatialHierarchy?.project;
+  if (!project) return false;
+  treeIds.add(project.expressId);
+  const stack: SpatialTreeNode[] = [project];
+  while (stack.length > 0) {
+    const node = stack.pop() as SpatialTreeNode;
+    if (node.name) names.set(node.expressId, node.name);
+    stack.push(...node.children);
+  }
+  return true;
+}
+
+function seedSourcelessSpatialFallback(
   dataStore: IfcDataStore,
   treeIds: Set<number>,
   parentOf: Map<number, number>,
-  spatialNodeNames: Map<number, string>,
-): void {
-  const { spatialHierarchy } = dataStore;
-  if (spatialHierarchy?.project) {
-    const stack: SpatialTreeNode[] = [spatialHierarchy.project];
+  names: Map<number, string>,
+  includeDecomposition: boolean,
+  includeContainment: boolean,
+): boolean {
+  const hierarchy = dataStore.spatialHierarchy;
+  if (hierarchy?.project) {
+    const stack: SpatialTreeNode[] = [hierarchy.project];
     while (stack.length > 0) {
       const node = stack.pop() as SpatialTreeNode;
-      treeIds.add(node.expressId);
-      if (node.name) spatialNodeNames.set(node.expressId, node.name);
+      if (includeDecomposition || node === hierarchy.project) treeIds.add(node.expressId);
+      if (node.name) names.set(node.expressId, node.name);
       for (const child of node.children) {
-        parentOf.set(child.expressId, node.expressId);
+        if (includeDecomposition) parentOf.set(child.expressId, node.expressId);
         stack.push(child);
       }
     }
   }
-  if (!spatialHierarchy) return;
-  for (const map of [spatialHierarchy.bySite, spatialHierarchy.byBuilding, spatialHierarchy.byStorey, spatialHierarchy.bySpace]) {
-    if (!map) continue;
-    for (const [parentId, children] of map) {
-      for (const childId of children ?? []) {
-        treeIds.add(childId);
-        parentOf.set(childId, parentId);
+  if (hierarchy && includeContainment) {
+    for (const map of [hierarchy.bySite, hierarchy.byBuilding, hierarchy.byStorey, hierarchy.bySpace]) {
+      for (const [parentId, children] of map ?? []) {
+        for (const childId of children ?? []) { treeIds.add(childId); parentOf.set(childId, parentId); }
       }
+    }
+  }
+  return hierarchy?.project !== undefined;
+}
+
+function closeTree(treeIds: Set<number>, graph: EffectiveTreeGraph): void {
+  const pending = [...treeIds];
+  while (pending.length > 0) {
+    const id = pending.pop() as number;
+    const children = [
+      ...(graph.decomposition.childrenByParent.get(id) ?? []),
+      ...(graph.containment.childrenByParent.get(id) ?? []),
+    ];
+    for (const childId of children) {
+      if (treeIds.has(childId)) continue;
+      treeIds.add(childId);
+      pending.push(childId);
     }
   }
 }
 
-function aggregatedDescendants(
-  childId: number,
-  graph: DecompositionGraph,
-  budget: { visits: number },
-): Set<number> | null {
+function descendants(childId: number, edges: RelationEdges, budget: { visits: number }): Set<number> | null {
   const visited = new Set<number>([childId]);
   const pending = [childId];
   while (pending.length > 0) {
-    const current = pending.pop() as number;
-    for (const descendant of graph.childrenByParent.get(current) ?? []) {
+    for (const kid of edges.childrenByParent.get(pending.pop() as number) ?? []) {
       if (--budget.visits < 0) return null;
-      if (visited.has(descendant)) continue;
-      visited.add(descendant);
-      pending.push(descendant);
+      if (!visited.has(kid)) { visited.add(kid); pending.push(kid); }
     }
   }
   return visited;
 }
 
-function addDecompositionParents(graph: DecompositionGraph, parentOf: Map<number, number>): void {
+function addParents(graph: EffectiveTreeGraph, treeIds: Set<number>, parentOf: Map<number, number>): void {
+  // Containment remains authoritative where a file declares both mechanisms.
+  for (const [childId, parents] of graph.containment.parentsByChild) {
+    const winner = parents.find((parent) => treeIds.has(parent)) ?? parents[0];
+    if (winner !== undefined) parentOf.set(childId, winner);
+  }
   const budget = { visits: CYCLE_CHECK_VISIT_BUDGET };
   let exhausted = false;
-  for (const [childId, candidates] of graph.parentsByChild) {
+  for (const [childId, candidates] of graph.decomposition.parentsByChild) {
     if (parentOf.has(childId) || candidates.length === 0) continue;
-    let winner = candidates[0];
+    let usable = candidates;
     if (candidates.length > 1 && !exhausted) {
-      const descendants = aggregatedDescendants(childId, graph, budget);
-      if (descendants === null) {
+      const below = descendants(childId, graph.decomposition, budget);
+      if (below === null) {
         exhausted = true;
-        log.warn(
-          `Aggregation back-edge cycle checks stopped after ${CYCLE_CHECK_VISIT_BUDGET} graph visits; `
-          + 'remaining multi-parent children use their first-declared decomposition edge',
-        );
+        log.warn(`Aggregation cycle checks stopped after ${CYCLE_CHECK_VISIT_BUDGET} graph visits`);
       } else {
-        winner = candidates.find((candidate) => !descendants.has(candidate)) ?? winner;
+        const nonCyclic = candidates.filter((candidate) => !below.has(candidate));
+        if (nonCyclic.length > 0) usable = nonCyclic;
       }
     }
-    parentOf.set(childId, winner);
+    parentOf.set(childId, usable.find((parent) => treeIds.has(parent)) ?? usable[0]);
   }
 }
 
-/** Build membership and hierarchy from the same effective decomposition graph. */
+/** Build membership and hierarchy from the same effective relationship graph. */
 export function buildIfc5TreeScope(
   dataStore: IfcDataStore,
   effective: EffectiveEntityIndex,
@@ -223,20 +300,19 @@ export function buildIfc5TreeScope(
   const treeIds = new Set<number>();
   const parentOf = new Map<number, number>();
   const spatialNodeNames = new Map<number, string>();
-  addSpatialHierarchy(dataStore, treeIds, parentOf, spatialNodeNames);
-
-  const graph = buildEffectiveDecompositionGraph(dataStore, effective, view);
-  const pending = [...treeIds];
-  while (pending.length > 0) {
-    const id = pending.pop() as number;
-    for (const childId of graph.childrenByParent.get(id) ?? []) {
-      if (treeIds.has(childId)) continue;
-      treeIds.add(childId);
-      pending.push(childId);
-    }
-  }
-  // Existing containment remains authoritative for occurrences declared both
-  // ways; decomposition only fills children that containment left unplaced.
-  addDecompositionParents(graph, parentOf);
+  const graph = buildEffectiveTreeGraph(dataStore, effective, view);
+  const sourceless = dataStore.source.byteLength === 0;
+  const useRawDecomposition = sourceless || !graph.hasDecompositionRecords;
+  const useRawContainment = sourceless || !graph.hasContainmentRecords;
+  const hasProject = useRawDecomposition || useRawContainment
+    ? seedSourcelessSpatialFallback(
+      dataStore, treeIds, parentOf, spatialNodeNames, useRawDecomposition, useRawContainment,
+    )
+    : seedProjectAndNames(dataStore, treeIds, spatialNodeNames);
+  // Preserve the old malformed/no-project fallback: contained occurrences are
+  // still exported at the document root rather than filtering everything.
+  if (!hasProject) for (const childId of graph.containment.parentsByChild.keys()) treeIds.add(childId);
+  closeTree(treeIds, graph);
+  addParents(graph, treeIds, parentOf);
   return { treeIds, parentOf, spatialNodeNames };
 }

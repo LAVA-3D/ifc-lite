@@ -299,4 +299,43 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     expect(Object.values(slabA?.children ?? {})).toContain(slabB?.path);
     expect(reachablePaths(file).has(slabB?.path as string)).toBe(true);
   });
+
+  it('uses an overlay-retargeted containment endpoint', async () => {
+    const store = await parse(step(`#60=IFCSLAB('${guid(60)}',$,'Old Slab',$,$,#3,$,'Old',.FLOOR.);
+#61=IFCSLAB('${guid(61)}',$,'New Slab',$,$,#3,$,'New',.FLOOR.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#60),#40);`));
+    const view = new MutablePropertyView(null, 'ifc5-containment');
+    view.setPositionalAttribute(70, 4, ['#61']);
+    const file: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store, null, view).export({ includeGeometry: false }).content,
+    );
+
+    expect(nodeNamed(file, 'Old Slab')).toBeUndefined();
+    const newSlab = nodeNamed(file, 'New Slab');
+    expect(Object.values(nodeNamed(file, 'Storey')?.children ?? {})).toContain(newSlab?.path);
+    expect(reachablePaths(file).has(newSlab?.path as string)).toBe(true);
+
+    const deletedView = new MutablePropertyView(null, 'ifc5-containment-deleted');
+    deletedView.deleteEntity(70);
+    const withoutRelationship: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store, null, deletedView).export({ includeGeometry: false }).content,
+    );
+    expect(nodeNamed(withoutRelationship, 'Old Slab')).toBeUndefined();
+    expect(nodeNamed(withoutRelationship, 'New Slab')).toBeUndefined();
+  });
+
+  it('prefers a reachable aggregate parent over an earlier disconnected one', async () => {
+    const store = await parse(step(`#50=IFCROOF('${guid(50)}',$,'Roof',$,$,#3,$,'Roof',$);
+#55=IFCELEMENTASSEMBLY('${guid(55)}',$,'Disconnected',$,$,#3,$,'D',$,.NOTDEFINED.);
+#60=IFCSLAB('${guid(60)}',$,'Roof Slab',$,$,#3,$,'Slab',.ROOF.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50),#40);
+#83=IFCRELAGGREGATES('${guid(83)}',$,$,$,#55,(#60));
+#84=IFCRELAGGREGATES('${guid(84)}',$,$,$,#50,(#60));`));
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    const slab = nodeNamed(file, 'Roof Slab');
+    expect(nodeNamed(file, 'Disconnected')).toBeUndefined();
+    expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(slab?.path);
+    expect(reachablePaths(file).has(slab?.path as string)).toBe(true);
+  });
 });
