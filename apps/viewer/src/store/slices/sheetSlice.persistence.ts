@@ -51,6 +51,14 @@ export function saveSheetTemplates(templates: readonly DrawingSheet[]): void {
 
 export function saveSheet(hash: string, sheet: DrawingSheet | null): void {
   const key = sheetStorageKey(hash);
+  if (sheet === null) {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
+    } catch (error) {
+      console.warn('[sheet] Could not clear saved sheet setup', error);
+    }
+    return;
+  }
   if (!write(key, { sheet, savedAt: Date.now() })) return;
   // Match the drawing markup cache's 20-model limit. Templates are never evicted.
   try {

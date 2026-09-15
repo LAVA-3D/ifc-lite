@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { useViewerStore } from '@/store';
 import { fixtureModel } from '@/test/store-fixture';
 import { createDefaultSheet } from '@/store/slices/sheetSlice';
-import { loadSheet, loadSheetTemplates, saveSheet } from '@/store/slices/sheetSlice.persistence';
+import { loadSheet, loadSheetTemplates, saveSheet, saveSheetTemplates } from '@/store/slices/sheetSlice.persistence';
 import { createSheetPersistence } from './sheetPersistence';
 
 let bridge: ReturnType<typeof createSheetPersistence> | undefined;
@@ -23,6 +23,17 @@ function model(id: string) {
 }
 
 describe('sheet persistence lifecycle (#4836)', () => {
+  it('persists templates created before bridge initialization without requiring another edit', () => {
+    const disk = { ...createDefaultSheet(), id: 'disk' };
+    const early = { ...createDefaultSheet(), id: 'early' };
+    saveSheetTemplates([disk]);
+    useViewerStore.setState({ savedSheetTemplates: [early] });
+    bridge = createSheetPersistence();
+    bridge.dispose();
+    useViewerStore.setState({ savedSheetTemplates: [] });
+    bridge = createSheetPersistence();
+    assert.deepEqual(useViewerStore.getState().savedSheetTemplates, [disk, early]);
+  });
   it('restores after a fresh bridge and reload, while templates remain global and deletes survive reload', () => {
     const a = model('reload-a');
     useViewerStore.setState({ models: new Map([[a.id, a]]), activeModelId: a.id });

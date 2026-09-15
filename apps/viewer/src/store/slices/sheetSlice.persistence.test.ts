@@ -84,4 +84,21 @@ describe('sheet storage (#4836)', () => {
     assert.equal(localStorage.length, 21);
     assert.deepEqual(loadSheetTemplates(), [sheet]);
   });
+
+  it('clears without consuming an eviction slot, and logs failed removals', () => {
+    const sheet = createDefaultSheet();
+    for (let i = 0; i < 20; i++) saveSheet(`kept-${i}`, sheet);
+    saveSheet('never-saved', null);
+    assert.equal(localStorage.length, 20);
+    for (let i = 0; i < 20; i++) assert.deepEqual(loadSheet(`kept-${i}`), sheet);
+    const warn = mock.method(console, 'warn', () => {});
+    const remove = mock.method(localStorage, 'removeItem', () => { throw new Error('storage denied'); });
+    saveSheet('kept-0', null);
+    remove.mock.restore();
+    assert.deepEqual(loadSheet('kept-0'), sheet);
+    assert.equal(warn.mock.callCount(), 1);
+    warn.mock.restore();
+    saveSheet('kept-0', null);
+    assert.equal(localStorage.getItem(sheetStorageKey('kept-0')), null);
+  });
 });

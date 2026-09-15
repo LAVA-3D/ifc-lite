@@ -49,7 +49,9 @@ export function createSheetPersistence() {
   // Preserve any templates created before this bridge mounted.
   const templates = new Map(loadSheetTemplates().map((sheet) => [sheet.id, sheet]));
   for (const sheet of initial.savedSheetTemplates) templates.set(sheet.id, sheet);
-  useViewerStore.setState({ savedSheetTemplates: [...templates.values()] });
+  const mergedTemplates = [...templates.values()];
+  useViewerStore.setState({ savedSheetTemplates: mergedTemplates });
+  if (initial.savedSheetTemplates.length > 0) saveSheetTemplates(mergedTemplates);
   if (initial.activeModelId) {
     const entry = remember(initial.activeModelId, initial.models.get(initial.activeModelId)?.sourceFile);
     entry.sheet = initial.activeSheet;
