@@ -18,9 +18,11 @@ export function capturedSectionPlaneInput(
   const axis = captured.axis === 'side' ? 'x' : captured.axis === 'down' ? 'y' : 'z';
   const source = bounds ?? { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
   const range = source.max[axis] - source.min[axis];
-  if (range !== 0) return {
+  const position = ((captured.worldPosition - source.min[axis]) / range) * 100;
+  const scale = Math.max(Math.abs(source.min[axis]), Math.abs(source.max[axis]), 1);
+  if (Number.isFinite(range) && Math.abs(range) > Number.EPSILON * scale && Number.isFinite(position)) return {
     sectionPlane: { axis: captured.axis, flipped: captured.flipped, enabled: true,
-      position: ((captured.worldPosition - source.min[axis]) / range) * 100 },
+      position },
     bounds: source,
   };
   const adjusted = { min: { ...source.min }, max: { ...source.max } };

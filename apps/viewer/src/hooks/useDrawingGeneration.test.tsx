@@ -548,14 +548,16 @@ it('keeps a repainted production canvas stale until regeneration publishes its r
   let release!: () => void;
   const started = new Promise<void>(resolve => { signal = resolve; });
   const held = new Promise<void>(resolve => { release = resolve; });
-  const h = await drawingActivityHarness({ geometryResult: activityGeometry() }, false, true);
+  let h: Awaited<ReturnType<typeof drawingActivityHarness>> | undefined;
   try {
-    await h.generate();
-    await h.repaintCanvas();
+    const harness = await drawingActivityHarness({ geometryResult: activityGeometry() }, false, true);
+    h = harness;
+    await harness.generate();
+    await harness.repaintCanvas();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    assert.ok(h.captureButton, 'the production BCF panel exposes 2D capture');
-    assert.equal(h.captureButton.disabled, false,
-      `the production canvas painted the initial drawing (${h.canvas?.width}x${h.canvas?.height}, client ${h.canvas?.clientWidth}x${h.canvas?.clientHeight})`);
+    assert.ok(harness.captureButton, 'the production BCF panel exposes 2D capture');
+    assert.equal(harness.captureButton.disabled, false,
+      `the production canvas painted the initial drawing (${harness.canvas?.width}x${harness.canvas?.height}, client ${harness.canvas?.clientWidth}x${harness.canvas?.clientHeight})`);
     Drawing2DGenerator.prototype.generate = async function (...args) {
       signal();
       await held;
@@ -563,22 +565,22 @@ it('keeps a repainted production canvas stale until regeneration publishes its r
     };
     let pending!: Promise<void>;
     await act(async () => {
-      pending = h.regenerate();
+      pending = harness.regenerate();
       await started;
     });
-    assert.equal(h.captureButton?.disabled, true, 'the old bitmap must be blocked while the new cut is pending');
-    await h.repaintCanvas();
-    assert.equal(h.captureButton?.disabled, true, 'panning must not revalidate the old drawing during regeneration');
+    assert.equal(harness.captureButton?.disabled, true, 'the old bitmap must be blocked while the new cut is pending');
+    await harness.repaintCanvas();
+    assert.equal(harness.captureButton?.disabled, true, 'panning must not revalidate the old drawing during regeneration');
     release();
     await act(async () => pending);
-    assert.equal(h.captureButton?.disabled, false, 'the completed replacement becomes capturable after its paint');
+    assert.equal(harness.captureButton?.disabled, false, 'the completed replacement becomes capturable after its paint');
   } finally {
     release();
     Drawing2DGenerator.prototype.generate = original;
     Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: originalResizeObserver });
     Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: originalWindowResizeObserver });
     mock.restoreAll();
-    await h.dispose();
+    if (h) await h.dispose();
   }
 });
 

@@ -256,6 +256,30 @@ test('Capture 2D preserves an absolute cut outside the primary model bounds (#48
     'percentage conversion through primary bounds 0..10 reconstructs the absolute federated cut');
 });
 
+test('Capture 2D preserves a finite cut when source bounds overflow their range (#4802)', async () => {
+  const extreme = { ...fixtureModel('extreme'),
+    geometryResult: boundedGeometry(Number.MAX_VALUE, -Number.MAX_VALUE) };
+  const extremeDrawing = { ...DRAWING, config: { ...DRAWING.config,
+    plane: { ...DRAWING.config.plane, position: 42 } } };
+  useViewerStore.setState({
+    ...fixtureModels(extreme),
+    drawing2D: extremeDrawing,
+  });
+
+  const ui = render(<><TestSectionCanvas drawing={extremeDrawing} /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  await act(async () => {
+    capture.click();
+    await Promise.resolve();
+  });
+
+  const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
+  assert.equal(viewpoint?.clippingPlanes?.length, 1);
+  assert.equal(viewpoint.clippingPlanes[0]?.location.z, 42,
+    'overflowing finite source bounds fall back to bounds anchored at the exact cut');
+});
+
 test('unmounting the production canvas disables its active capture lease (#4802)', () => {
   function Harness(): React.ReactElement {
     const [visible, setVisible] = useState(true);
