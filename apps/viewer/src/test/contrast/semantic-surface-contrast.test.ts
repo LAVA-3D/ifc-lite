@@ -4,14 +4,15 @@
 
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DOCUMENT_PREVIEW_MUTED_TEXT_CLASS,
-  DOCUMENT_PREVIEW_PAPER_CLASS,
-} from '../../components/viewer/document/preview-theme';
 import { closeContrastBrowser, measureTextContrastOnSurface, type Theme } from './render-harness';
 import { WCAG_AA_NORMAL_TEXT } from './wcag';
 
 const THEMES: Theme[] = ['light', 'dark', 'colorful'];
+// Keep these as behavioral inputs rather than importing the new production
+// seam: the revert oracle must be able to remove that seam and still execute
+// the assertions against the reverted CSS.
+const DOCUMENT_PREVIEW_PAPER_CLASS = 'document-preview-paper';
+const DOCUMENT_PREVIEW_MUTED_TEXT_CLASS = 'document-preview-muted';
 
 after(async () => {
   await closeContrastBrowser();
