@@ -23,6 +23,14 @@ import { describe, it, expect } from 'vitest';
 import { EMPTY_SOURCE_BYTES, IfcParser, type IfcDataStore } from '@ifc-lite/parser';
 import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
 import { MutablePropertyView, type IfcAttributeValue } from '@ifc-lite/mutations';
+import {
+  StringTable,
+  EntityTableBuilder,
+  PropertyTableBuilder,
+  QuantityTableBuilder,
+  RelationshipGraphBuilder,
+  RelationshipType,
+} from '@ifc-lite/data';
 import { Ifc5Exporter } from './ifc5-exporter.js';
 
 /** 22-char synthetic GlobalId, unique per `n` (same convention as the other export tests). */
@@ -132,6 +140,62 @@ function reachablePaths(file: IfcxFileLike): Set<string> {
 
 function nodeNamed(file: IfcxFileLike, name: string): IfcxNodeLike | undefined {
   return file.data.find((n) => n.attributes?.['bsi::ifc::prop::Name'] === name);
+}
+
+/**
+ * The roof model with no source bytes: Site #20 and Storey #40 both name Roof
+ * #50 as contained (a parse that attributes an element to every level above
+ * it), and the Roof aggregates Slab #60. Shaped like a server parse — entity
+ * table, `byId` index and relationship graph populated, `source.byteLength
+ * === 0` and therefore no STEP line to re-read, which is a supported store
+ * state rather than a degenerate one (`serverDataModel.ts`).
+ */
+function sourcelessRoofStore(): IfcDataStore {
+  const strings = new StringTable();
+  const entityBuilder = new EntityTableBuilder(5, strings);
+  entityBuilder.add(10, 'IFCPROJECT', guid(10), 'Project', '', '');
+  entityBuilder.add(20, 'IFCSITE', guid(20), 'Site', '', '');
+  entityBuilder.add(40, 'IFCBUILDINGSTOREY', guid(40), 'Storey', '', '');
+  entityBuilder.add(50, 'IFCROOF', guid(50), 'Roof', '', '');
+  entityBuilder.add(60, 'IFCSLAB', guid(60), 'Roof Slab A', '', '');
+
+  const relBuilder = new RelationshipGraphBuilder();
+  // The site's containment is declared FIRST, so a reader that takes the
+  // first raw candidate lands on the site rather than the storey.
+  relBuilder.addEdge(20, 50, RelationshipType.ContainsElements, 71);
+  relBuilder.addEdge(40, 50, RelationshipType.ContainsElements, 70);
+  relBuilder.addEdge(50, 60, RelationshipType.Aggregates, 83);
+
+  // Zero-length refs: a server parse indexes every entity by id but has no
+  // bytes behind them, which is exactly the state under test.
+  const byId = new Map<number, { type: string; byteOffset: number; byteLength: number }>([
+    [10, 'IFCPROJECT'], [20, 'IFCSITE'], [40, 'IFCBUILDINGSTOREY'],
+    [50, 'IFCROOF'], [60, 'IFCSLAB'],
+    [70, 'IFCRELCONTAINEDINSPATIALSTRUCTURE'], [71, 'IFCRELCONTAINEDINSPATIALSTRUCTURE'],
+    [83, 'IFCRELAGGREGATES'],
+  ].map(([id, type]) => [id as number, { type: type as string, byteOffset: 0, byteLength: 0 }]));
+
+  return {
+    fileSize: 0, schemaVersion: 'IFC4', entityCount: 5, parseTime: 0,
+    source: EMPTY_SOURCE_BYTES,
+    entityIndex: { byId, byType: new Map() },
+    strings,
+    entities: entityBuilder.build(),
+    properties: new PropertyTableBuilder(strings).build(),
+    quantities: new QuantityTableBuilder(strings).build(),
+    relationships: relBuilder.build(),
+    spatialHierarchy: {
+      project: {
+        expressId: 10,
+        name: 'Project',
+        children: [{ expressId: 20, name: 'Site', children: [{ expressId: 40, name: 'Storey', children: [] }] }],
+      },
+      bySite: new Map<number, number[]>([[20, [50]]]),
+      byBuilding: null,
+      byStorey: new Map<number, number[]>([[40, [50]]]),
+      bySpace: null,
+    },
+  } as unknown as IfcDataStore;
 }
 
 function classCodes(file: IfcxFileLike): string[] {
@@ -376,5 +440,39 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     expect(nodeNamed(file, 'Disconnected')).toBeUndefined();
     expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(slab?.path);
     expect(reachablePaths(file).has(slab?.path as string)).toBe(true);
+  });
+
+  it('follows decomposition in a store parsed without source bytes', async () => {
+    // Server-parsed, synthetic and IFCX-rebuilt stores carry a populated
+    // relationship graph and zero source bytes, and `source` stays a truthy
+    // object in that state — so a presence check on it reads as "bytes
+    // available", extraction returns nothing for every relationship, and the
+    // decomposition silently disappears again on the path the viewer uses for
+    // a server parse. The parsed graph has to answer instead.
+    const file: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(sourcelessRoofStore()).export({ includeGeometry: false }).content,
+    );
+
+    const slab = nodeNamed(file, 'Roof Slab A');
+    expect(slab).toBeDefined();
+    expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(slab?.path);
+    expect(reachablePaths(file).has(slab?.path as string)).toBe(true);
+  });
+
+  it('keeps the parser-resolved container when a source-less store repeats it up the tree', async () => {
+    // A parse that attributes an element to every level above it leaves the
+    // raw graph naming both the storey and the site as containers, while
+    // `spatialHierarchy` names the one the parser resolved. Reading the raw
+    // candidates over that resolution moved the roof from its storey up to
+    // the site, which an IFCX round trip through this exporter loses outright
+    // (`ifcx-roundtrip.test.ts` > preserves hierarchy relations).
+    const store = sourcelessRoofStore();
+    const file: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store).export({ includeGeometry: false }).content,
+    );
+
+    const roof = nodeNamed(file, 'Roof');
+    expect(Object.values(nodeNamed(file, 'Storey')?.children ?? {})).toContain(roof?.path);
+    expect(Object.values(nodeNamed(file, 'Site')?.children ?? {})).not.toContain(roof?.path);
   });
 });
