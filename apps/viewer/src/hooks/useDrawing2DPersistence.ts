@@ -37,7 +37,7 @@ import { useViewerStore } from '@/store';
 import { getDefaultDrawing2DState } from '@/store/slices/drawing2DSlice.js';
 import { computeFullSourceHashFromBlob } from '@/utils/sourceContentHash.js';
 import { loadDrawing2DEntry, defaultMarkupPatch, suppressNextSaveFor } from '@/store/slices/drawing2DSlice.persistence.js';
-import { getCachedHash, setCachedHash, notifyDecided } from './drawingMarkupRestorePrecedence.js';
+import { setCachedHash, notifyDecided } from './drawingMarkupRestorePrecedence.js';
 import { resetSaveState, beginRestore, endRestore, setRestoredSectionConfig, ensureSaveSubscription } from './drawingMarkupSave.js';
 import { ensureSheetPersistence, settleSheetHash } from './sheetPersistence.js';
 import {
@@ -50,7 +50,7 @@ export { hasPersistedMarkupEntryFor, onLocalStorageDecidedFor } from './drawingM
 export { notifyDrawing2DSectionConfig, consumeRestoredSectionConfig } from './drawingMarkupSave.js';
 
 /** A model id may be reused for replacement bytes; cached hashes belong to a source. */
-const resolvedSources = new Map<string, File | undefined>();
+const sourceHashes = new WeakMap<File, string | null>();
 
 /**
  * Resolves the active model's content hash (from `FederatedModel.sourceFile`)
@@ -174,13 +174,13 @@ export function useDrawing2DPersistence(): void {
     };
     const cacheHash = (hash: string | null) => {
       if (useViewerStore.getState().models.get(activeModelId)?.sourceFile !== sourceFile) return false;
-      resolvedSources.set(activeModelId, sourceFile);
+      if (sourceFile) sourceHashes.set(sourceFile, hash);
       setCachedHash(activeModelId, hash);
       return true;
     };
-    const cached = resolvedSources.has(activeModelId) && resolvedSources.get(activeModelId) === sourceFile
-      ? getCachedHash(activeModelId) : undefined;
+    const cached = sourceFile ? sourceHashes.get(sourceFile) : undefined;
     if (cached !== undefined) {
+      cacheHash(cached);
       applyHash(cached, settleHash(cached));
       // Symmetric with the branches below — a no-op today (this model's
       // listeners already fired on the earlier mount that cached its hash;

@@ -25,10 +25,12 @@ export function createSheetPersistence() {
   const sheets = new Map<string, SessionSheet>();
   let applying = false;
 
-  const apply = (entry?: SessionSheet) => {
+  const apply = (entry?: SessionSheet, resetUi = true) => {
     applying = true;
     try {
-      useViewerStore.setState({ ...getClearedSheetState(), activeSheet: entry?.sheet ?? null, sheetEnabled: entry?.enabled ?? false });
+      useViewerStore.setState(resetUi
+        ? { ...getClearedSheetState(), activeSheet: entry?.sheet ?? null, sheetEnabled: entry?.enabled ?? false }
+        : { activeSheet: entry?.sheet ?? null });
     } finally {
       applying = false;
     }
@@ -58,6 +60,13 @@ export function createSheetPersistence() {
   const unsubscribe = useViewerStore.subscribe((state, previous) => {
     if (applying) return;
     if (state.savedSheetTemplates !== previous.savedSheetTemplates) saveSheetTemplates(state.savedSheetTemplates);
+    if (state.models !== previous.models) {
+      for (const [modelId, entry] of sheets) {
+        // Pending hashes may still need to save edits. Settled, closed models
+        // must release their File handles and embedded logos.
+        if (!state.models.has(modelId) && entry.hash !== undefined) sheets.delete(modelId);
+      }
+    }
     const id = state.activeModelId;
     const source = id ? state.models.get(id)?.sourceFile : undefined;
     const oldSource = previous.activeModelId ? previous.models.get(previous.activeModelId)?.sourceFile : undefined;
@@ -82,14 +91,13 @@ export function createSheetPersistence() {
       // Ignore a hash from an earlier source loaded under a reused model id.
       if (!entry || entry.source !== source) return;
       entry.hash = hash;
-      if (!hash) return;
-      if (entry.dirty) {
-        saveSheet(hash, entry.sheet);
-        return;
-      }
-      entry.sheet = loadSheet(hash);
       const state = useViewerStore.getState();
-      if (state.activeModelId === modelId && state.models.get(modelId)?.sourceFile === source) apply(entry);
+      if (hash && entry.dirty) saveSheet(hash, entry.sheet);
+      else if (hash) {
+        entry.sheet = loadSheet(hash);
+        if (state.activeModelId === modelId && state.models.get(modelId)?.sourceFile === source) apply(entry, false);
+      }
+      if (!state.models.has(modelId)) sheets.delete(modelId);
     },
     dispose: unsubscribe,
   };

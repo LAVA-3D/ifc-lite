@@ -93,4 +93,19 @@ describe('sheet persistence lifecycle (#4836)', () => {
     useViewerStore.getState().createSheet();
     assert.equal(loadSheet('old-source'), null);
   });
+
+  it('forgets closed model sessions and reloads their latest saved setup on reopening', () => {
+    const a = model('closed-a');
+    useViewerStore.setState({ models: new Map([[a.id, a]]), activeModelId: a.id });
+    bridge = createSheetPersistence();
+    bridge.settleHash(a.id, 'closed-hash', a.sourceFile);
+    useViewerStore.getState().createSheet();
+    useViewerStore.setState({ models: new Map(), activeModelId: null });
+    const newer = { ...createDefaultSheet(), name: 'Updated in another tab' };
+    saveSheet('closed-hash', newer);
+    useViewerStore.setState({ models: new Map([[a.id, a]]), activeModelId: a.id });
+    bridge.settleHash(a.id, 'closed-hash', a.sourceFile);
+    assert.deepEqual(useViewerStore.getState().activeSheet, newer);
+    assert.deepEqual(loadSheet('closed-hash'), newer);
+  });
 });
