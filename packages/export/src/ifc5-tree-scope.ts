@@ -11,7 +11,6 @@ import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index
 
 const CYCLE_CHECK_VISIT_BUDGET = 2_000_000;
 const log = createLogger('Ifc5TreeScope');
-
 interface SpatialTreeNode { expressId: number; name?: string; children: SpatialTreeNode[] }
 
 interface RelationEdges {
@@ -97,6 +96,9 @@ function addEdge(edges: RelationEdges, parentId: number, childId: number): void 
   appendCandidate(edges, childId, parentId);
 }
 
+const existsOrWasDeleted = (effective: EffectiveEntityIndex, id: number): boolean =>
+  effective.has(id) || effective.isDeleted(id);
+
 function effectiveAttributes(
   id: number,
   sourceAttributes: unknown[] | undefined,
@@ -181,9 +183,9 @@ function addRawEdges(
     const attributes = effectiveAttributes(id, source, undefined, view) as unknown[];
     const parentId = refs(attributes[isDecomposition ? 4 : 5], modified)[0];
     const edges = isDecomposition ? graph.decomposition : graph.containment;
-    if (parentId === undefined || !effective.has(parentId)) continue;
+    if (parentId === undefined || !existsOrWasDeleted(effective, parentId)) continue;
     for (const childId of refs(attributes[isDecomposition ? 5 : 4], modified)) {
-      if (effective.has(childId)) addEdge(edges, parentId, childId);
+      if (existsOrWasDeleted(effective, childId)) addEdge(edges, parentId, childId);
     }
   }
   for (const entity of created.values()) {
@@ -195,10 +197,10 @@ function addRawEdges(
     else graph.containmentModified = true;
     const attributes = effectiveAttributes(entity.expressId, undefined, entity, view) as unknown[];
     const parentId = refs(attributes[decomposition ? 4 : 5], true)[0];
-    if (parentId === undefined || !effective.has(parentId)) continue;
+    if (parentId === undefined || !existsOrWasDeleted(effective, parentId)) continue;
     const edges = decomposition ? graph.decomposition : graph.containment;
     for (const childId of refs(attributes[decomposition ? 5 : 4], true)) {
-      if (effective.has(childId)) addEdge(edges, parentId, childId);
+      if (existsOrWasDeleted(effective, childId)) addEdge(edges, parentId, childId);
     }
   }
 }
@@ -255,13 +257,13 @@ function buildEffectiveTreeGraph(
       attributes[parentIndex],
       slotIsAuthored(id, parentIndex, parentName, createdEntity, view),
     )[0];
-    if (parentId === undefined || !effective.has(parentId)) continue;
+    if (parentId === undefined || !existsOrWasDeleted(effective, parentId)) continue;
     const edges = decomposition ? graph.decomposition : graph.containment;
     for (const childId of refs(
       attributes[childrenIndex],
       slotIsAuthored(id, childrenIndex, childrenName, createdEntity, view),
     )) {
-      if (effective.has(childId)) addEdge(edges, parentId, childId);
+      if (existsOrWasDeleted(effective, childId)) addEdge(edges, parentId, childId);
     }
   }
   return graph;

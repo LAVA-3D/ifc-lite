@@ -348,6 +348,21 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     expect(nodeNamed(withoutRelationship, 'New Slab')).toBeUndefined();
   });
 
+  it('keeps descendants of a tombstoned spatial container reachable', async () => {
+    const store = await parse(ROOF_MODEL);
+    const view = new MutablePropertyView(null, 'ifc5-deleted-container');
+    view.deleteEntity(40);
+    const file: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store, null, view).export({ includeGeometry: false }).content,
+    );
+
+    expect(nodeNamed(file, 'Storey')).toBeUndefined();
+    const roof = nodeNamed(file, 'Roof');
+    expect(roof).toBeDefined();
+    expect(Object.values(nodeNamed(file, 'Building')?.children ?? {})).toContain(roof?.path);
+    expect(reachablePaths(file).has(roof?.path as string)).toBe(true);
+  });
+
   it('prefers a reachable aggregate parent over an earlier disconnected one', async () => {
     const store = await parse(step(`#50=IFCROOF('${guid(50)}',$,'Roof',$,$,#3,$,'Roof',$);
 #55=IFCELEMENTASSEMBLY('${guid(55)}',$,'Disconnected',$,$,#3,$,'D',$,.NOTDEFINED.);
