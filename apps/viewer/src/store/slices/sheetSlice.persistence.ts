@@ -51,17 +51,22 @@ export function saveSheetTemplates(templates: readonly DrawingSheet[]): void {
 
 function nextSaveOrder(): number {
   if (typeof localStorage === 'undefined') return Date.now();
-  let latest = 0;
-  for (let i = 0; i < localStorage.length; i++) {
-    const candidate = localStorage.key(i);
-    if (!candidate?.startsWith(PREFIX)) continue;
-    const entry = record(read(candidate));
-    const order = typeof entry.savedOrder === 'number'
-      ? entry.savedOrder
-      : typeof entry.savedAt === 'number' ? entry.savedAt : 0;
-    latest = Math.max(latest, order);
+  try {
+    let latest = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const candidate = localStorage.key(i);
+      if (!candidate?.startsWith(PREFIX)) continue;
+      const entry = record(read(candidate));
+      const order = typeof entry.savedOrder === 'number'
+        ? entry.savedOrder
+        : typeof entry.savedAt === 'number' ? entry.savedAt : 0;
+      latest = Math.max(latest, order);
+    }
+    return Math.max(Date.now(), latest + 1);
+  } catch (error) {
+    console.warn('[sheet] Could not inspect saved sheet order', error);
+    return Date.now();
   }
-  return Math.max(Date.now(), latest + 1);
 }
 
 export function saveSheet(hash: string, sheet: DrawingSheet | null): void {

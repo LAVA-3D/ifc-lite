@@ -71,6 +71,28 @@ describe('sheet storage (#4836)', () => {
     warn.mock.restore();
   });
 
+  it('degrades without throwing when storage enumeration is denied', () => {
+    const warn = mock.method(console, 'warn', () => {});
+    const original = globalThis.localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: new Proxy(original, {
+        get(target, property, receiver) {
+          if (property === 'length') throw new Error('enumeration denied');
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      }),
+    });
+    try {
+      assert.doesNotThrow(() => saveSheet('enumeration-denied', createDefaultSheet()));
+      assert.ok(warn.mock.callCount() >= 1);
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: original });
+      warn.mock.restore();
+    }
+  });
+
   it('keeps the newest 20 model sheets and never evicts reusable templates', () => {
     const sheet = createDefaultSheet();
     saveSheetTemplates([sheet]);
