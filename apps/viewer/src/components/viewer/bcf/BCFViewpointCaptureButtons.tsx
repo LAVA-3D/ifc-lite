@@ -30,7 +30,7 @@ export function BCFViewpointCaptureButtons({
         onClick={onCapture2D}
         disabled={!canCapture2D}
         aria-label="Capture current 2D section as viewpoint"
-        title={canCapture2D ? 'Attach the visible annotated 2D section' : 'Open a generated 2D section first'}
+        title={canCapture2D ? 'Attach the visible annotated 2D section' : 'Open a supported, fully rendered 2D section first'}
       >
         <ScanLine className="h-3 w-3 mr-1" />
         Capture 2D

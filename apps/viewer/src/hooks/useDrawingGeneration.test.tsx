@@ -28,6 +28,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { Drawing2DGenerator, type Drawing2D } from '@ifc-lite/drawing-2d';
 import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
 import { useDrawingGeneration } from './useDrawingGeneration.js';
+import {
+  hasActiveDrawingCanvas,
+  markActiveDrawingCanvasRendered,
+  registerActiveDrawingCanvas,
+} from '@/lib/drawing/active-canvas-snapshot.js';
 
 // ─── Fixture ─────────────────────────────────────────────────────────────
 
@@ -233,6 +238,7 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
   const publications: Set<number>[] = [];
   let starts = 0;
   let run: (() => Promise<void>) | undefined;
+  let regenerate: (() => Promise<void>) | undefined;
   const status = (value: string) => { if (value === 'generating') starts++; };
   const noop = () => {};
   function Harness({ value }: { value: DrawingInputs }) {
@@ -242,11 +248,12 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
       if (next) publications.push(entityIds(next));
       setLocalDrawing(next);
     }, []);
-    const { generateDrawing } = useDrawingGeneration({
+    const { generateDrawing, doRegenerate } = useDrawingGeneration({
       ...value, drawing, setDrawing: publish, setDrawingStatus: status,
       setDrawingProgress: noop, setDrawingError: noop,
     });
     run = generateDrawing;
+    regenerate = doRegenerate;
     return null;
   }
   const container = document.createElement('div');
@@ -298,6 +305,7 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
     get drawing() { return published; },
     get starts() { return starts; },
     async generate() { await act(async () => { assert.ok(run); await run(); }); },
+    regenerate() { assert.ok(regenerate); return regenerate(); },
     async dispose() { await act(async () => root.unmount()); container.remove(); },
   };
 }
@@ -479,6 +487,40 @@ it('restarts active drawing demand after StrictMode effect cleanup (#3921)', asy
     assert.deepEqual(entityIds(h.drawing), new Set([100, 101]));
     assert.deepEqual(h.publications, [new Set([100, 101])]);
   } finally { await h.dispose(); }
+});
+
+it('marks the painted section stale before a regeneration can finish (#4802)', async () => {
+  const original = Drawing2DGenerator.prototype.generate;
+  let signal!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>(resolve => { signal = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  Drawing2DGenerator.prototype.generate = async function (...args) {
+    signal();
+    await held;
+    return original.call(this, ...args);
+  };
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 480;
+  const unregister = registerActiveDrawingCanvas(canvas);
+  markActiveDrawingCanvasRendered(canvas, true);
+  const h = await drawingActivityHarness({ geometryResult: activityGeometry() });
+  try {
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = h.regenerate();
+      await started;
+    });
+    assert.equal(hasActiveDrawingCanvas(), false, 'the old bitmap must be blocked while the new cut is pending');
+    release();
+    await act(async () => pending);
+  } finally {
+    release();
+    Drawing2DGenerator.prototype.generate = original;
+    unregister();
+    await h.dispose();
+  }
 });
 
 // #3921: a new coplanar face pick changes the projection origin, not its normal.

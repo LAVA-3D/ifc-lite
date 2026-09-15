@@ -22,7 +22,7 @@ import type { ScanBandPoint } from '@/hooks/scanSectionMath';
 import { type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useDrawingElementPropertiesLookup } from '@/hooks/useDrawingElementPropertiesLookup';
-import { registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
+import { markActiveDrawingCanvasRendered, registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
 // Fill colors for IFC types (architectural convention)
 const IFC_TYPE_FILL_COLORS: Record<string, string> = {
   // Structural elements - solid gray
@@ -1644,7 +1644,6 @@ export function Drawing2DCanvas({
       ctx.setLineDash([]);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
     // 8. RENDER SELECTION HIGHLIGHT
     // ═══════════════════════════════════════════════════════════════════════
     if (selectedAnnotation) {
@@ -1740,6 +1739,7 @@ export function Drawing2DCanvas({
         }
       }
     }
+    markActiveDrawingCanvasRendered(canvas, textAnnotationEditing === null);
   }, [referenceImages, drawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, unitDisplayOverrides]);
 
   return (

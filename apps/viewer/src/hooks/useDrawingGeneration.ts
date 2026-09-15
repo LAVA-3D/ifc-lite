@@ -43,7 +43,7 @@ import { isTypeVisible, type TypeVisibilityGate } from '@/store/typeVisibilityFi
 import { roomDrawingSymbolic } from '@/lib/collab/room-drawing-symbolic';
 import { ifcToViewerAxes } from '@/lib/geo/coordinate-frame';
 import { useDrawingRtcContext } from './useDrawingRtcContext.js';
-
+import { markActiveDrawingCanvasStale } from '@/lib/drawing/active-canvas-snapshot';
 // The winding-robust Rust `meshOutline2d` binding (issue #979) is gitignored →
 // CI-built, so reference it defensively: against an older wasm bundle it's
 // undefined and projection falls back to the TS mesh silhouette. The wasm
@@ -906,13 +906,13 @@ export function useDrawingGeneration({
     setDrawingError,
   ]);
 
-  // Every entry point shares one queue. A superseded cut still disposes its
-  // generator, but cannot publish over the newest requested inputs (#3921).
+  // All entry points share one queue; superseded cuts cannot publish over newer inputs (#3921).
   const queueRef = useRef<ReturnType<typeof createDrawingRequestQueue> | null>(null);
   if (!queueRef.current) queueRef.current = createDrawingRequestQueue();
   const queue = queueRef.current;
   const [isRegenerating, setIsRegenerating] = useState(false);
   const generateDrawing = useCallback((isRegenerate = false) => queue.request(async isCurrent => {
+    if (isRegenerate) markActiveDrawingCanvasStale();
     setIsRegenerating(isRegenerate);
     try { await computeDrawing(isRegenerate, isCurrent); }
     finally { setIsRegenerating(false); }

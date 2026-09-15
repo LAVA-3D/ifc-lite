@@ -31,12 +31,14 @@ export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
   const drawing = useViewerStore((state) => state.drawing2D);
   const status = useViewerStore((state) => state.drawing2DStatus);
   const panelVisible = useViewerStore((state) => state.drawing2DPanelVisible);
+  const editingText = useViewerStore((state) => state.textAnnotation2DEditing !== null);
+  const customPlane = useViewerStore((state) => state.sectionPlane.custom !== undefined);
   const canvasMounted = useSyncExternalStore(
     subscribeActiveDrawingCanvas,
     hasActiveDrawingCanvas,
     hasActiveDrawingCanvas,
   );
-  const canCapture = panelVisible && status === 'ready' && drawing !== null && canvasMounted;
+  const canCapture = panelVisible && status === 'ready' && drawing !== null && canvasMounted && !editingText && !customPlane;
 
   const capture = useCallback(async () => {
     if (!activeTopicId) return;

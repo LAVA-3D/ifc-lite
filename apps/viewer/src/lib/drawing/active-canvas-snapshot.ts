@@ -9,6 +9,7 @@
  */
 
 let activeCanvas: HTMLCanvasElement | null = null;
+let activeCanvasReady = false;
 const listeners = new Set<() => void>();
 
 function notifyListeners(): void {
@@ -18,14 +19,30 @@ function notifyListeners(): void {
 /** Register the canvas that currently presents the 2D section. */
 export function registerActiveDrawingCanvas(canvas: HTMLCanvasElement): () => void {
   activeCanvas = canvas;
+  activeCanvasReady = false;
   notifyListeners();
   return () => {
     // A stale cleanup must not unregister a newer mounted canvas.
     if (activeCanvas === canvas) {
       activeCanvas = null;
+      activeCanvasReady = false;
       notifyListeners();
     }
   };
+}
+
+/** Prevent an old bitmap from being paired with section state still updating. */
+export function markActiveDrawingCanvasStale(): void {
+  if (!activeCanvasReady) return;
+  activeCanvasReady = false;
+  notifyListeners();
+}
+
+/** Publish a canvas only after its paint effect has completed. */
+export function markActiveDrawingCanvasRendered(canvas: HTMLCanvasElement, ready: boolean): void {
+  if (activeCanvas !== canvas || activeCanvasReady === ready) return;
+  activeCanvasReady = ready;
+  notifyListeners();
 }
 
 /** Observe whether the section canvas is actually mounted and capturable. */
@@ -36,7 +53,7 @@ export function subscribeActiveDrawingCanvas(listener: () => void): () => void {
 
 /** React-compatible snapshot of the mounted canvas state. */
 export function hasActiveDrawingCanvas(): boolean {
-  return activeCanvas !== null && activeCanvas.width > 0 && activeCanvas.height > 0;
+  return activeCanvasReady && activeCanvas !== null && activeCanvas.width > 0 && activeCanvas.height > 0;
 }
 
 /** Capture the exact painted 2D section, including its visible annotations. */

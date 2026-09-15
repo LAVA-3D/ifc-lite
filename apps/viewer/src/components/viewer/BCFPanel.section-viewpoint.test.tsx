@@ -47,6 +47,35 @@ const DRAWING: Drawing2D = {
   },
 };
 
+const TEXT_ANNOTATION = {
+  id: 'review-note',
+  position: { x: 2, y: 3 },
+  text: 'Check fire rating',
+  fontSize: 14,
+  color: '#000000',
+  backgroundColor: '#ffffff',
+  borderColor: '#ff0000',
+};
+
+function TestSectionCanvas(): React.ReactElement {
+  const textAnnotations = useViewerStore((state) => state.textAnnotations2D);
+  const textAnnotationEditing = useViewerStore((state) => state.textAnnotation2DEditing);
+  return (
+    <Drawing2DCanvas
+      drawing={DRAWING}
+      transform={{ x: 100, y: 100, scale: 10 }}
+      showHiddenLines={false}
+      overrideEngine={new GraphicOverrideEngine()}
+      overridesEnabled={false}
+      entityColorMap={new Map()}
+      useIfcMaterials={false}
+      sectionAxis="down"
+      textAnnotations={textAnnotations}
+      textAnnotationEditing={textAnnotationEditing}
+    />
+  );
+}
+
 const renderer = {
   getCamera: () => ({
     getPosition: () => ({ x: 10, y: 5, z: 20 }),
@@ -90,6 +119,16 @@ beforeEach(() => {
     drawing2D: DRAWING,
     drawing2DStatus: 'ready',
     drawing2DPanelVisible: true,
+    textAnnotations2D: [TEXT_ANNOTATION],
+    textAnnotation2DEditing: null,
+    sectionPlane: {
+      ...useViewerStore.getState().sectionPlane,
+      enabled: true,
+      axis: 'down',
+      position: 50,
+      flipped: false,
+      custom: undefined,
+    },
   });
   setGlobalRendererRef({ current: renderer });
 });
@@ -103,25 +142,7 @@ afterEach(() => {
 test('Capture 2D attaches the painted annotated section to the active BCF topic (#4802)', async () => {
   const ui = render(
     <>
-      <Drawing2DCanvas
-        drawing={DRAWING}
-        transform={{ x: 100, y: 100, scale: 10 }}
-        showHiddenLines={false}
-        overrideEngine={new GraphicOverrideEngine()}
-        overridesEnabled={false}
-        entityColorMap={new Map()}
-        useIfcMaterials={false}
-        sectionAxis="down"
-        textAnnotations={[{
-          id: 'review-note',
-          position: { x: 2, y: 3 },
-          text: 'Check fire rating',
-          fontSize: 14,
-          color: '#000000',
-          backgroundColor: '#ffffff',
-          borderColor: '#ff0000',
-        }]}
-      />
+      <TestSectionCanvas />
       <BCFPanel onClose={() => {}} />
     </>,
   );
@@ -141,4 +162,52 @@ test('Capture 2D attaches the painted annotated section to the active BCF topic 
   assert.ok(viewpoint.snapshot, 'the viewpoint carries an image');
   const imagePayload = Buffer.from(viewpoint.snapshot.split(',')[1] ?? '', 'base64').toString();
   assert.match(imagePayload, /Check fire rating/, 'the captured canvas includes the reviewed annotation');
+});
+
+test('Capture 2D stays disabled for a custom plane that BCF cannot reproduce (#4802)', () => {
+  useViewerStore.setState({
+    sectionPlane: {
+      ...useViewerStore.getState().sectionPlane,
+      enabled: true,
+      axis: 'down',
+      position: 50,
+      flipped: false,
+      custom: {
+        normal: [0, Math.SQRT1_2, Math.SQRT1_2],
+        distance: 4,
+        pickedAt: [0, 2, 2],
+        tangent: [1, 0, 0],
+        bitangent: [0, Math.SQRT1_2, -Math.SQRT1_2],
+      },
+    },
+  });
+  const ui = render(<><TestSectionCanvas /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  assert.equal(capture.disabled, true, 'an oblique image must not be paired with an unrelated cardinal clip');
+});
+
+test('Capture 2D waits for the active text editor to commit and repaint (#4802)', async () => {
+  useViewerStore.setState({ textAnnotation2DEditing: TEXT_ANNOTATION.id });
+  const ui = render(<><TestSectionCanvas /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  assert.equal(capture.disabled, true, 'the DOM-only editor content is not capturable yet');
+
+  await act(async () => {
+    useViewerStore.setState({
+      textAnnotations2D: [{ ...TEXT_ANNOTATION, text: 'Committed fire rating' }],
+      textAnnotation2DEditing: null,
+    });
+  });
+  assert.equal(capture.disabled, false, 'capture enables only after the canvas repaint completes');
+  await act(async () => {
+    capture.click();
+    await Promise.resolve();
+  });
+
+  const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
+  assert.ok(viewpoint?.snapshot);
+  const imagePayload = Buffer.from(viewpoint.snapshot.split(',')[1] ?? '', 'base64').toString();
+  assert.match(imagePayload, /Committed fire rating/);
 });
