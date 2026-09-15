@@ -703,6 +703,8 @@ export interface ScheduleTaskData {
   productExpressIds: number[];
   productGlobalIds: string[];
   controllingScheduleGlobalIds: string[];
+  /** IfcWorkCalendar globalIds assigned to this task via IfcRelAssignsToControl. */
+  calendarGlobalIds?: string[];
 }
 
 export interface ScheduleSequenceData {
@@ -729,12 +731,55 @@ export interface WorkScheduleData {
   finishTime?: string;
   predefinedType?: string;
   taskGlobalIds: string[];
+  /** IfcWorkCalendar globalIds assigned to this schedule/plan via IfcRelAssignsToControl. */
+  calendarGlobalIds?: string[];
+}
+
+/** One StartTime/EndTime pair from an IfcRecurrencePattern's TimePeriods list. */
+export interface TimePeriodData {
+  start: string;
+  end: string;
+}
+
+/** IfcRecurrencePattern — the repeat rule an IfcWorkTime may carry. */
+export interface RecurrencePatternData {
+  recurrenceType?: string;
+  dayComponent: number[];
+  weekdayComponent: number[];
+  monthComponent: number[];
+  position?: number;
+  interval?: number;
+  occurrences?: number;
+  timePeriods: TimePeriodData[];
+}
+
+/** IfcWorkTime — one working or exception period on an IfcWorkCalendar. */
+export interface WorkTimeData {
+  name?: string;
+  dataOrigin?: string;
+  userDefinedDataOrigin?: string;
+  recurrencePattern?: RecurrencePatternData;
+  start?: string;
+  finish?: string;
+}
+
+export interface WorkCalendarData {
+  expressId: number;
+  globalId: string;
+  name: string;
+  description?: string;
+  objectType?: string;
+  identification?: string;
+  predefinedType?: string;
+  workingTimes: WorkTimeData[];
+  exceptionTimes: WorkTimeData[];
 }
 
 export interface ScheduleExtractionData {
   workSchedules: WorkScheduleData[];
   tasks: ScheduleTaskData[];
   sequences: ScheduleSequenceData[];
+  workCalendars: WorkCalendarData[];
   hasSchedule: boolean;
 }
 

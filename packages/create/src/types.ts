@@ -693,6 +693,81 @@ export interface TaskParams {
 /** Canonical IFC-prefixed alias for {@link TaskParams}. */
 export type IfcTaskParams = TaskParams;
 
+export type WorkCalendarType =
+  | 'FIRSTSHIFT' | 'SECONDSHIFT' | 'THIRDSHIFT'
+  | 'USERDEFINED' | 'NOTDEFINED';
+
+export type RecurrenceType =
+  | 'DAILY' | 'WEEKLY'
+  | 'MONTHLY_BY_DAY_OF_MONTH' | 'MONTHLY_BY_POSITION'
+  | 'BY_DAY_COUNT' | 'BY_WEEKDAY_COUNT'
+  | 'YEARLY_BY_DAY_OF_MONTH' | 'YEARLY_BY_POSITION';
+
+/** One StartTime/EndTime pair on an IfcRecurrencePattern (IfcTimePeriod). */
+export interface TimePeriodParams {
+  /** IfcTime, e.g. "07:00:00". */
+  StartTime: string;
+  EndTime: string;
+}
+
+/** IfcRecurrencePattern — the repeat rule an IfcWorkTime may carry. */
+export interface RecurrencePatternParams {
+  RecurrenceType: RecurrenceType;
+  /** Days of the month, 1..31. */
+  DayComponent?: number[];
+  /** Days of the week, 1 (Monday) .. 7 (Sunday). */
+  WeekdayComponent?: number[];
+  /** Months of the year, 1..12. */
+  MonthComponent?: number[];
+  Position?: number;
+  Interval?: number;
+  Occurrences?: number;
+  TimePeriods?: TimePeriodParams[];
+}
+
+/**
+ * IfcWorkTime — one working (or exception) period on an IfcWorkCalendar.
+ * `Start`/`Finish` are IfcDate strings (date only, e.g. "2024-05-01"), NOT
+ * the datetimes IfcWorkSchedule uses.
+ */
+export interface WorkTimeParams {
+  Name?: string;
+  DataOrigin?: string;
+  UserDefinedDataOrigin?: string;
+  RecurrencePattern?: RecurrencePatternParams;
+  Start?: string;
+  Finish?: string;
+}
+
+/**
+ * IfcWorkCalendar parameters. Assign the calendar to tasks or schedules
+ * with `addIfcRelAssignsToControl(calendarId, ids)` (or the
+ * `assignCalendarToTasks` alias) — IfcWorkCalendar is an IfcControl, so
+ * that generic relation already accepts it.
+ */
+export interface WorkCalendarParams {
+  Name: string;
+  Description?: string;
+  ObjectType?: string;
+  Identification?: string;
+  PredefinedType?: WorkCalendarType;
+  WorkingTimes?: WorkTimeParams[];
+  ExceptionTimes?: WorkTimeParams[];
+}
+
+/** Canonical IFC-prefixed alias for {@link WorkCalendarParams}. */
+export type IfcWorkCalendarParams = WorkCalendarParams;
+/** Canonical IFC-prefixed alias for {@link WorkTimeParams}. */
+export type IfcWorkTimeParams = WorkTimeParams;
+/** Canonical IFC-prefixed alias for {@link RecurrencePatternParams}. */
+export type IfcRecurrencePatternParams = RecurrencePatternParams;
+/** Canonical IFC-prefixed alias for {@link TimePeriodParams}. */
+export type IfcTimePeriodParams = TimePeriodParams;
+/** Canonical IFC-prefixed alias for {@link WorkCalendarType}. */
+export type IfcWorkCalendarType = WorkCalendarType;
+/** Canonical IFC-prefixed alias for {@link RecurrenceType}. */
+export type IfcRecurrenceType = RecurrenceType;
+
 /** IfcRelSequence parameters (predecessor → successor edge). */
 export interface IfcRelSequenceParams {
   SequenceType?: IfcRelSequenceType;
