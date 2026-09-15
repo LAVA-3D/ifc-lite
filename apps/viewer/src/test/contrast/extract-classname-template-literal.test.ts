@@ -58,14 +58,14 @@ describe('CoordinateDisplay.tsx (#4825) genuinely cannot be measured by this ext
   // boundary above they still throw — pinning that "unmeasurable, needs a
   // design decision or a refactor" is the correct, current, verified answer
   // for this component, not an aging assumption this file failed to check.
-  it('CoordRow label span still throws (real ${primary ? ... } interpolation)', () => {
+  it('CoordRow label span still throws on real primary-prop interpolation', () => {
     assert.throws(
       () => extractClassNameAfter(COORDINATE_DISPLAY, '{label && (\n        <span '),
       /interpolat/i,
     );
   });
 
-  it('CoordRow value span still throws (real ${primary ? ... } interpolation)', () => {
+  it('CoordRow value span still throws on real primary-prop interpolation', () => {
     assert.throws(
       () => extractClassNameAfter(COORDINATE_DISPLAY, '        </span>\n      )}\n      <span '),
       /interpolat/i,
