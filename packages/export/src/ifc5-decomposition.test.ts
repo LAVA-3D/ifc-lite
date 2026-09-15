@@ -220,10 +220,13 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     expect(Object.values(nodeNamed(file, 'Assembly')?.children ?? {})).not.toContain(beam?.path);
   });
 
-  it('terminates on a cyclic decomposition and emits each member once', async () => {
+  it('terminates on a cyclic decomposition and keeps the hierarchy acyclic', async () => {
     // Entity references come from the file, so the aggregation graph can be
     // cyclic; the closure is bounded by the set it is filling, so a cycle
-    // costs one visit per member rather than spinning.
+    // costs one visit per member rather than spinning. The back-edge must not
+    // become a parent edge either — a cyclic parent map would make the
+    // re-parenting walk give up and dump the slab at the document root instead
+    // of under the roof the storey contains.
     const store = await parse(step(`#50=IFCROOF('${guid(50)}',$,'Roof',$,$,#3,$,'Roof',$);
 #60=IFCSLAB('${guid(60)}',$,'Roof Slab A',$,$,#3,$,'SlabA',.ROOF.);
 #70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50),#40);
@@ -231,8 +234,31 @@ describe('IFC5 export follows decomposition (#4841)', () => {
 #85=IFCRELAGGREGATES('${guid(85)}',$,$,$,#60,(#50));`));
     const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
 
+    const slab = nodeNamed(file, 'Roof Slab A');
     expect(classCodes(file).filter((c) => c === 'IfcSlab')).toHaveLength(1);
-    expect(reachablePaths(file).has(nodeNamed(file, 'Roof Slab A')?.path as string)).toBe(true);
+    expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(slab?.path);
+    expect(Object.values(nodeNamed(file, 'Storey')?.children ?? {})).toContain(nodeNamed(file, 'Roof')?.path);
+    expect(reachablePaths(file).has(slab?.path as string)).toBe(true);
+  });
+
+  it('emits a part two parents aggregate exactly once', async () => {
+    // A diamond is `IfcRelAggregates` misuse and files still emit it: neither
+    // candidate parent is a descendant of the part, so the tie is resolved by
+    // declaration order rather than by listing the part under both.
+    const store = await parse(step(`#50=IFCELEMENTASSEMBLY('${guid(50)}',$,'Assembly A',$,$,#3,$,'A1',$,.NOTDEFINED.);
+#51=IFCELEMENTASSEMBLY('${guid(51)}',$,'Assembly B',$,$,#3,$,'A2',$,.NOTDEFINED.);
+#63=IFCBEAM('${guid(63)}',$,'Shared Beam',$,$,#3,$,'B1',.BEAM.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50,#51),#40);
+#83=IFCRELAGGREGATES('${guid(83)}',$,$,$,#50,(#63));
+#86=IFCRELAGGREGATES('${guid(86)}',$,$,$,#51,(#63));`));
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    const beam = nodeNamed(file, 'Shared Beam');
+    expect(classCodes(file).filter((c) => c === 'IfcBeam')).toHaveLength(1);
+    const listedBy = ['Assembly A', 'Assembly B']
+      .filter((n) => Object.values(nodeNamed(file, n)?.children ?? {}).includes(beam?.path as string));
+    expect(listedBy).toHaveLength(1);
+    expect(reachablePaths(file).has(beam?.path as string)).toBe(true);
   });
 
   it('uses an overlay-retargeted RelatedObjects endpoint for filtering and hierarchy', async () => {
