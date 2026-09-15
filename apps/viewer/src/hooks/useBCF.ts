@@ -50,6 +50,7 @@ interface UseBCFOptions {
 interface CreateViewpointOptions {
   /** Include a snapshot image */
   includeSnapshot?: boolean;
+  /** Already-rendered PNG; camera/clipping still use the canonical conversion. */ snapshotOverride?: string;
   /** Include selected entities */
   includeSelection?: boolean;
   /** Include hidden entities */
@@ -80,7 +81,6 @@ interface CreateViewpointOptions {
    */
   additionalColoredRefs?: { color: string; refs: number[] }[];
 }
-
 interface UseBCFResult {
   /** Create a viewpoint from current viewer state */
   createViewpointFromState: (options?: CreateViewpointOptions) => Promise<BCFViewpoint | null>;
@@ -352,7 +352,7 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
   const createViewpointFromState = useCallback(
     async (opts: CreateViewpointOptions = {}): Promise<BCFViewpoint | null> => {
       const {
-        includeSnapshot = true,
+        includeSnapshot = true, snapshotOverride,
         includeSelection = true,
         includeHidden = true,
         additionalSelectedRefs,
@@ -366,8 +366,8 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
       // `camera.setAspect` inside that wait (`renderer/src/index.ts`, the
       // `dimensionsChanged` branch). Reading the camera after closes the
       // window: an `await` resumes in a microtask, a rAF render is a task.
-      let snapshot: string | undefined;
-      if (includeSnapshot) {
+      let snapshot: string | undefined = snapshotOverride;
+      if (!snapshot && includeSnapshot) {
         const captured = await captureSnapshot();
         if (captured) {
           snapshot = captured;

@@ -22,7 +22,7 @@ import type { ScanBandPoint } from '@/hooks/scanSectionMath';
 import { type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useDrawingElementPropertiesLookup } from '@/hooks/useDrawingElementPropertiesLookup';
-
+import { registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
 // Fill colors for IFC types (architectural convention)
 const IFC_TYPE_FILL_COLORS: Record<string, string> = {
   // Structural elements - solid gray
@@ -340,7 +340,7 @@ export function Drawing2DCanvas({
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // Resolved once per (model set, polygon set) change, never per draw frame.
   const getElementProperties = useDrawingElementPropertiesLookup(drawing, overrideEngine, overridesEnabled);
-
+  useEffect(() => canvasRef.current ? registerActiveDrawingCanvas(canvasRef.current) : undefined, []);
   // ResizeObserver to track canvas size changes
   useEffect(() => {
     const canvas = canvasRef.current;
