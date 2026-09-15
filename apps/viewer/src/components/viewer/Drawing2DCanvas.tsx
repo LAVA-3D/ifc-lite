@@ -340,7 +340,7 @@ export function Drawing2DCanvas({
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // Resolved once per (model set, polygon set) change, never per draw frame.
   const getElementProperties = useDrawingElementPropertiesLookup(drawing, overrideEngine, overridesEnabled);
-  useEffect(() => canvasRef.current ? registerActiveDrawingCanvas(canvasRef.current) : undefined, []);
+  useEffect(() => canvasRef.current ? registerActiveDrawingCanvas(canvasRef.current, drawing) : undefined, [drawing]);
   // ResizeObserver to track canvas size changes
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1739,7 +1739,7 @@ export function Drawing2DCanvas({
         }
       }
     }
-    markActiveDrawingCanvasRendered(canvas, textAnnotationEditing === null);
+    markActiveDrawingCanvasRendered(canvas, drawing, textAnnotationEditing === null);
   }, [referenceImages, drawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, unitDisplayOverrides]);
 
   return (

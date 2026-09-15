@@ -43,7 +43,7 @@ import { isTypeVisible, type TypeVisibilityGate } from '@/store/typeVisibilityFi
 import { roomDrawingSymbolic } from '@/lib/collab/room-drawing-symbolic';
 import { ifcToViewerAxes } from '@/lib/geo/coordinate-frame';
 import { useDrawingRtcContext } from './useDrawingRtcContext.js';
-import { markActiveDrawingCanvasStale } from '@/lib/drawing/active-canvas-snapshot';
+import { markActiveDrawingGenerationCompleted, markActiveDrawingGenerationStarted } from '@/lib/drawing/active-canvas-snapshot';
 // The winding-robust Rust `meshOutline2d` binding (issue #979) is gitignored →
 // CI-built, so reference it defensively: against an older wasm bundle it's
 // undefined and projection falls back to the TS mesh silhouette. The wasm
@@ -616,6 +616,7 @@ export function useDrawingGeneration({
 
       if (!isCurrent()) return;
 
+      let completedDrawing = result;
       // If we have symbolic representations, create a hybrid drawing
       if (symbolicLines.length > 0 && entitiesWithSymbols.size > 0) {
         // Get entity IDs that actually appear in the section cut (these are being cut by the plane)
@@ -868,10 +869,9 @@ export function useDrawingGeneration({
           },
         };
 
-        setDrawing(hybridDrawing);
-      } else {
-        setDrawing(result);
+        completedDrawing = hybridDrawing;
       }
+      setDrawing(completedDrawing); markActiveDrawingGenerationCompleted(completedDrawing);
 
       // Remember the SectionConfig that produced this view so the markup
       // persistence bridge (issue #4153) can save it alongside the results —
@@ -911,12 +911,12 @@ export function useDrawingGeneration({
   if (!queueRef.current) queueRef.current = createDrawingRequestQueue();
   const queue = queueRef.current;
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const generateDrawing = useCallback((isRegenerate = false) => queue.request(async isCurrent => {
-    if (isRegenerate) markActiveDrawingCanvasStale();
-    setIsRegenerating(isRegenerate);
-    try { await computeDrawing(isRegenerate, isCurrent); }
-    finally { setIsRegenerating(false); }
-  }), [computeDrawing, queue]);
+  const generateDrawing = useCallback((isRegenerate = false) => {
+    markActiveDrawingGenerationStarted(); return queue.request(async isCurrent => {
+      setIsRegenerating(isRegenerate);
+      try { await computeDrawing(isRegenerate, isCurrent); }
+      finally { setIsRegenerating(false); }
+    }); }, [computeDrawing, queue]);
   const doRegenerate = useCallback(() => generateDrawing(true), [generateDrawing]);
 
   // Restore the persisted section cut on reload (issue #4153 gap):

@@ -20,19 +20,16 @@
  */
 
 import '@/test/setup-dom.js';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { act, StrictMode, useCallback, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
-import { Drawing2DGenerator, type Drawing2D } from '@ifc-lite/drawing-2d';
+import { Drawing2DGenerator, GraphicOverrideEngine, type Drawing2D } from '@ifc-lite/drawing-2d';
 import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
+import { Drawing2DCanvas } from '../components/viewer/Drawing2DCanvas.js';
 import { useDrawingGeneration } from './useDrawingGeneration.js';
-import {
-  hasActiveDrawingCanvas,
-  markActiveDrawingCanvasRendered,
-  registerActiveDrawingCanvas,
-} from '@/lib/drawing/active-canvas-snapshot.js';
+import { hasActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot.js';
 
 // ─── Fixture ─────────────────────────────────────────────────────────────
 
@@ -222,7 +219,7 @@ const OVERLAY_OPTIONS: DrawingInputs['displayOptions'] = {
   scale: 50, showConstructionProjection: false,
 };
 
-async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, strict = false) {
+async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, strict = false, renderCanvas = false) {
   let inputs: DrawingInputs = {
     geometryResult: null,
     ifcDataStore: null,
@@ -239,10 +236,12 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
   let starts = 0;
   let run: (() => Promise<void>) | undefined;
   let regenerate: (() => Promise<void>) | undefined;
+  let repaint: (() => void) | undefined;
   const status = (value: string) => { if (value === 'generating') starts++; };
   const noop = () => {};
   function Harness({ value }: { value: DrawingInputs }) {
     const [drawing, setLocalDrawing] = useState<Drawing2D | null>(null);
+    const [panX, setPanX] = useState(100);
     const publish = useCallback((next: Drawing2D | null) => {
       published = next;
       if (next) publications.push(entityIds(next));
@@ -254,7 +253,17 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
     });
     run = generateDrawing;
     regenerate = doRegenerate;
-    return null;
+    repaint = () => setPanX((value) => value + 1);
+    return renderCanvas && drawing ? <Drawing2DCanvas
+      drawing={drawing}
+      transform={{ x: panX, y: 100, scale: 10 }}
+      showHiddenLines={false}
+      overrideEngine={new GraphicOverrideEngine()}
+      overridesEnabled={false}
+      entityColorMap={new Map()}
+      useIfcMaterials={false}
+      sectionAxis="down"
+    /> : null;
   }
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -304,8 +313,10 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
     get publications() { return publications; },
     get drawing() { return published; },
     get starts() { return starts; },
+    get canvas() { return container.querySelector('canvas'); },
     async generate() { await act(async () => { assert.ok(run); await run(); }); },
     regenerate() { assert.ok(regenerate); return regenerate(); },
+    async repaintCanvas() { await act(async () => { assert.ok(repaint); repaint(); }); },
     async dispose() { await act(async () => root.unmount()); container.remove(); },
   };
 }
@@ -489,36 +500,64 @@ it('restarts active drawing demand after StrictMode effect cleanup (#3921)', asy
   } finally { await h.dispose(); }
 });
 
-it('marks the painted section stale before a regeneration can finish (#4802)', async () => {
+it('keeps a repainted production canvas stale until regeneration publishes its replacement (#4802)', async () => {
   const original = Drawing2DGenerator.prototype.generate;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  const originalWindowResizeObserver = window.ResizeObserver;
+  class ImmediateResizeObserver implements ResizeObserver {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(target: Element): void {
+      this.callback([{ target, contentRect: { width: 640, height: 480 } } as unknown as ResizeObserverEntry], this);
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: ImmediateResizeObserver });
+  Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: ImmediateResizeObserver });
+  const context = new Proxy({}, {
+    get(_target, property) {
+      if (property === 'measureText') return () => ({ width: 0 });
+      return () => undefined;
+    },
+    set() { return true; },
+  }) as unknown as CanvasRenderingContext2D;
+  mock.method(HTMLCanvasElement.prototype, 'getContext', () => context);
   let signal!: () => void;
   let release!: () => void;
   const started = new Promise<void>(resolve => { signal = resolve; });
   const held = new Promise<void>(resolve => { release = resolve; });
-  Drawing2DGenerator.prototype.generate = async function (...args) {
-    signal();
-    await held;
-    return original.call(this, ...args);
-  };
-  const canvas = document.createElement('canvas');
-  canvas.width = 640;
-  canvas.height = 480;
-  const unregister = registerActiveDrawingCanvas(canvas);
-  markActiveDrawingCanvasRendered(canvas, true);
-  const h = await drawingActivityHarness({ geometryResult: activityGeometry() });
+  const h = await drawingActivityHarness({ geometryResult: activityGeometry() }, false, true);
   try {
+    await h.generate();
+    await h.repaintCanvas();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    assert.equal(
+      hasActiveDrawingCanvas(),
+      true,
+      `the production canvas painted the initial drawing (${h.canvas?.width}x${h.canvas?.height}, client ${h.canvas?.clientWidth}x${h.canvas?.clientHeight})`,
+    );
+    Drawing2DGenerator.prototype.generate = async function (...args) {
+      signal();
+      await held;
+      return original.call(this, ...args);
+    };
     let pending!: Promise<void>;
     await act(async () => {
       pending = h.regenerate();
       await started;
     });
     assert.equal(hasActiveDrawingCanvas(), false, 'the old bitmap must be blocked while the new cut is pending');
+    await h.repaintCanvas();
+    assert.equal(hasActiveDrawingCanvas(), false, 'panning must not revalidate the old drawing during regeneration');
     release();
     await act(async () => pending);
+    assert.equal(hasActiveDrawingCanvas(), true, 'the completed replacement becomes capturable after its paint');
   } finally {
     release();
     Drawing2DGenerator.prototype.generate = original;
-    unregister();
+    Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: originalResizeObserver });
+    Object.defineProperty(window, 'ResizeObserver', { configurable: true, writable: true, value: originalWindowResizeObserver });
+    mock.restoreAll();
     await h.dispose();
   }
 });

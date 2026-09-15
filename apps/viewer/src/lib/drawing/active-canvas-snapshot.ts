@@ -8,8 +8,13 @@
  * already-painted canvas without rebuilding the section in a second pipeline.
  */
 
+import type { Drawing2D } from '@ifc-lite/drawing-2d';
+
 let activeCanvas: HTMLCanvasElement | null = null;
-let activeCanvasReady = false;
+let renderedDrawing: Drawing2D | null = null;
+let capturableDrawing: Drawing2D | null = null;
+let renderedDrawingReady = false;
+let generationPending = false;
 const listeners = new Set<() => void>();
 
 function notifyListeners(): void {
@@ -17,31 +22,46 @@ function notifyListeners(): void {
 }
 
 /** Register the canvas that currently presents the 2D section. */
-export function registerActiveDrawingCanvas(canvas: HTMLCanvasElement): () => void {
+export function registerActiveDrawingCanvas(canvas: HTMLCanvasElement, drawing: Drawing2D): () => void {
   activeCanvas = canvas;
-  activeCanvasReady = false;
+  renderedDrawing = null;
+  renderedDrawingReady = false;
+  if (!generationPending) capturableDrawing = drawing;
   notifyListeners();
   return () => {
     // A stale cleanup must not unregister a newer mounted canvas.
     if (activeCanvas === canvas) {
       activeCanvas = null;
-      activeCanvasReady = false;
+      renderedDrawing = null;
+      renderedDrawingReady = false;
       notifyListeners();
     }
   };
 }
 
 /** Prevent an old bitmap from being paired with section state still updating. */
-export function markActiveDrawingCanvasStale(): void {
-  if (!activeCanvasReady) return;
-  activeCanvasReady = false;
+export function markActiveDrawingGenerationStarted(): void {
+  generationPending = true;
+  capturableDrawing = null;
   notifyListeners();
 }
 
-/** Publish a canvas only after its paint effect has completed. */
-export function markActiveDrawingCanvasRendered(canvas: HTMLCanvasElement, ready: boolean): void {
-  if (activeCanvas !== canvas || activeCanvasReady === ready) return;
-  activeCanvasReady = ready;
+/** Identify the replacement drawing that a completed generation produced. */
+export function markActiveDrawingGenerationCompleted(drawing: Drawing2D): void {
+  generationPending = false;
+  capturableDrawing = drawing;
+  notifyListeners();
+}
+
+/** Publish the exact drawing identity only after its canvas paint has completed. */
+export function markActiveDrawingCanvasRendered(
+  canvas: HTMLCanvasElement,
+  drawing: Drawing2D,
+  ready: boolean,
+): void {
+  if (activeCanvas !== canvas) return;
+  renderedDrawing = drawing;
+  renderedDrawingReady = ready;
   notifyListeners();
 }
 
@@ -53,7 +73,13 @@ export function subscribeActiveDrawingCanvas(listener: () => void): () => void {
 
 /** React-compatible snapshot of the mounted canvas state. */
 export function hasActiveDrawingCanvas(): boolean {
-  return activeCanvasReady && activeCanvas !== null && activeCanvas.width > 0 && activeCanvas.height > 0;
+  return !generationPending
+    && renderedDrawingReady
+    && renderedDrawing !== null
+    && renderedDrawing === capturableDrawing
+    && activeCanvas !== null
+    && activeCanvas.width > 0
+    && activeCanvas.height > 0;
 }
 
 /** Capture the exact painted 2D section, including its visible annotations. */
