@@ -57,6 +57,14 @@ export function nextSheetTemplateId(templates: readonly DrawingSheet[], now = Da
   return id;
 }
 
+function storedSaveOrder(entry: Record<string, unknown>): number {
+  const value = entry.savedOrder ?? entry.savedAt;
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    && value >= 0 && value < Number.MAX_SAFE_INTEGER
+    ? value
+    : 0;
+}
+
 function nextSaveOrder(): number {
   try {
     if (typeof localStorage === 'undefined') return Date.now();
@@ -65,10 +73,7 @@ function nextSaveOrder(): number {
       const candidate = localStorage.key(i);
       if (!candidate?.startsWith(PREFIX)) continue;
       const entry = record(read(candidate));
-      const order = typeof entry.savedOrder === 'number'
-        ? entry.savedOrder
-        : typeof entry.savedAt === 'number' ? entry.savedAt : 0;
-      latest = Math.max(latest, order);
+      latest = Math.max(latest, storedSaveOrder(entry));
     }
     return Math.max(Date.now(), latest + 1);
   } catch (error) {
@@ -96,12 +101,7 @@ export function saveSheet(hash: string, sheet: DrawingSheet | null): void {
       const candidate = localStorage.key(i);
       if (!candidate?.startsWith(PREFIX)) continue;
       const entry = record(read(candidate));
-      entries.push({
-        key: candidate,
-        savedOrder: typeof entry.savedOrder === 'number'
-          ? entry.savedOrder
-          : typeof entry.savedAt === 'number' ? entry.savedAt : 0,
-      });
+      entries.push({ key: candidate, savedOrder: storedSaveOrder(entry) });
     }
     entries.sort((a, b) => a.savedOrder - b.savedOrder || a.key.localeCompare(b.key));
     for (const entry of entries.filter((entry) => entry.key !== key).slice(0, Math.max(0, entries.length - MAX_MODELS))) {

@@ -115,6 +115,23 @@ describe('sheet storage (#4836)', () => {
     assert.equal(loadSheet('z-old-19')?.name, 'Old 19');
   });
 
+  it('rejects non-finite persisted ordering metadata instead of poisoning later saves', () => {
+    const now = mock.method(Date, 'now', () => 100);
+    const sheet = createDefaultSheet();
+    for (let i = 0; i < 20; i++) saveSheet(`old-${i}`, { ...sheet, name: `Old ${i}` });
+    const key = sheetStorageKey('old-0');
+    const raw = localStorage.getItem(key);
+    assert.ok(raw);
+    localStorage.setItem(key, raw.replace(/"savedOrder":\d+/, '"savedOrder":1e400'));
+    saveSheet('newer', { ...sheet, name: 'Newer' });
+    saveSheet('newest', { ...sheet, name: 'Newest' });
+    now.mock.restore();
+
+    assert.equal(loadSheet('old-0'), null);
+    assert.equal(loadSheet('newer')?.name, 'Newer');
+    assert.equal(loadSheet('newest')?.name, 'Newest');
+  });
+
   it('clears without consuming an eviction slot, and logs failed removals', () => {
     const sheet = createDefaultSheet();
     for (let i = 0; i < 20; i++) saveSheet(`kept-${i}`, sheet);
