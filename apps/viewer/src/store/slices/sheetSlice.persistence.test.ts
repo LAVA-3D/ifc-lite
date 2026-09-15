@@ -122,7 +122,9 @@ describe('sheet storage (#4836)', () => {
     const key = sheetStorageKey('old-0');
     const raw = localStorage.getItem(key);
     assert.ok(raw);
-    localStorage.setItem(key, raw.replace(/"savedOrder":\d+/, '"savedOrder":1e400'));
+    const poisoned = raw.replace(/"savedOrder":"\d+"/, '"savedOrder":1e400');
+    assert.equal((JSON.parse(poisoned) as Record<string, unknown>).savedOrder, Infinity);
+    localStorage.setItem(key, poisoned);
     saveSheet('newer', { ...sheet, name: 'Newer' });
     saveSheet('newest', { ...sheet, name: 'Newest' });
     now.mock.restore();
