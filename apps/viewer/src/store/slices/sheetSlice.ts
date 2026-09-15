@@ -38,6 +38,7 @@ import {
   calculateViewportBounds,
   calculateOptimalScaleBarLength,
 } from '@ifc-lite/drawing-2d';
+import { nextSheetTemplateId } from './sheetSlice.persistence';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STATE TYPES
@@ -492,15 +493,9 @@ export const createSheetSlice: StateCreator<SheetSlice, [], [], SheetSlice> = (
   saveAsTemplate: (name) => {
     const current = get().activeSheet;
     if (!current) return;
-
-    const usedIds = new Set(get().savedSheetTemplates.map((template) => template.id));
-    const baseId = `template-${Date.now()}`;
-    let id = baseId;
-    for (let suffix = 2; usedIds.has(id); suffix++) id = `${baseId}-${suffix}`;
-
     const template: DrawingSheet = {
       ...current,
-      id,
+      id: nextSheetTemplateId(get().savedSheetTemplates),
       name,
     };
     set((s) => ({

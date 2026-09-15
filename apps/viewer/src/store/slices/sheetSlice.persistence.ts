@@ -49,6 +49,14 @@ export function saveSheetTemplates(templates: readonly DrawingSheet[]): void {
   write(SHEET_TEMPLATES_KEY, { templates });
 }
 
+export function nextSheetTemplateId(templates: readonly DrawingSheet[], now = Date.now()): string {
+  const usedIds = new Set(templates.map((template) => template.id));
+  const baseId = `template-${now}`;
+  let id = baseId;
+  for (let suffix = 2; usedIds.has(id); suffix++) id = `${baseId}-${suffix}`;
+  return id;
+}
+
 function nextSaveOrder(): number {
   try {
     if (typeof localStorage === 'undefined') return Date.now();
