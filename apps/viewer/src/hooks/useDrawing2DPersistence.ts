@@ -39,6 +39,7 @@ import { computeFullSourceHashFromBlob } from '@/utils/sourceContentHash.js';
 import { loadDrawing2DEntry, defaultMarkupPatch, suppressNextSaveFor } from '@/store/slices/drawing2DSlice.persistence.js';
 import { getCachedHash, setCachedHash, notifyDecided } from './drawingMarkupRestorePrecedence.js';
 import { resetSaveState, beginRestore, endRestore, setRestoredSectionConfig, ensureSaveSubscription } from './drawingMarkupSave.js';
+import { ensureSheetPersistence, settleSheetHash } from './sheetPersistence.js';
 import {
   ensureDxfUnderlaySaveSubscription,
   restoreDxfUnderlaysFor,
@@ -47,6 +48,9 @@ import {
 
 export { hasPersistedMarkupEntryFor, onLocalStorageDecidedFor } from './drawingMarkupRestorePrecedence.js';
 export { notifyDrawing2DSectionConfig, consumeRestoredSectionConfig } from './drawingMarkupSave.js';
+
+/** A model id may be reused for replacement bytes; cached hashes belong to a source. */
+const resolvedSources = new Map<string, File | undefined>();
 
 /**
  * Resolves the active model's content hash (from `FederatedModel.sourceFile`)
@@ -89,16 +93,19 @@ export { notifyDrawing2DSectionConfig, consumeRestoredSectionConfig } from './dr
  */
 export function useDrawing2DPersistence(): void {
   const activeModelId = useViewerStore((s) => s.activeModelId);
+  const activeSourceFile = useViewerStore((s) => s.activeModelId ? s.models.get(s.activeModelId)?.sourceFile : undefined);
   const tokenRef = useRef(0);
 
   useEffect(() => {
     ensureSaveSubscription();
     ensureDxfUnderlaySaveSubscription();
+    ensureSheetPersistence();
   }, []);
 
   useEffect(() => {
     const token = ++tokenRef.current;
-    const stillCurrent = () => tokenRef.current === token && useViewerStore.getState().activeModelId === activeModelId;
+    const stillCurrent = () => tokenRef.current === token && useViewerStore.getState().activeModelId === activeModelId
+      && useViewerStore.getState().models.get(activeModelId ?? '')?.sourceFile === activeSourceFile;
 
     if (!activeModelId) {
       resetSaveState();
@@ -160,9 +167,21 @@ export function useDrawing2DPersistence(): void {
       });
     };
 
-    const cached = getCachedHash(activeModelId);
+    const sourceFile = activeSourceFile;
+    const settleHash = (hash: string | null) => {
+      settleSheetHash(activeModelId, hash, sourceFile);
+      return settleDxfUnderlayHash(activeModelId, hash);
+    };
+    const cacheHash = (hash: string | null) => {
+      if (useViewerStore.getState().models.get(activeModelId)?.sourceFile !== sourceFile) return false;
+      resolvedSources.set(activeModelId, sourceFile);
+      setCachedHash(activeModelId, hash);
+      return true;
+    };
+    const cached = resolvedSources.has(activeModelId) && resolvedSources.get(activeModelId) === sourceFile
+      ? getCachedHash(activeModelId) : undefined;
     if (cached !== undefined) {
-      applyHash(cached, settleDxfUnderlayHash(activeModelId, cached));
+      applyHash(cached, settleHash(cached));
       // Symmetric with the branches below — a no-op today (this model's
       // listeners already fired on the earlier mount that cached its hash;
       // see `hasPersistedMarkupEntryFor`'s doc) but keeps "hashCache settling
@@ -172,27 +191,25 @@ export function useDrawing2DPersistence(): void {
       return;
     }
 
-    const model = useViewerStore.getState().models.get(activeModelId);
-    const sourceFile = model?.sourceFile;
     if (!sourceFile) {
-      setCachedHash(activeModelId, null);
-      applyHash(null, settleDxfUnderlayHash(activeModelId, null));
+      cacheHash(null);
+      applyHash(null, settleHash(null));
       notifyDecided(activeModelId);
       return;
     }
 
     computeFullSourceHashFromBlob(sourceFile)
       .then((hash) => {
-        setCachedHash(activeModelId, hash);
-        applyHash(hash, settleDxfUnderlayHash(activeModelId, hash));
+        if (!cacheHash(hash)) { settleSheetHash(activeModelId, hash, sourceFile); return; }
+        applyHash(hash, settleHash(hash));
         notifyDecided(activeModelId);
       })
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.warn('[drawing2D] failed to hash model for markup restore', err);
-        setCachedHash(activeModelId, null);
-        applyHash(null, settleDxfUnderlayHash(activeModelId, null));
+        if (!cacheHash(null)) return;
+        applyHash(null, settleHash(null));
         notifyDecided(activeModelId);
       });
-  }, [activeModelId]);
+  }, [activeModelId, activeSourceFile]);
 }

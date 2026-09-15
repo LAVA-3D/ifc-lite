@@ -1,0 +1,105 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+/**
+ * Sheet ownership follows the active drawing model (#4836). The drawing hook
+ * supplies its existing full-content hash; this bridge never re-hashes a file.
+ * A raw subscription switches sheets before React effects run. Edits made while
+ * a hash is pending win over disk restoration, including an explicit clear.
+ */
+import type { DrawingSheet } from '@ifc-lite/drawing-2d';
+import { useViewerStore } from '@/store';
+import { loadSheet, loadSheetTemplates, saveSheet, saveSheetTemplates } from '@/store/slices/sheetSlice.persistence';
+import { getClearedSheetState } from '@/store/slices/sheetSlice';
+
+interface SessionSheet {
+  source: File | undefined;
+  sheet: DrawingSheet | null;
+  hash?: string | null;
+  dirty: boolean;
+  enabled: boolean;
+}
+
+export function createSheetPersistence() {
+  const sheets = new Map<string, SessionSheet>();
+  let applying = false;
+
+  const apply = (entry?: SessionSheet) => {
+    applying = true;
+    try {
+      useViewerStore.setState({ ...getClearedSheetState(), activeSheet: entry?.sheet ?? null, sheetEnabled: entry?.enabled ?? false });
+    } finally {
+      applying = false;
+    }
+  };
+
+  const remember = (modelId: string, source: File | undefined): SessionSheet => {
+    let entry = sheets.get(modelId);
+    if (!entry || entry.source !== source) {
+      entry = { source, sheet: null, dirty: false, enabled: false };
+      sheets.set(modelId, entry);
+    }
+    return entry;
+  };
+
+  const initial = useViewerStore.getState();
+  // Preserve any templates created before this bridge mounted.
+  const templates = new Map(loadSheetTemplates().map((sheet) => [sheet.id, sheet]));
+  for (const sheet of initial.savedSheetTemplates) templates.set(sheet.id, sheet);
+  useViewerStore.setState({ savedSheetTemplates: [...templates.values()] });
+  if (initial.activeModelId) {
+    const entry = remember(initial.activeModelId, initial.models.get(initial.activeModelId)?.sourceFile);
+    entry.sheet = initial.activeSheet;
+    entry.dirty = initial.activeSheet !== null;
+    entry.enabled = initial.sheetEnabled;
+  }
+
+  const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    if (applying) return;
+    if (state.savedSheetTemplates !== previous.savedSheetTemplates) saveSheetTemplates(state.savedSheetTemplates);
+    const id = state.activeModelId;
+    const source = id ? state.models.get(id)?.sourceFile : undefined;
+    const oldSource = previous.activeModelId ? previous.models.get(previous.activeModelId)?.sourceFile : undefined;
+    if (id !== previous.activeModelId || source !== oldSource) {
+      // An atomic session reset may already have cleared activeSheet in state;
+      // the outgoing entry was saved on the last real edit, never save this clear.
+      apply(id ? remember(id, source) : undefined);
+      return;
+    }
+    if (!id) return;
+    const entry = remember(id, source);
+    entry.enabled = state.sheetEnabled;
+    if (state.activeSheet === previous.activeSheet) return;
+    entry.sheet = state.activeSheet;
+    entry.dirty = true;
+    if (entry.hash) saveSheet(entry.hash, entry.sheet);
+  });
+
+  return {
+    settleHash(modelId: string, hash: string | null, source: File | undefined) {
+      const entry = sheets.get(modelId);
+      // Ignore a hash from an earlier source loaded under a reused model id.
+      if (!entry || entry.source !== source) return;
+      entry.hash = hash;
+      if (!hash) return;
+      if (entry.dirty) {
+        saveSheet(hash, entry.sheet);
+        return;
+      }
+      entry.sheet = loadSheet(hash);
+      const state = useViewerStore.getState();
+      if (state.activeModelId === modelId && state.models.get(modelId)?.sourceFile === source) apply(entry);
+    },
+    dispose: unsubscribe,
+  };
+}
+
+let persistence: ReturnType<typeof createSheetPersistence> | undefined;
+export function ensureSheetPersistence(): void {
+  persistence ??= createSheetPersistence();
+}
+
+export function settleSheetHash(modelId: string, hash: string | null, source: File | undefined): void {
+  persistence?.settleHash(modelId, hash, source);
+}
