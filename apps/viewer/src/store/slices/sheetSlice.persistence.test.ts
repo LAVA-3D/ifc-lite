@@ -73,22 +73,16 @@ describe('sheet storage (#4836)', () => {
 
   it('degrades without throwing when storage enumeration is denied', () => {
     const warn = mock.method(console, 'warn', () => {});
-    const original = globalThis.localStorage;
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
-      value: new Proxy(original, {
-        get(target, property, receiver) {
-          if (property === 'length') throw new Error('enumeration denied');
-          const value = Reflect.get(target, property, receiver);
-          return typeof value === 'function' ? value.bind(target) : value;
-        },
-      }),
+      get() { throw new Error('storage access denied'); },
     });
     try {
       assert.doesNotThrow(() => saveSheet('enumeration-denied', createDefaultSheet()));
       assert.ok(warn.mock.callCount() >= 1);
     } finally {
-      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: original });
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
       warn.mock.restore();
     }
   });
@@ -111,10 +105,13 @@ describe('sheet storage (#4836)', () => {
     const now = mock.method(Date, 'now', () => 100);
     const sheet = createDefaultSheet();
     for (let i = 0; i < 20; i++) saveSheet(`z-old-${i}`, { ...sheet, name: `Old ${i}` });
-    saveSheet('a-new', { ...sheet, name: 'Newest' });
+    saveSheet('a-new', { ...sheet, name: 'Newer' });
+    saveSheet('b-newest', { ...sheet, name: 'Newest' });
     now.mock.restore();
     assert.equal(loadSheet('z-old-0'), null);
-    assert.equal(loadSheet('a-new')?.name, 'Newest');
+    assert.equal(loadSheet('z-old-1'), null);
+    assert.equal(loadSheet('a-new')?.name, 'Newer');
+    assert.equal(loadSheet('b-newest')?.name, 'Newest');
     assert.equal(loadSheet('z-old-19')?.name, 'Old 19');
   });
 

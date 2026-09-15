@@ -50,8 +50,8 @@ export function saveSheetTemplates(templates: readonly DrawingSheet[]): void {
 }
 
 function nextSaveOrder(): number {
-  if (typeof localStorage === 'undefined') return Date.now();
   try {
+    if (typeof localStorage === 'undefined') return Date.now();
     let latest = 0;
     for (let i = 0; i < localStorage.length; i++) {
       const candidate = localStorage.key(i);
