@@ -4,7 +4,7 @@
 
 /** Effective IFC5 tree membership and parent selection (#4841). */
 
-import { RelationshipType, createLogger } from '@ifc-lite/data';
+import { RelationshipType, createLogger, flattenRelationshipEdges } from '@ifc-lite/data';
 import { EntityExtractor, type IfcDataStore } from '@ifc-lite/parser';
 import type { MutablePropertyView, NewEntity } from '@ifc-lite/mutations';
 import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index.js';
@@ -25,6 +25,8 @@ interface EffectiveTreeGraph {
   containment: RelationEdges;
   hasDecompositionRecords: boolean;
   hasContainmentRecords: boolean;
+  decompositionModified: boolean;
+  containmentModified: boolean;
 }
 
 /** All tree answers used by one IFC5 export. */
@@ -49,11 +51,23 @@ function parsedRefs(value: unknown): number[] {
 }
 
 function authoredKnownRefs(value: unknown): number[] {
-  if (Array.isArray(value)) return value.flatMap(authoredKnownRefs);
-  const numeric = parsedSingleRef(value);
-  return numeric === undefined
-    ? authoredEntityRefs(value as Parameters<typeof authoredEntityRefs>[0])
-    : [numeric];
+  const found: number[] = [];
+  const pending: unknown[] = [value];
+  const seen = new WeakSet<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (Array.isArray(current)) {
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (let i = current.length - 1; i >= 0; i--) pending.push(current[i]);
+      continue;
+    }
+    const numeric = parsedSingleRef(current);
+    found.push(...(numeric === undefined
+      ? authoredEntityRefs(current as Parameters<typeof authoredEntityRefs>[0])
+      : [numeric]));
+  }
+  return found;
 }
 
 function refs(value: unknown, authored: boolean): number[] {
@@ -115,21 +129,78 @@ function slotIsAuthored(
     || view?.getAttributeMutationsForEntity(id).some((change) => change.name === name) === true;
 }
 
-function addRawEdges(dataStore: IfcDataStore, graph: EffectiveTreeGraph): void {
+function addRawEdges(
+  dataStore: IfcDataStore,
+  graph: EffectiveTreeGraph,
+  effective: EffectiveEntityIndex,
+  view: MutablePropertyView | null,
+): void {
   const relationships = dataStore.relationships;
   if (!relationships) return;
-  const addType = (edges: RelationEdges, type: RelationshipType): void => {
-    for (const parentId of relationships.forward.offsets.keys()) {
-      for (const childId of relationships.getRelated(parentId, type, 'forward')) appendChild(edges, parentId, childId);
+  const relations = new Map<number, { type: RelationshipType; parent: number; children: number[] }>();
+  for (const row of flattenRelationshipEdges(relationships.forward)) {
+    if (row.type !== RelationshipType.Aggregates && row.type !== RelationshipType.Nests
+      && row.type !== RelationshipType.ContainsElements) continue;
+    const relation = relations.get(row.relationshipId)
+      ?? { type: row.type, parent: row.sourceId, children: [] };
+    relation.children.push(row.targetId);
+    relations.set(row.relationshipId, relation);
+  }
+  const declarationOrder = new Map<number, number>();
+  for (const row of flattenRelationshipEdges(relationships.inverse)) {
+    if (!declarationOrder.has(row.relationshipId)) declarationOrder.set(row.relationshipId, declarationOrder.size);
+  }
+  const created = new Map((view?.getNewEntities() ?? []).map((entity) => [entity.expressId, entity]));
+  const orderedRelations = [...relations].sort(
+    ([left], [right]) => (declarationOrder.get(left) ?? 0) - (declarationOrder.get(right) ?? 0),
+  );
+  for (const [id, relation] of orderedRelations) {
+    const decomposition = relation.type !== RelationshipType.ContainsElements;
+    const rawType = relation.type === RelationshipType.Nests
+      ? 'IFCRELNESTS'
+      : decomposition ? 'IFCRELAGGREGATES' : 'IFCRELCONTAINEDINSPATIALSTRUCTURE';
+    const effectiveType = effective.typeOf(id);
+    const parentIndex = decomposition ? 4 : 5;
+    const childrenIndex = decomposition ? 5 : 4;
+    const modified = effective.isDeleted(id)
+      || (effectiveType !== undefined && effectiveType !== rawType)
+      || slotIsAuthored(id, parentIndex, decomposition ? 'RelatingObject' : 'RelatingStructure', undefined, view)
+      || slotIsAuthored(id, childrenIndex, decomposition ? 'RelatedObjects' : 'RelatedElements', undefined, view);
+    if (modified) {
+      if (decomposition) graph.decompositionModified = true;
+      else graph.containmentModified = true;
     }
-    // Inverse edge order is stable source declaration order; keep it for the
-    // first-declared parent tie-break rather than deriving candidates by parent.
-    for (const childId of relationships.inverse.offsets.keys()) {
-      for (const parentId of relationships.getRelated(childId, type, 'inverse')) appendCandidate(edges, childId, parentId);
+    if (effective.isDeleted(id)) continue;
+    const type = effectiveType ?? rawType;
+    const isDecomposition = type === 'IFCRELAGGREGATES' || type === 'IFCRELNESTS';
+    const isContainment = type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE';
+    if (!isDecomposition && !isContainment) continue;
+    const source = isDecomposition
+      ? [null, null, null, null, relation.parent, relation.children]
+      : [null, null, null, null, relation.children, relation.parent];
+    const attributes = effectiveAttributes(id, source, undefined, view) as unknown[];
+    const parentId = refs(attributes[isDecomposition ? 4 : 5], modified)[0];
+    const edges = isDecomposition ? graph.decomposition : graph.containment;
+    if (parentId === undefined || !effective.has(parentId)) continue;
+    for (const childId of refs(attributes[isDecomposition ? 5 : 4], modified)) {
+      if (effective.has(childId)) addEdge(edges, parentId, childId);
     }
-  };
-  addType(graph.decomposition, RelationshipType.Aggregates);
-  addType(graph.containment, RelationshipType.ContainsElements);
+  }
+  for (const entity of created.values()) {
+    const type = effective.typeOf(entity.expressId);
+    const decomposition = type === 'IFCRELAGGREGATES' || type === 'IFCRELNESTS';
+    const containment = type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE';
+    if (!decomposition && !containment) continue;
+    if (decomposition) graph.decompositionModified = true;
+    else graph.containmentModified = true;
+    const attributes = effectiveAttributes(entity.expressId, undefined, entity, view) as unknown[];
+    const parentId = refs(attributes[decomposition ? 4 : 5], true)[0];
+    if (parentId === undefined || !effective.has(parentId)) continue;
+    const edges = decomposition ? graph.decomposition : graph.containment;
+    for (const childId of refs(attributes[decomposition ? 5 : 4], true)) {
+      if (effective.has(childId)) addEdge(edges, parentId, childId);
+    }
+  }
 }
 
 function buildEffectiveTreeGraph(
@@ -148,11 +219,13 @@ function buildEffectiveTreeGraph(
       || (sourceTypes.get('IFCRELNESTS')?.length ?? 0) > 0,
     hasContainmentRecords:
       (sourceTypes.get('IFCRELCONTAINEDINSPATIALSTRUCTURE')?.length ?? 0) > 0,
+    decompositionModified: false,
+    containmentModified: false,
   };
   // Server/synthetic stores retain a truthy zero-byte source object. In that
   // state the parsed RelationshipGraph is the only relationship authority.
   if (dataStore.source.byteLength === 0) {
-    addRawEdges(dataStore, graph);
+    addRawEdges(dataStore, graph, effective, view);
     return graph;
   }
 
@@ -305,8 +378,12 @@ export function buildIfc5TreeScope(
   const spatialNodeNames = new Map<number, string>();
   const graph = buildEffectiveTreeGraph(dataStore, effective, view);
   const sourceless = dataStore.source.byteLength === 0;
-  const useRawDecomposition = sourceless || !graph.hasDecompositionRecords;
-  const useRawContainment = sourceless || !graph.hasContainmentRecords;
+  const useRawDecomposition = sourceless
+    ? !graph.decompositionModified
+    : !graph.hasDecompositionRecords;
+  const useRawContainment = sourceless
+    ? !graph.containmentModified
+    : !graph.hasContainmentRecords;
   const hasProject = useRawDecomposition || useRawContainment
     ? seedSourcelessSpatialFallback(
       dataStore, treeIds, parentOf, spatialNodeNames, useRawDecomposition, useRawContainment,

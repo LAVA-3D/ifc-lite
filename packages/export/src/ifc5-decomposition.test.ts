@@ -20,9 +20,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
+import { EMPTY_SOURCE_BYTES, IfcParser, type IfcDataStore } from '@ifc-lite/parser';
 import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
-import { MutablePropertyView } from '@ifc-lite/mutations';
+import { MutablePropertyView, type IfcAttributeValue } from '@ifc-lite/mutations';
 import { Ifc5Exporter } from './ifc5-exporter.js';
 
 /** 22-char synthetic GlobalId, unique per `n` (same convention as the other export tests). */
@@ -257,7 +257,7 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     expect(classCodes(file).filter((c) => c === 'IfcBeam')).toHaveLength(1);
     const listedBy = ['Assembly A', 'Assembly B']
       .filter((n) => Object.values(nodeNamed(file, n)?.children ?? {}).includes(beam?.path as string));
-    expect(listedBy).toHaveLength(1);
+    expect(listedBy).toEqual(['Assembly A']);
     expect(reachablePaths(file).has(beam?.path as string)).toBe(true);
   });
 
@@ -267,7 +267,9 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     // and made the saved tree disagree with the relationship the overlay owns.
     const store = await parse(ROOF_MODEL);
     const view = new MutablePropertyView(null, 'ifc5-decomposition');
-    view.setPositionalAttribute(83, 5, ['#61']);
+    const cyclicRefs: IfcAttributeValue[] = ['#61'];
+    cyclicRefs.push(cyclicRefs);
+    view.setPositionalAttribute(83, 5, cyclicRefs);
     const result = new Ifc5Exporter(store, geometryOf(60, 61), view).export({});
     const file: IfcxFileLike = JSON.parse(result.content);
 
@@ -278,6 +280,28 @@ describe('IFC5 export follows decomposition (#4841)', () => {
     expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(newSlab?.path);
     expect(reachablePaths(file).has(newSlab?.path as string)).toBe(true);
     expect(result.stats.meshCount).toBe(1);
+  });
+
+  it('applies relationship overlays to a sourceless store graph', async () => {
+    const parsed = await parse(ROOF_MODEL);
+    const store: IfcDataStore = { ...parsed, source: EMPTY_SOURCE_BYTES };
+    const retargeted = new MutablePropertyView(null, 'ifc5-sourceless-retarget');
+    retargeted.setPositionalAttribute(70, 4, ['#61']);
+    const file: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store, null, retargeted).export({ includeGeometry: false }).content,
+    );
+
+    const slab = nodeNamed(file, 'Roof Slab B');
+    expect(nodeNamed(file, 'Roof')).toBeUndefined();
+    expect(Object.values(nodeNamed(file, 'Storey')?.children ?? {})).toContain(slab?.path);
+
+    const deleted = new MutablePropertyView(null, 'ifc5-sourceless-delete');
+    deleted.deleteEntity(70);
+    const withoutContainment: IfcxFileLike = JSON.parse(
+      new Ifc5Exporter(store, null, deleted).export({ includeGeometry: false }).content,
+    );
+    expect(nodeNamed(withoutContainment, 'Roof')).toBeUndefined();
+    expect(nodeNamed(withoutContainment, 'Wall')).toBeUndefined();
   });
 
   it('skips a first-declared back-edge when a valid aggregate parent exists', async () => {
