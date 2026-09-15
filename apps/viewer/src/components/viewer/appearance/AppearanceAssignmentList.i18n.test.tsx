@@ -75,3 +75,35 @@ it('renders a registered locale value when present, and falls back to English fo
     ),
   );
 });
+
+it('localizes interpolated controls and the plural-aware summary (#4785)', () => {
+  registerLocale('fr', {
+    'appearanceAssignmentList.assignmentAriaLabel': 'Rang {position} : {sourceName} sur {modelName}',
+    'appearanceAssignmentList.moveEarlierAriaLabel': 'Monter le rang {position}',
+    'appearanceAssignmentList.moveLaterAriaLabel': 'Descendre le rang {position}',
+    'appearanceAssignmentList.removeAriaLabel': 'Supprimer le rang {position}',
+    'appearanceAssignmentList.summary': {
+      one: '{productCount} objet · {excludedCount} exclu · {overriddenCount} remplacé',
+      other: '{productCount} objets · {excludedCount} exclus · {overriddenCount} remplacés',
+    },
+    'appearanceAssignmentList.reviewAriaLabel': 'Examiner les objets du rang {position}',
+  });
+  setLocale('fr');
+  const container = render(
+    <AppearanceAssignmentList
+      rows={resolveAppearanceAssignments([assignment('Brick')])}
+      disabled={false}
+      objectName={() => 'Wall'}
+      onMove={noop}
+      onRemove={noop}
+      onExclude={noop}
+    />,
+  );
+
+  assert.ok(container.querySelector('li[aria-label="Rang 1 : Brick sur Building"]'));
+  assert.ok(container.querySelector('button[aria-label="Monter le rang 1"]'));
+  assert.ok(container.querySelector('button[aria-label="Descendre le rang 1"]'));
+  assert.ok(container.querySelector('button[aria-label="Supprimer le rang 1"]'));
+  assert.ok(container.querySelector('button[aria-label="Examiner les objets du rang 1"]'));
+  assert.match(container.textContent ?? '', /1 objet · 0 exclu · 0 remplacé/);
+});

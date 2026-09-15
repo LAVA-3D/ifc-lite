@@ -15,9 +15,10 @@
  * has to touch the (already large) viewer store.
  */
 import { en, type TranslationKey } from './en';
+import type { PluralTranslation, TranslationParameters, TranslationValue } from './types';
 
 export type Locale = string;
-export type Catalogue = Partial<Record<TranslationKey, string>>;
+export type Catalogue = Partial<Record<TranslationKey, TranslationValue>>;
 
 const catalogues = new Map<Locale, Catalogue>([['en', en]]);
 let activeLocale: Locale = 'en';
@@ -67,8 +68,30 @@ export function subscribeLocale(listener: () => void): () => void {
  * translation is never silently indistinguishable from a deliberately
  * blank one.
  */
-export function resolve(key: TranslationKey): string {
+function pluralForm(value: PluralTranslation, params: TranslationParameters, locale: Locale): string {
+  const count = params.count;
+  if (typeof count !== 'number') return value.other;
+  let category: Intl.LDMLPluralRule;
+  try {
+    category = new Intl.PluralRules(locale).select(count);
+  } catch (error) {
+    console.warn(`[i18n] Invalid locale "${locale}" for plural rules; using English.`, error);
+    category = new Intl.PluralRules('en').select(count);
+  }
+  return value[category] ?? value.other;
+}
+
+function interpolate(template: string, params: TranslationParameters): string {
+  return template.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (placeholder, name: string) => {
+    const value = params[name];
+    return value === undefined ? placeholder : String(value);
+  });
+}
+
+export function resolve(key: TranslationKey, params: TranslationParameters = {}): string {
   const catalogue = catalogues.get(activeLocale);
   const value = catalogue?.[key];
-  return value !== undefined ? value : en[key];
+  const resolved = value !== undefined ? value : en[key];
+  const template = typeof resolved === 'string' ? resolved : pluralForm(resolved, params, value !== undefined ? activeLocale : 'en');
+  return interpolate(template, params);
 }
