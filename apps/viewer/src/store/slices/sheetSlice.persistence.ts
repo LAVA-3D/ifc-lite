@@ -57,28 +57,30 @@ export function nextSheetTemplateId(templates: readonly DrawingSheet[], now = Da
   return id;
 }
 
-function storedSaveOrder(entry: Record<string, unknown>): number {
+function storedSaveOrder(entry: Record<string, unknown>): bigint {
   const value = entry.savedOrder ?? entry.savedAt;
-  return typeof value === 'number' && Number.isSafeInteger(value)
-    && value >= 0 && value < Number.MAX_SAFE_INTEGER
-    ? value
-    : 0;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return BigInt(value);
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? BigInt(value)
+    : 0n;
 }
 
-function nextSaveOrder(): number {
+function nextSaveOrder(): string {
   try {
-    if (typeof localStorage === 'undefined') return Date.now();
-    let latest = 0;
+    if (typeof localStorage === 'undefined') return String(Date.now());
+    let latest = 0n;
     for (let i = 0; i < localStorage.length; i++) {
       const candidate = localStorage.key(i);
       if (!candidate?.startsWith(PREFIX)) continue;
       const entry = record(read(candidate));
-      latest = Math.max(latest, storedSaveOrder(entry));
+      const order = storedSaveOrder(entry);
+      if (order > latest) latest = order;
     }
-    return Math.max(Date.now(), latest + 1);
+    const now = BigInt(Date.now());
+    return (now > latest ? now : latest + 1n).toString();
   } catch (error) {
     console.warn('[sheet] Could not inspect saved sheet order', error);
-    return Date.now();
+    return String(Date.now());
   }
 }
 
@@ -96,14 +98,15 @@ export function saveSheet(hash: string, sheet: DrawingSheet | null): void {
   if (!write(key, { sheet, savedAt, savedOrder: nextSaveOrder() })) return;
   // Match the drawing markup cache's 20-model limit. Templates are never evicted.
   try {
-    const entries: { key: string; savedOrder: number }[] = [];
+    const entries: { key: string; savedOrder: bigint }[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const candidate = localStorage.key(i);
       if (!candidate?.startsWith(PREFIX)) continue;
       const entry = record(read(candidate));
       entries.push({ key: candidate, savedOrder: storedSaveOrder(entry) });
     }
-    entries.sort((a, b) => a.savedOrder - b.savedOrder || a.key.localeCompare(b.key));
+    entries.sort((a, b) => a.savedOrder < b.savedOrder
+      ? -1 : a.savedOrder > b.savedOrder ? 1 : a.key.localeCompare(b.key));
     for (const entry of entries.filter((entry) => entry.key !== key).slice(0, Math.max(0, entries.length - MAX_MODELS))) {
       localStorage.removeItem(entry.key);
     }

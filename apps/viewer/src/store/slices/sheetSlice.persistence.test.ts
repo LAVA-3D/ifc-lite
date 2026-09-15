@@ -132,6 +132,24 @@ describe('sheet storage (#4836)', () => {
     assert.equal(loadSheet('newest')?.name, 'Newest');
   });
 
+  it('orders safely beyond the numeric safe-integer boundary', () => {
+    const now = mock.method(Date, 'now', () => 100);
+    const sheet = createDefaultSheet();
+    for (let i = 0; i < 20; i++) saveSheet(`old-${i}`, { ...sheet, name: `Old ${i}` });
+    const key = sheetStorageKey('old-0');
+    const entry = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
+    entry.savedOrder = Number.MAX_SAFE_INTEGER - 1;
+    localStorage.setItem(key, JSON.stringify(entry));
+    saveSheet('newer', { ...sheet, name: 'Newer' });
+    saveSheet('newest', { ...sheet, name: 'Newest' });
+    now.mock.restore();
+
+    assert.equal(loadSheet('old-1'), null);
+    assert.equal(loadSheet('newer')?.name, 'Newer');
+    assert.equal(loadSheet('newest')?.name, 'Newest');
+    assert.match(localStorage.getItem(sheetStorageKey('newest')) ?? '', /"savedOrder":"\d+"/);
+  });
+
   it('clears without consuming an eviction slot, and logs failed removals', () => {
     const sheet = createDefaultSheet();
     for (let i = 0; i < 20; i++) saveSheet(`kept-${i}`, sheet);
