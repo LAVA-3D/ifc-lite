@@ -25,6 +25,7 @@
     "isolation": "The two profiling executables were built once from pinned worktrees, hashed, and invoked directly without rebuilding. Measurements ran after compilation/testing activity had stopped. Every process used RAYON_NUM_THREADS=12, processor affinity 0x000FFF, High priority, and the Windows High performance power scheme.",
     "affinityCaveat": "PowerShell applies ProcessorAffinity and PriorityClass immediately after Start-Process returns; a small startup interval precedes those assignments.",
     "metricNotes": "parseMs, geometryMs, and totalMs describe the minimum-total iteration selected by perf_probe. allTotalsMs and allWallMs retain all samples. Pooled and adjacent-pair medians below use those complete arrays. The ordered FNV-1a64 fingerprint covers ordered geometry payload identity; it excludes metadata, UVs, textures, and instancing.",
+    "sourceHashScope": "The measured source hashes cover production files linked into perf_probe. Test-only sources and later documentation-only changes are excluded.",
     "varianceRule": "A wide spread or consistently one-sided paired result is reported as inconclusive rather than converted into a no-regression claim."
   },
   "environment": {
@@ -50,7 +51,6 @@
       "measuredSourceFilesSha256": {
         "rust/geometry/src/router/voids/prism_cut.rs": "262af1f2be46994ce376b36fa1bb74bbb54dccebe5616858e135ff36b02d65ef",
         "rust/geometry/src/router/voids/prism_cut/closure_checks.rs": "37abcf4369a347b628bfffbd2277128dc474a25bff5ef28c1aea24742af8d0b8",
-        "rust/geometry/src/router/voids/prism_cut/closure_checks_tests.rs": "2093e2f5444121919c1ee6c772c983fed509e4a4ed786d77cf9b94d3708058b4",
         "rust/geometry/src/router/voids/prism_cut/finish.rs": "0473fa79fec8e2bd7d75f0db1141b9bce49e26f808893b5b99e23fd85b7204ae",
         "rust/geometry/src/router/voids/prism_cut/planar_correction.rs": "1f9f8e81e0db5f97d4ba8b1659829a51b969eea6e4829ed74c2b34ed79d2a506"
       }

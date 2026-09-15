@@ -119,6 +119,8 @@ fn a_closed_tetrahedron_has_no_multiplicity_defect() {
 }
 
 /// #4796: both public meanings come from one cached directed-edge walk.
+/// This pins the two verdicts; source review and the recorded performance audit
+/// pin the structural sharing, which has no intentionally changed output.
 #[test]
 fn closure_verdict_preserves_strict_and_emit_semantics_4796() {
     let closed = tetrahedron();
