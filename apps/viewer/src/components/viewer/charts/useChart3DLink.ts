@@ -61,12 +61,36 @@ export function chartBucketIdentity(
   const series = aggregation.series[item.seriesIndex];
   const bucket = series?.buckets[item.dataIndex];
   return series && bucket
-    ? { seriesKey: series.key, bucketKey: bucket.key, isOther: isSyntheticOther(bucket), color: bucket.color }
+    ? { seriesKey: series.key, bucketKey: bucket.key, isOther: isSyntheticOther(bucket), color: bucket.color, ids: [...bucket.ids] }
     : null;
 }
 
 export function sameChartBucketIdentity(a: ChartBucketIdentity, b: ChartBucketIdentity): boolean {
   return a.seriesKey === b.seriesKey && a.bucketKey === b.bucketKey && a.isOther === b.isOther;
+}
+
+function aggregationIds(aggregation: Aggregation): Set<number> {
+  const ids = new Set<number>();
+  for (const series of aggregation.series) for (const bucket of series.buckets) {
+    for (const id of bucket.ids) ids.add(id);
+  }
+  return ids;
+}
+
+/** Whether every selected ID still belongs to the source chart's live data. */
+export function chartSelectionIsLive(
+  aggregation: Aggregation,
+  selectedBuckets: readonly ChartBucketIdentity[],
+  selectedIds: ReadonlySet<number>,
+): boolean {
+  const liveIds = aggregationIds(aggregation);
+  const ownedIds = new Set(selectedBuckets.flatMap(({ ids }) => ids));
+  // Bucket names and top-N membership may legitimately change after a click.
+  // The saved selection-time IDs are the stable ownership proof: retain folded
+  // or unfolded buckets only while every selected ID still exists in the live
+  // source aggregation and is owned by one of the saved clicked buckets.
+  for (const id of selectedIds) if (!liveIds.has(id) || !ownedIds.has(id)) return false;
+  return true;
 }
 
 /** Release the panel's claim on the isolate / ghost channel, if it still holds it. */
@@ -190,6 +214,7 @@ export function chartColorOverrides(
   selectedBuckets: readonly ChartBucketIdentity[] | null,
 ): Map<number, RGBA> {
   const ghostSelection = focusMode === 'ghost' && selectedIds !== null;
+  const liveIds = aggregationIds(aggregation);
   const colorOverrides = new Map<number, RGBA>();
   for (const series of aggregation.series) for (const bucket of series.buckets) {
     const rgba = hexToRgba(bucket.color, 1);
@@ -206,14 +231,11 @@ export function chartColorOverrides(
   // therefore cannot identify which bucket was clicked. Reapply the exact
   // selected marks last so their colour wins every overlap (#4832).
   for (const selected of selectedBuckets ?? []) {
-    const series = aggregation.series.find(({ key }) => key === selected.seriesKey);
-    const bucket = series?.buckets.find((candidate) => (
-      candidate.key === selected.bucketKey && isSyntheticOther(candidate) === selected.isOther
-    ));
-    if (!series) continue;
     const rgba = hexToRgba(selected.color, 1);
-    const ids = bucket?.ids ?? selectedIds ?? [];
-    for (const id of ids) {
+    for (const id of selected.ids) {
+      // Saved IDs survive named <-> Other folding, but vanished data must not
+      // retain renderer ownership or suppress ordinary selection highlighting.
+      if (!liveIds.has(id)) continue;
       if (!ghostSelection || selectedIds.has(id)) colorOverrides.set(id, rgba);
     }
   }

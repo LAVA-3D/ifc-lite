@@ -224,7 +224,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(s.isolatedEntities, null);
     assert.deepEqual(s.chartVisibilityOwned && { channel: s.chartVisibilityOwned.channel, ids: [...s.chartVisibilityOwned.ids].sort() }, { channel: 'ghost', ids: [GID(44), GID(45)] });
     assert.deepEqual([...(s.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
-    assert.deepEqual(s.chartSliceBuckets?.map(({ color: _color, ...identity }) => identity), [{ seriesKey: 'IfcType', bucketKey: 'IfcDoor', isOther: false }]);
+    assert.deepEqual(s.chartSliceBuckets?.map(({ color: _color, ids: _ids, ...identity }) => identity), [{ seriesKey: 'IfcType', bucketKey: 'IfcDoor', isOther: false }]);
 
     // The source chart keeps the whole scope but marks the bucket selected;
     // the storey chart re-aggregates over the slice: one door per level.
@@ -452,7 +452,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     await settle();
     const state = useViewerStore.getState();
     assert.deepEqual([...state.selectedEntityIds].sort(), [GID(41), GID(42)]);
-    assert.deepEqual(state.chartSliceBuckets?.map(({ color: _color, ...identity }) => identity), [{ seriesKey: 'Rule', bucketKey: 'Rule B', isOther: false }]);
+    assert.deepEqual(state.chartSliceBuckets?.map(({ color: _color, ids: _ids, ...identity }) => identity), [{ seriesKey: 'Rule', bucketKey: 'Rule B', isOther: false }]);
   });
 
   it('keeps clicked bucket identity when cross-filter removal reorders the source chart (#4832)', async () => {
@@ -476,9 +476,9 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     const clashes = [
       clash('a1', 'Rule A', 'critical', 41, 42),
       clash('a2', 'Rule A', 'critical', 41, 44),
-      clash('b1', 'Rule B', 'critical', 41, 45),
-      clash('b2', 'Rule B', 'major', 43, 43),
-      clash('b3', 'Rule B', 'major', 43, 43),
+      clash('b1', 'Rule B', 'critical', 43, 43),
+      clash('b2', 'Rule B', 'major', 45, 45),
+      clash('b3', 'Rule B', 'major', 46, 46),
     ];
     const clashResult: ClashResult = {
       clashes,
@@ -526,7 +526,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     await settle();
     assert.deepEqual(barData(charts[1].options.at(-1)!).map(([name, value]) => [name, value]), [['Rule B', 3], ['Other', 2]]);
     const state = useViewerStore.getState();
-    assert.deepEqual(state.chartSliceBuckets?.map(({ color: _color, ...identity }) => identity), [{ seriesKey: 'Rule', bucketKey: 'Rule A', isOther: false }]);
+    assert.deepEqual(state.chartSliceBuckets?.map(({ color: _color, ids: _ids, ...identity }) => identity), [{ seriesKey: 'Rule', bucketKey: 'Rule A', isOther: false }]);
     assert.equal(state.chartSliceBuckets?.[0]?.color, clickedColor, 'the click-time colour survives folding into Other');
     assert.deepEqual([...state.selectedEntityIds].sort(), [GID(41), GID(42), GID(44)]);
     const expected = [
@@ -540,6 +540,42 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.deepEqual(colors?.get(GID(42)), expected, 'second shared id keeps clicked Rule A colour');
     assert.deepEqual(colors?.get(GID(44)), expected);
     assert.equal(colors?.has(GID(43)), false, 'unselected Rule B context keeps authored colour');
+
+    // Clear A, restore the critical filter, then click its gray synthetic
+    // Other (Rule B / id 43). Re-expansion turns B into the named top bucket,
+    // but the exact selected id must retain the color the user clicked.
+    await act(async () => { charts[1].events.onSelect({ items: [] }); });
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 0 }] }); });
+    await settle();
+    const filteredAgain = (charts[1].options.at(-1)!.series as Array<{ data: Array<{ name: string; itemStyle: { color: string } }> }>)[0].data;
+    assert.deepEqual(filteredAgain.map(({ name }) => name), ['Rule A', 'Other']);
+    const otherColor = filteredAgain[1].itemStyle.color;
+    await act(async () => { charts[1].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const selectedOther = useViewerStore.getState();
+    assert.deepEqual([...selectedOther.selectedEntityIds], [GID(43)]);
+    const expectedOther = [
+      Number.parseInt(otherColor.slice(1, 3), 16) / 255,
+      Number.parseInt(otherColor.slice(3, 5), 16) / 255,
+      Number.parseInt(otherColor.slice(5, 7), 16) / 255,
+      1,
+    ];
+    assert.deepEqual(selectedOther.overlayLayers.get('charts')?.colorOverrides?.get(GID(43)), expectedOther, 'synthetic Other keeps its clicked gray after unfolding into named Rule B');
+
+    const withoutSelectedRule: ClashResult = {
+      ...clashResult,
+      clashes: clashes.filter(({ rule }) => rule === 'Rule A'),
+      summary: { ...clashResult.summary, total: 2, byRule: { 'Rule A': 2 }, bySeverity: { critical: 2, major: 0, minor: 0, info: 0 } },
+    };
+    await act(async () => {
+      useViewerStore.setState({ clashResult: withoutSelectedRule, clashRunSeq: useViewerStore.getState().clashRunSeq + 1 });
+    });
+    await settle();
+    const cleared = useViewerStore.getState();
+    assert.equal(cleared.chartSlice, null, 'a removed selected category cannot retain stale slice ownership');
+    assert.equal(cleared.selectedEntityIds.size, 0);
+    assert.equal(cleared.ghostExceptEntities, null);
   });
 
   it('distinguishes synthetic top-N Other from a literal __other__ bucket (#4832)', async () => {
@@ -590,7 +626,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
     await settle();
     const state = useViewerStore.getState();
-    assert.deepEqual(state.chartSliceBuckets?.map(({ color: _color, ...identity }) => identity), [{ seriesKey: 'Rule', bucketKey: '__other__', isOther: true }]);
+    assert.deepEqual(state.chartSliceBuckets?.map(({ color: _color, ids: _ids, ...identity }) => identity), [{ seriesKey: 'Rule', bucketKey: '__other__', isOther: true }]);
     const expected = [
       Number.parseInt(gray.slice(1, 3), 16) / 255,
       Number.parseInt(gray.slice(3, 5), 16) / 255,
@@ -713,7 +749,7 @@ describe('overlapping chart bucket paint (#4832)', () => {
       measure: { agg: 'count' },
       sort: 'label',
     }, dataset);
-    const clicked = { seriesKey: aggregation.series[0].key, bucketKey: aggregation.series[0].buckets[0].key, isOther: false, color: aggregation.series[0].buckets[0].color };
+    const clicked = { seriesKey: aggregation.series[0].key, bucketKey: aggregation.series[0].buckets[0].key, isOther: false, color: aggregation.series[0].buckets[0].color, ids: [...aggregation.series[0].buckets[0].ids] };
     const clickedColor = aggregation.series[0].buckets[0].color;
     const otherColor = aggregation.series[0].buckets[1].color;
     assert.notEqual(clickedColor, otherColor, 'the fixture must expose an overwrite');
@@ -728,6 +764,24 @@ describe('overlapping chart bucket paint (#4832)', () => {
     assert.deepEqual(colors.get(1), expected, 'shared id keeps clicked Rule A, not later Rule B');
     assert.deepEqual(colors.get(2), expected);
     assert.equal(colors.has(3), false, 'ghost context retains its authored colour');
+
+    const second = {
+      seriesKey: aggregation.series[0].key,
+      bucketKey: aggregation.series[0].buckets[1].key,
+      isOther: false,
+      color: otherColor,
+      ids: [...aggregation.series[0].buckets[1].ids],
+    };
+    const multi = chartColorOverrides(aggregation, new Set([1, 2, 3]), 'ghost', [clicked, second]);
+    const expectedLast = [
+      Number.parseInt(otherColor.slice(1, 3), 16) / 255,
+      Number.parseInt(otherColor.slice(3, 5), 16) / 255,
+      Number.parseInt(otherColor.slice(5, 7), 16) / 255,
+      1,
+    ];
+    assert.deepEqual(multi.get(1), expectedLast, 'the later selected bucket deterministically wins a shared id');
+    assert.deepEqual(multi.get(2), expected);
+    assert.deepEqual(multi.get(3), expectedLast);
   });
 });
 

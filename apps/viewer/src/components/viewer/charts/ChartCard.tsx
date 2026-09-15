@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { useViewerStore } from '@/store';
 import { readChartTheme, useEChart, type ChartRenderer, type ChartSelectEvent } from './useEChart';
 import { GRID_DRAG_HANDLE_CLASS } from './DashboardGrid';
-import { chartBucketIdentity, sameChartBucketIdentity, type Chart3DLink } from './useChart3DLink';
+import { chartBucketIdentity, chartSelectionIsLive, sameChartBucketIdentity, type Chart3DLink } from './useChart3DLink';
 
 export interface ChartCardProps {
   spec: ChartSpec;
@@ -69,6 +69,16 @@ export function ChartCard({ spec, dataset, link, renderer, onEdit, onRemove, onA
   }, [spec, dataset, chartSlice, chartSliceSource]);
 
   useEffect(() => { onAggregation?.(spec, aggregation); }, [onAggregation, spec, aggregation]);
+
+  useEffect(() => {
+    if (
+      aggregation
+      && chartSliceSource === spec.id
+      && chartSlice
+      && chartSliceBuckets
+      && !chartSelectionIsLive(aggregation, chartSliceBuckets, chartSlice)
+    ) link.clearSelection();
+  }, [aggregation, chartSlice, chartSliceBuckets, chartSliceSource, link, spec.id]);
 
   const selection = useMemo(() => (aggregation ? link.selectionFor(aggregation) : { full: [], partial: [] }), [aggregation, link]);
 

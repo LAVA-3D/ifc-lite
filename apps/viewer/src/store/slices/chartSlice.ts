@@ -29,6 +29,8 @@ export interface ChartBucketIdentity {
   isOther: boolean;
   /** The rendered colour at click time, retained if top-N later folds this bucket into Other. */
   color: string;
+  /** IDs owned by this selected bucket, so its colour never leaks to another selected mark. */
+  ids: number[];
 }
 
 export interface ChartSlice {
