@@ -2,10 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { BCFViewpoint } from '@ifc-lite/bcf';
 import { toast } from '@/components/ui/toast';
-import { captureActiveDrawingSnapshot } from '@/lib/drawing/active-canvas-snapshot';
+import {
+  captureActiveDrawingSnapshot,
+  hasActiveDrawingCanvas,
+  subscribeActiveDrawingCanvas,
+} from '@/lib/drawing/active-canvas-snapshot';
 import { useViewerStore } from '@/store';
 
 interface SectionViewpointOptions {
@@ -27,7 +31,12 @@ export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
   const drawing = useViewerStore((state) => state.drawing2D);
   const status = useViewerStore((state) => state.drawing2DStatus);
   const panelVisible = useViewerStore((state) => state.drawing2DPanelVisible);
-  const canCapture = panelVisible && status === 'ready' && drawing !== null;
+  const canvasMounted = useSyncExternalStore(
+    subscribeActiveDrawingCanvas,
+    hasActiveDrawingCanvas,
+    hasActiveDrawingCanvas,
+  );
+  const canCapture = panelVisible && status === 'ready' && drawing !== null && canvasMounted;
 
   const capture = useCallback(async () => {
     if (!activeTopicId) return;

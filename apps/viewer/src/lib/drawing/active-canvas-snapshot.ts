@@ -9,19 +9,39 @@
  */
 
 let activeCanvas: HTMLCanvasElement | null = null;
+const listeners = new Set<() => void>();
+
+function notifyListeners(): void {
+  for (const listener of listeners) listener();
+}
 
 /** Register the canvas that currently presents the 2D section. */
 export function registerActiveDrawingCanvas(canvas: HTMLCanvasElement): () => void {
   activeCanvas = canvas;
+  notifyListeners();
   return () => {
     // A stale cleanup must not unregister a newer mounted canvas.
-    if (activeCanvas === canvas) activeCanvas = null;
+    if (activeCanvas === canvas) {
+      activeCanvas = null;
+      notifyListeners();
+    }
   };
+}
+
+/** Observe whether the section canvas is actually mounted and capturable. */
+export function subscribeActiveDrawingCanvas(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** React-compatible snapshot of the mounted canvas state. */
+export function hasActiveDrawingCanvas(): boolean {
+  return activeCanvas !== null && activeCanvas.width > 0 && activeCanvas.height > 0;
 }
 
 /** Capture the exact painted 2D section, including its visible annotations. */
 export function captureActiveDrawingSnapshot(): string | null {
-  if (!activeCanvas || activeCanvas.width === 0 || activeCanvas.height === 0) return null;
+  if (!activeCanvas || !hasActiveDrawingCanvas()) return null;
   const snapshot = activeCanvas.toDataURL('image/png');
   return snapshot.startsWith('data:image/png') ? snapshot : null;
 }
