@@ -140,6 +140,16 @@ export function GanttPanel({ onClose }: GanttPanelProps) {
     [scheduleData, expandedTaskGlobalIds, activeWorkScheduleId],
   );
 
+  // Calendar globalId -> name, for the per-row calendar badge. Only
+  // calendars with a name make it in; an unnamed one has nothing to show.
+  const calendarNamesByGlobalId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const cal of scheduleData?.workCalendars ?? []) {
+      if (cal.name) map.set(cal.globalId, cal.name);
+    }
+    return map;
+  }, [scheduleData]);
+
   // Shared scroll position between task list and timeline (so rows line up).
   const [scrollTop, setScrollTop] = useState(0);
   const leftRef = useRef<HTMLDivElement>(null);
@@ -309,6 +319,7 @@ export function GanttPanel({ onClose }: GanttPanelProps) {
                 if (newIdx >= 0) store.moveTask(sourceGid, newIdx);
               }}
               onHover={setHoveredTaskGlobalId}
+              calendarNamesByGlobalId={calendarNamesByGlobalId}
               scrollTop={scrollTop}
               onScroll={setScrollTop}
             />
