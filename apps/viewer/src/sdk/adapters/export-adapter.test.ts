@@ -470,6 +470,25 @@ test("stripScheduleEntities respects ';' inside string literals", () => {
   assert.ok(out.includes('A;B;C'), 'wall attribute with semicolons preserved');
 });
 
+test('stripScheduleEntities preserves non-schedule children in mixed IfcRelNests', () => {
+  const mixedNest = SAMPLE_STEP.replace(
+    'ENDSEC;\nEND-ISO-10303-21;',
+    [
+      "#20=IFCWORKSCHEDULE('ws',#10,'WS',$,$,$,$,$,$,$,$,$,$,.PLANNED.);",
+      "#21=IFCTASK('task',#10,'Task',$,$,$,$,$,$,.F.,$,$,.CONSTRUCTION.);",
+      "#30=IFCRELNESTS('mixed',#10,$,$,#11,(#21,#12));",
+      "#31=IFCRELNESTS('schedule-parent',#10,$,$,#20,(#11,#12));",
+      'ENDSEC;',
+      'END-ISO-10303-21;',
+    ].join('\n'),
+  );
+  const out = injectScheduleIntoStep(mixedNest, null, STUB_STORE, { scheduleIsEdited: true });
+
+  assert.ok(out.includes("#30=IFCRELNESTS('mixed',#10,$,$,#11,(#12));"));
+  assert.ok(!out.includes("'schedule-parent'"));
+  assert.ok(out.includes("#12=IFCWALL('wall-B-gid'"));
+});
+
 // ─── createExportAdapter().csv() — CWE-1236 formula-injection defense ──
 
 /**

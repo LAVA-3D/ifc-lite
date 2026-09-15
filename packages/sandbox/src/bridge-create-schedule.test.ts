@@ -110,7 +110,13 @@ describe('bim.create.addIfcWorkCalendar end-to-end through the sandbox (#4830)',
       expect(content).toContain('.WEEKLY.');
       expect(content).toContain('(1,2,3,4,5)');
       expect(content).toContain("IFCTIMEPERIOD('07:00:00','16:00:00')");
-      expect(content).toContain('IFCRELASSIGNSTOCONTROL');
+      const calendarId = content.match(/#(\d+)=IFCWORKCALENDAR\([^\n]*'Site calendar'/)?.[1];
+      const taskId = content.match(/#(\d+)=IFCTASK\([^\n]*'Install walls'/)?.[1];
+      expect(calendarId).toBeDefined();
+      expect(taskId).toBeDefined();
+      expect(content).toMatch(new RegExp(
+        `=IFCRELASSIGNSTOCONTROL\\([^\\n]*\\(#${taskId}\\),\\$,#${calendarId}\\);`,
+      ));
     } finally {
       sandbox.dispose();
     }

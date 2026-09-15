@@ -213,7 +213,7 @@ describe('schedule roundtrip — serializer ↔ parser', () => {
     // IfcWorkCalendar and its nested IfcWorkTime / IfcRecurrencePattern /
     // IfcTimePeriod survive the trip through real STEP bytes (#4830).
     expect(parsed.workCalendars).toHaveLength(1);
-    const cal = parsed.workCalendars[0];
+    const cal = parsed.workCalendars![0];
     expect(cal.globalId).toBe('cal-round');
     expect(cal.name).toBe('Two-shift calendar');
     expect(cal.identification).toBe('CAL-RT');

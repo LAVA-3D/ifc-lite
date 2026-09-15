@@ -292,7 +292,11 @@ export function extractScheduleOnDemand(store: IfcDataStore): ScheduleExtraction
   // Pass 4c: extract IfcWorkCalendar entities. Collection + the
   // calendar-assignment branch of Pass 5 live in
   // `schedule-control-extractor.ts` — split out purely for module size.
-  const { workCalendars, calendarByExpressId } = extractWorkCalendars(extractor, store, workCalendarIds);
+  const { workCalendars, calendarByExpressId } = extractWorkCalendars(
+    extractor,
+    store,
+    schemaIs2x3 ? [] : workCalendarIds,
+  );
 
   // Pass 5: IfcRelAssignsToControl — map schedules to tasks, (a second,
   // distinct grouping path from Pass 4b's IfcRelNests) IfcWorkPlan grouping

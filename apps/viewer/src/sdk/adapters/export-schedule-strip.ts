@@ -73,59 +73,129 @@ export function stripScheduleEntities(stepContent: string): string {
     return stepContent;
   }
 
-  // Pass 2: walk statements and emit non-schedule text ranges. We keep
-  // byte ranges (start/end offsets in `stepContent`) rather than
-  // reassembling, so leading/trailing whitespace between statements
-  // survives byte-identical when every statement is kept.
-  const keptRanges: Array<{ start: number; end: number }> = [];
+  // Pass 2: collect statement edits. Most schedule records are deleted;
+  // mixed IfcRelNests records are rewritten so non-schedule children remain.
+  const edits: Array<{ start: number; end: number; replacement: string }> = [];
   let cursor = 0;
   for (const stmt of statements) {
     if (stmt.kind !== 'entity') {
       // Non-entity text (header, section markers, whitespace) — always keep.
       continue;
     }
-    if (shouldStripStatement(stmt, scheduleIds)) {
-      // Push the range from `cursor` up to the statement start, then
-      // advance past the statement (including trailing whitespace /
-      // newline so we don't leave a gap).
-      if (stmt.start > cursor) keptRanges.push({ start: cursor, end: stmt.start });
-      cursor = stmt.end;
+    const action = classifyScheduleStatement(stmt, scheduleIds);
+    if (action === 'drop') {
+      let end = stmt.end;
       // Also consume a trailing newline so we don't leave blank lines
       // scattered where schedule statements used to live.
-      if (stepContent[cursor] === '\r') cursor++;
-      if (stepContent[cursor] === '\n') cursor++;
+      if (stepContent[end] === '\r') end++;
+      if (stepContent[end] === '\n') end++;
+      edits.push({ start: stmt.start, end, replacement: '' });
+    } else if (action !== 'keep') {
+      const original = stepContent.slice(stmt.start, stmt.end);
+      edits.push({
+        start: stmt.start,
+        end: stmt.end,
+        replacement: original.replace(stmt.attributesText, action.attributesText),
+      });
     }
   }
-  if (cursor < stepContent.length) {
-    keptRanges.push({ start: cursor, end: stepContent.length });
-  }
 
-  // Concatenate kept ranges.
-  if (keptRanges.length === 1 && keptRanges[0].start === 0 && keptRanges[0].end === stepContent.length) {
-    return stepContent; // No-op path — nothing was stripped.
-  }
+  if (edits.length === 0) return stepContent;
   let out = '';
-  for (const r of keptRanges) out += stepContent.slice(r.start, r.end);
+  for (const edit of edits) {
+    out += stepContent.slice(cursor, edit.start);
+    out += edit.replacement;
+    cursor = edit.end;
+  }
+  out += stepContent.slice(cursor);
   return out;
 }
 
-/** Per-statement classification: should we drop this record? */
-function shouldStripStatement(
+type StripAction = 'keep' | 'drop' | { attributesText: string };
+
+/** Per-statement classification: keep, drop, or rewrite this record. */
+function classifyScheduleStatement(
   stmt: { typeUpper: string; id: number; attributesText: string },
   scheduleIds: ReadonlySet<number>,
-): boolean {
-  if (scheduleIds.has(stmt.id)) return true; // Always-schedule entity itself.
+): StripAction {
+  if (scheduleIds.has(stmt.id)) return 'drop'; // Always-schedule entity itself.
   if (SOMETIMES_SCHEDULE_TYPES.has(stmt.typeUpper)) {
     // Relationship entity; strip only if it references a schedule id.
-    return referencesAnyId(stmt.attributesText, scheduleIds);
+    return referencesAnyId(stmt.attributesText, scheduleIds) ? 'drop' : 'keep';
   }
   if (stmt.typeUpper === 'IFCRELNESTS') {
-    // Only strip when the referenced set includes a schedule id (the
-    // nest ties a task to its children). False-positives (a nests that
-    // mixes task + non-task in a single record) are vanishingly rare.
-    return referencesAnyId(stmt.attributesText, scheduleIds);
+    return classifyRelNests(stmt.attributesText, scheduleIds);
   }
-  return false;
+  return 'keep';
+}
+
+function classifyRelNests(attributesText: string, scheduleIds: ReadonlySet<number>): StripAction {
+  const attributes = splitTopLevelAttributes(attributesText);
+  // IfcRelNests: GlobalId, OwnerHistory, Name, Description,
+  // RelatingObject, RelatedObjects.
+  if (attributes.length !== 6) {
+    return referencesAnyId(attributesText, scheduleIds) ? 'drop' : 'keep';
+  }
+  const relatingId = parseStepRef(attributes[4]);
+  if (relatingId !== undefined && scheduleIds.has(relatingId)) return 'drop';
+
+  const related = splitReferenceAggregate(attributes[5]);
+  if (related === undefined) {
+    return referencesAnyId(attributes[5], scheduleIds) ? 'drop' : 'keep';
+  }
+  const remaining = related.filter(ref => !scheduleIds.has(ref.id));
+  if (remaining.length === related.length) return 'keep';
+  if (remaining.length === 0) return 'drop';
+  attributes[5] = `(${remaining.map(ref => ref.text).join(',')})`;
+  return { attributesText: `(${attributes.join(',')})` };
+}
+
+function splitTopLevelAttributes(attributesText: string): string[] {
+  if (!attributesText.startsWith('(') || !attributesText.endsWith(')')) return [];
+  const inner = attributesText.slice(1, -1);
+  const attributes: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (inString) {
+      if (c === "'") {
+        if (inner[i + 1] === "'") i++;
+        else inString = false;
+      }
+    } else if (c === "'") {
+      inString = true;
+    } else if (c === '(') {
+      depth++;
+    } else if (c === ')') {
+      depth--;
+    } else if (c === ',' && depth === 0) {
+      attributes.push(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  attributes.push(inner.slice(start).trim());
+  return attributes;
+}
+
+function parseStepRef(value: string): number | undefined {
+  const match = /^#(\d+)$/.exec(value.trim());
+  return match ? parseInt(match[1], 10) : undefined;
+}
+
+function splitReferenceAggregate(value: string): Array<{ id: number; text: string }> | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('(') || !trimmed.endsWith(')')) return undefined;
+  const members = trimmed.slice(1, -1).split(',');
+  const refs: Array<{ id: number; text: string }> = [];
+  for (const member of members) {
+    const text = member.trim();
+    const id = parseStepRef(text);
+    if (id === undefined) return undefined;
+    refs.push({ id, text });
+  }
+  return refs;
 }
 
 interface StepEntityStatement {

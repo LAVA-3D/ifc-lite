@@ -262,8 +262,8 @@ export interface ScheduleExtraction {
   workSchedules: WorkScheduleInfo[];
   tasks: ScheduleTaskInfo[];
   sequences: ScheduleSequenceInfo[];
-  /** IfcWorkCalendar entities found in the model, with their working/exception times. */
-  workCalendars: WorkCalendarInfo[];
+  /** IfcWorkCalendar entities found in the model, with their working/exception times. Optional for pre-calendar callers. */
+  workCalendars?: WorkCalendarInfo[];
   /** True if we encountered any scheduling entity (useful for empty-state UI). */
   hasSchedule: boolean;
 }

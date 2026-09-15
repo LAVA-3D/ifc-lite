@@ -274,7 +274,7 @@ describe('extractScheduleOnDemand — IfcWorkCalendar (#4830)', () => {
     expect(result.hasSchedule).toBe(true);
     expect(result.workCalendars).toHaveLength(1);
 
-    const cal = result.workCalendars[0];
+    const cal = result.workCalendars![0];
     expect(cal.expressId).toBe(64);
     expect(cal.globalId).toBe('cal-gid');
     expect(cal.name).toBe('Site calendar');
@@ -314,9 +314,9 @@ describe('extractScheduleOnDemand — IfcWorkCalendar (#4830)', () => {
     ];
     const result = extractScheduleOnDemand(buildStoreFromStep(lines));
     expect(result.workCalendars).toHaveLength(1);
-    expect(result.workCalendars[0].workingTimes).toEqual([]);
-    expect(result.workCalendars[0].exceptionTimes).toEqual([]);
-    expect(result.workCalendars[0].predefinedType).toBe('NOTDEFINED');
+    expect(result.workCalendars![0].workingTimes).toEqual([]);
+    expect(result.workCalendars![0].exceptionTimes).toEqual([]);
+    expect(result.workCalendars![0].predefinedType).toBe('NOTDEFINED');
   });
 
   it('populates both the schedule-control and the calendar field when a task has each', () => {
@@ -369,8 +369,43 @@ describe('extractScheduleOnDemand — IfcWorkCalendar (#4830)', () => {
       "#42=IFCRELASSIGNSTOCONTROL('rel-2',$,$,$,(#10),$,#65);",
     ];
     const result = extractScheduleOnDemand(buildStoreFromStep(lines));
-    expect(result.workCalendars.map(c => c.globalId)).toEqual(['cal-base', 'cal-site']);
+    expect(result.workCalendars!.map(c => c.globalId)).toEqual(['cal-base', 'cal-site']);
     expect(result.tasks[0].calendarGlobalIds).toEqual(['cal-base', 'cal-site']);
+  });
+
+  it('gives calendars with missing GlobalIds stable distinct assignment identities', () => {
+    const lines = [
+      "#10=IFCTASK('task-a-gid',$,'Task A',$,$,$,$,$,$,.F.,$,$,.CONSTRUCTION.);",
+      "#64=IFCWORKCALENDAR($,$,'Same name',$,$,$,$,$,.FIRSTSHIFT.);",
+      "#65=IFCWORKCALENDAR($,$,'Same name',$,$,$,$,$,.FIRSTSHIFT.);",
+      "#41=IFCRELASSIGNSTOCONTROL('rel-1',$,$,$,(#10),$,#64);",
+      "#42=IFCRELASSIGNSTOCONTROL('rel-2',$,$,$,(#10),$,#65);",
+    ];
+    const result = extractScheduleOnDemand(buildStoreFromStep(lines));
+    const ids = result.workCalendars!.map(c => c.globalId);
+    expect(new Set(ids).size).toBe(2);
+    expect(result.tasks[0].calendarGlobalIds).toEqual(ids);
+  });
+
+  it('tolerates malformed scalar recurrence aggregates', () => {
+    const lines = [
+      '#61=IFCRECURRENCEPATTERN(.WEEKLY.,1,2,3,$,1,$,$);',
+      "#62=IFCWORKTIME('Malformed',$,$,#61,$,$);",
+      "#64=IFCWORKCALENDAR('cal-gid',$,'Calendar',$,$,$,(#62),$,.FIRSTSHIFT.);",
+    ];
+    const result = extractScheduleOnDemand(buildStoreFromStep(lines));
+    const pattern = result.workCalendars![0].workingTimes[0].recurrencePattern!;
+    expect(pattern.dayComponent).toEqual([]);
+    expect(pattern.weekdayComponent).toEqual([]);
+    expect(pattern.monthComponent).toEqual([]);
+  });
+
+  it('does not decode IFC4 calendar attributes in an IFC2X3 model', () => {
+    const lines = [
+      "#64=IFCWORKCALENDAR('cal-gid',$,'Wrong layout',$,$,$,$,$,.FIRSTSHIFT.);",
+    ];
+    const result = extractScheduleOnDemand(buildStoreFromStep(lines, { schemaVersion: 'IFC2X3' }));
+    expect(result.workCalendars).toEqual([]);
   });
 
   it('reports an empty workCalendars array for a schedule with no calendars', () => {

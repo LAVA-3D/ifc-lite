@@ -21,8 +21,61 @@ import { esc, optStr, optEnum, optBool, optReal, optInt, refList, intList } from
 /** Allocate an express id, emit `#id=TYPE(attrs);`, and return the id. */
 export type EmitEntity = (type: string, attrs: string) => number;
 
+function assertInteger(value: number, attribute: string): void {
+  if (!Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(`IfcRecurrencePattern.${attribute} values must be finite integers`);
+  }
+}
+
+function validateComponent(values: number[] | undefined, attribute: string, min: number, max: number): void {
+  for (const value of values ?? []) {
+    assertInteger(value, attribute);
+    if (value < min || value > max) {
+      throw new Error(`IfcRecurrencePattern.${attribute} values must be between ${min} and ${max}`);
+    }
+  }
+}
+
+function validateRecurrencePattern(params: RecurrencePatternParams): void {
+  validateComponent(params.DayComponent, 'DayComponent', 1, 31);
+  validateComponent(params.WeekdayComponent, 'WeekdayComponent', 1, 7);
+  validateComponent(params.MonthComponent, 'MonthComponent', 1, 12);
+  if (params.Position !== undefined) assertInteger(params.Position, 'Position');
+  if (params.Interval !== undefined) {
+    assertInteger(params.Interval, 'Interval');
+    if (params.Interval <= 0) {
+      throw new Error('IfcRecurrencePattern.Interval must be a positive integer');
+    }
+  }
+  if (params.Occurrences !== undefined) assertInteger(params.Occurrences, 'Occurrences');
+
+  const allowedByType: Record<RecurrencePatternParams['RecurrenceType'], ReadonlySet<string>> = {
+    DAILY: new Set(),
+    WEEKLY: new Set(['WeekdayComponent']),
+    MONTHLY_BY_DAY_OF_MONTH: new Set(['DayComponent']),
+    MONTHLY_BY_POSITION: new Set(['WeekdayComponent', 'Position']),
+    BY_DAY_COUNT: new Set(),
+    BY_WEEKDAY_COUNT: new Set(['WeekdayComponent']),
+    YEARLY_BY_DAY_OF_MONTH: new Set(['DayComponent', 'MonthComponent']),
+    YEARLY_BY_POSITION: new Set(['WeekdayComponent', 'MonthComponent', 'Position']),
+  };
+  const supplied = [
+    ['DayComponent', (params.DayComponent?.length ?? 0) > 0],
+    ['WeekdayComponent', (params.WeekdayComponent?.length ?? 0) > 0],
+    ['MonthComponent', (params.MonthComponent?.length ?? 0) > 0],
+    ['Position', params.Position !== undefined],
+  ] as const;
+  const allowed = allowedByType[params.RecurrenceType];
+  for (const [attribute, isSupplied] of supplied) {
+    if (isSupplied && !allowed.has(attribute)) {
+      throw new Error(`IfcRecurrencePattern.${attribute} is not valid for ${params.RecurrenceType}`);
+    }
+  }
+}
+
 /** Emit an IfcRecurrencePattern, plus any IfcTimePeriod entities it references. */
 function emitRecurrencePattern(params: RecurrencePatternParams, emit: EmitEntity): number {
+  validateRecurrencePattern(params);
   const periodIds = (params.TimePeriods ?? []).map(tp =>
     emit('IFCTIMEPERIOD', `'${esc(tp.StartTime)}','${esc(tp.EndTime)}'`));
   // [0] RecurrenceType, [1] DayComponent, [2] WeekdayComponent,

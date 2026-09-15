@@ -25,6 +25,7 @@
 import { EntityExtractor } from './entity-extractor.js';
 import type { IfcDataStore } from './columnar-parser.js';
 import { asString, asNumber, asEnum, asRef, asRefList } from './schedule-types.js';
+import { deterministicGlobalId } from './deterministic-global-id.js';
 
 /**
  * IFC4/IFC4X3 STEP attribute indices for IfcWorkCalendar. Like
@@ -160,17 +161,19 @@ function extractRecurrencePattern(
   }
   return {
     recurrenceType: asEnum(a[RECURRENCE_PATTERN_ATTR.RecurrenceType]),
-    dayComponent: (a[RECURRENCE_PATTERN_ATTR.DayComponent] as unknown[] | undefined ?? [])
-      .map(asNumber).filter((n): n is number => n !== undefined),
-    weekdayComponent: (a[RECURRENCE_PATTERN_ATTR.WeekdayComponent] as unknown[] | undefined ?? [])
-      .map(asNumber).filter((n): n is number => n !== undefined),
-    monthComponent: (a[RECURRENCE_PATTERN_ATTR.MonthComponent] as unknown[] | undefined ?? [])
-      .map(asNumber).filter((n): n is number => n !== undefined),
+    dayComponent: asNumberList(a[RECURRENCE_PATTERN_ATTR.DayComponent]),
+    weekdayComponent: asNumberList(a[RECURRENCE_PATTERN_ATTR.WeekdayComponent]),
+    monthComponent: asNumberList(a[RECURRENCE_PATTERN_ATTR.MonthComponent]),
     position: asNumber(a[RECURRENCE_PATTERN_ATTR.Position]),
     interval: asNumber(a[RECURRENCE_PATTERN_ATTR.Interval]),
     occurrences: asNumber(a[RECURRENCE_PATTERN_ATTR.Occurrences]),
     timePeriods,
   };
+}
+
+function asNumberList(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(asNumber).filter((n): n is number => n !== undefined);
 }
 
 function extractWorkTime(
@@ -229,7 +232,8 @@ export function extractWorkCalendar(
   }
   return {
     expressId: calendarId,
-    globalId: asString(a[WORK_CALENDAR_ATTR.GlobalId]) ?? '',
+    globalId: asString(a[WORK_CALENDAR_ATTR.GlobalId])
+      ?? deterministicGlobalId(`extracted-work-calendar|${calendarId}`),
     name: asString(a[WORK_CALENDAR_ATTR.Name]) ?? '',
     description: asString(a[WORK_CALENDAR_ATTR.Description]),
     objectType: asString(a[WORK_CALENDAR_ATTR.ObjectType]),

@@ -1674,6 +1674,9 @@ export class IfcCreator {
    * with `assignCalendarToTasks`. Returns the calendar expressId.
    */
   addIfcWorkCalendar(params: WorkCalendarParams): number {
+    if (this.schema === 'IFC2X3') {
+      throw new Error('addIfcWorkCalendar is not supported for IFC2X3');
+    }
     const id = emitWorkCalendar(params, this.newGlobalId(), `#${this.ownerHistoryId}`, this.emitEntity);
     this.entities.push({ expressId: id, type: 'IfcWorkCalendar', Name: params.Name });
     return id;

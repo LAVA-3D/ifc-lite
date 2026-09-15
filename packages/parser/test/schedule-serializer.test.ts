@@ -383,9 +383,10 @@ describe('serializeScheduleToStep — IfcWorkCalendar (#4830)', () => {
     const rels = result.lines.filter(l => l.includes('=IFCRELASSIGNSTOCONTROL('));
     const calRel = rels.find(l => l.endsWith(`,#${calId});`));
     expect(calRel).toBeDefined();
-    // RelatedObjects holds two refs: task-a and the work schedule.
+    const taskId = result.lines.find(l => l.includes("=IFCTASK('task-a'"))!.match(/^#(\d+)=/)![1];
+    const scheduleId = result.lines.find(l => l.includes("=IFCWORKSCHEDULE('sched-gid'"))!.match(/^#(\d+)=/)![1];
     const relatedObjects = splitTopLevelArgs(calRel!.match(/=IFCRELASSIGNSTOCONTROL\((.+)\);$/)![1])[4];
-    expect(relatedObjects.split(',').length).toBe(2);
+    expect(new Set(relatedObjects.slice(1, -1).split(','))).toEqual(new Set([`#${taskId}`, `#${scheduleId}`]));
     expect(result.stats.calendarAssignments).toBe(1);
     // The schedule -> tasks relation is still emitted and counted separately.
     expect(result.stats.assignsToControl).toBe(1);

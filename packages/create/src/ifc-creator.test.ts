@@ -720,6 +720,30 @@ describe('IfcCreator — IfcWorkCalendar (#4830)', () => {
     expect(result.content).not.toContain('IFCRECURRENCEPATTERN');
   });
 
+  it('rejects IfcWorkCalendar before allocating nested entities in IFC2X3', () => {
+    const c = new IfcCreator({ Schema: 'IFC2X3' });
+    expect(() => c.addIfcWorkCalendar({
+      Name: 'Unsupported',
+      WorkingTimes: [{ RecurrencePattern: { RecurrenceType: 'DAILY', Interval: 1 } }],
+    })).toThrow(/not supported for IFC2X3/);
+    expect(c.toIfc().content).not.toContain('IFCWORK');
+  });
+
+  it.each([
+    ['fractional day', { RecurrenceType: 'MONTHLY_BY_DAY_OF_MONTH' as const, DayComponent: [1.5] }],
+    ['out-of-range weekday', { RecurrenceType: 'WEEKLY' as const, WeekdayComponent: [8] }],
+    ['out-of-range month', { RecurrenceType: 'YEARLY_BY_DAY_OF_MONTH' as const, DayComponent: [1], MonthComponent: [13] }],
+    ['non-finite occurrence', { RecurrenceType: 'DAILY' as const, Occurrences: Number.POSITIVE_INFINITY }],
+    ['non-positive interval', { RecurrenceType: 'DAILY' as const, Interval: 0 }],
+    ['invalid component combination', { RecurrenceType: 'DAILY' as const, WeekdayComponent: [1] }],
+  ])('rejects invalid recurrence input: %s', (_label, recurrencePattern) => {
+    const c = new IfcCreator();
+    expect(() => c.addIfcWorkCalendar({
+      Name: 'Invalid',
+      WorkingTimes: [{ RecurrencePattern: recurrencePattern }],
+    })).toThrow(/IfcRecurrencePattern/);
+  });
+
   it('round-trips through the parser: the extractor reads back what we wrote', async () => {
     const c = new IfcCreator();
     const calId = c.addIfcWorkCalendar({
@@ -746,7 +770,7 @@ describe('IfcCreator — IfcWorkCalendar (#4830)', () => {
     const parsed = await extractSchedule(c.toIfc().content);
 
     expect(parsed.workCalendars).toHaveLength(1);
-    const cal = parsed.workCalendars[0];
+    const cal = parsed.workCalendars![0];
     expect(cal.name).toBe('Site calendar');
     expect(cal.identification).toBe('CAL-1');
     expect(cal.predefinedType).toBe('SECONDSHIFT');
