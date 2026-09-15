@@ -207,7 +207,13 @@ export function useDrawing2DPersistence(): void {
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.warn('[drawing2D] failed to hash model for markup restore', err);
-        if (!cacheHash(null)) return;
+        if (!cacheHash(null)) {
+          // The model may have closed while its File read was pending. Settle
+          // that detached session as well so the persistence bridge can drop
+          // its last strong references to the File and any embedded logos.
+          settleSheetHash(activeModelId, null, sourceFile);
+          return;
+        }
         applyHash(null, settleHash(null));
         notifyDecided(activeModelId);
       });
