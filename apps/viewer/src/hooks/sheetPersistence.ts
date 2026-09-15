@@ -23,6 +23,9 @@ interface SessionSheet {
 
 export function createSheetPersistence() {
   const sheets = new Map<string, SessionSheet>();
+  // A replacement may arrive before the old source's hash finishes. Keep its
+  // unsaved edit reachable by that source, without retaining closed File blobs.
+  const pendingReplacements = new WeakMap<File, Map<string, SessionSheet>>();
   let applying = false;
 
   const apply = (entry?: SessionSheet, resetUi = true) => {
@@ -39,6 +42,11 @@ export function createSheetPersistence() {
   const remember = (modelId: string, source: File | undefined): SessionSheet => {
     let entry = sheets.get(modelId);
     if (!entry || entry.source !== source) {
+      if (entry?.source && entry.hash === undefined && entry.dirty) {
+        let pending = pendingReplacements.get(entry.source);
+        if (!pending) pendingReplacements.set(entry.source, pending = new Map());
+        pending.set(modelId, entry);
+      }
       entry = { source, sheet: null, dirty: false, enabled: false };
       sheets.set(modelId, entry);
     }
@@ -89,9 +97,11 @@ export function createSheetPersistence() {
 
   return {
     settleHash(modelId: string, hash: string | null, source: File | undefined) {
-      const entry = sheets.get(modelId);
-      // Ignore a hash from an earlier source loaded under a reused model id.
-      if (!entry || entry.source !== source) return;
+      const current = sheets.get(modelId);
+      const pending = source ? pendingReplacements.get(source) : undefined;
+      const entry = current?.source === source ? current : pending?.get(modelId);
+      if (!entry) return;
+      pending?.delete(modelId);
       entry.hash = hash;
       const state = useViewerStore.getState();
       if (hash && entry.dirty) saveSheet(hash, entry.sheet);
@@ -99,7 +109,7 @@ export function createSheetPersistence() {
         entry.sheet = loadSheet(hash);
         if (state.activeModelId === modelId && state.models.get(modelId)?.sourceFile === source) apply(entry, false);
       }
-      if (!state.models.has(modelId)) sheets.delete(modelId);
+      if (current === entry && !state.models.has(modelId)) sheets.delete(modelId);
     },
     dispose: unsubscribe,
   };

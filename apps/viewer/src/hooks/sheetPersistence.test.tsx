@@ -119,4 +119,24 @@ describe('sheet persistence lifecycle (#4836)', () => {
     assert.deepEqual(useViewerStore.getState().activeSheet, newer);
     assert.deepEqual(loadSheet('closed-hash'), newer);
   });
+
+  it('saves pending edits to the outgoing source after replacement reuses its model id', () => {
+    const original = model('replaced-pending');
+    const replacement = { ...original, sourceFile: new File(['replacement bytes'], 'replacement.ifc') };
+    useViewerStore.setState({ models: new Map([[original.id, original]]), activeModelId: original.id });
+    bridge = createSheetPersistence();
+    useViewerStore.getState().createSheet();
+    useViewerStore.getState().updateSheet({ name: 'Original pending edit' });
+    useViewerStore.setState({ models: new Map([[original.id, replacement]]) });
+    useViewerStore.getState().createSheet();
+    useViewerStore.getState().updateSheet({ name: 'Replacement edit' });
+    bridge.settleHash(original.id, 'original-pending-hash', original.sourceFile);
+    assert.equal(loadSheet('original-pending-hash')?.name, 'Original pending edit');
+    assert.equal(useViewerStore.getState().activeSheet?.name, 'Replacement edit');
+    bridge.settleHash(original.id, 'replacement-hash', replacement.sourceFile);
+    assert.equal(loadSheet('replacement-hash')?.name, 'Replacement edit');
+    useViewerStore.setState({ models: new Map([[original.id, original]]) });
+    bridge.settleHash(original.id, 'original-pending-hash', original.sourceFile);
+    assert.equal(useViewerStore.getState().activeSheet?.name, 'Original pending edit');
+  });
 });
