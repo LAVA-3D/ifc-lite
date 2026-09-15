@@ -12,7 +12,7 @@ import '@/test/setup-dom.js';
 import { installLayout } from '@/test/dom-layout.js';
 import { afterEach, beforeEach, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { act } from 'react';
+import { act, useState } from 'react';
 import type { Renderer } from '@ifc-lite/renderer';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { createBCFProject, createBCFTopic } from '@ifc-lite/bcf';
@@ -22,7 +22,6 @@ import { useViewerStore } from '@/store/index.js';
 import { fixtureModel, fixtureModels } from '@/test/store-fixture.js';
 import { clearGlobalRefs, setGlobalRendererRef } from '@/hooks/useBCF.js';
 import { drawingWithReferenceBounds } from '@/lib/appearance/references/drawing.js';
-import { hasActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot.js';
 import { Drawing2DCanvas } from './Drawing2DCanvas.js';
 import { BCFPanel } from './BCFPanel.js';
 
@@ -61,8 +60,8 @@ const TEXT_ANNOTATION = {
   borderColor: '#ff0000',
 };
 
-function boundedGeometry(maxY: number): GeometryResult {
-  const bounds = { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: maxY, z: 10 } };
+function boundedGeometry(maxY: number, minY = 0): GeometryResult {
+  const bounds = { min: { x: 0, y: minY, z: 0 }, max: { x: 10, y: maxY, z: 10 } };
   return {
     meshes: [], totalVertices: 0, totalTriangles: 0,
     coordinateInfo: { originShift: { x: 0, y: 0, z: 0 }, originalBounds: bounds,
@@ -233,11 +232,48 @@ test('Capture 2D preserves the generated cut with degenerate primary federated b
     'the BCF cut preserves y=15 even though the first model has a zero-height range');
 });
 
-test('unmounting the production canvas clears its active capture lease (#4802)', () => {
-  render(<TestSectionCanvas />);
-  assert.equal(hasActiveDrawingCanvas(), true);
-  cleanup();
-  assert.equal(hasActiveDrawingCanvas(), false);
+test('Capture 2D preserves an absolute cut outside the primary model bounds (#4802)', async () => {
+  const primary = { ...fixtureModel('primary'), geometryResult: boundedGeometry(10) };
+  const translated = { ...fixtureModel('translated', { idOffset: 1_000_000 }), geometryResult: boundedGeometry(130, 100) };
+  const federatedDrawing = { ...DRAWING, config: { ...DRAWING.config,
+    plane: { ...DRAWING.config.plane, position: 115 } } };
+  useViewerStore.setState({
+    ...fixtureModels(primary, translated),
+    drawing2D: federatedDrawing,
+  });
+
+  const ui = render(<><TestSectionCanvas drawing={federatedDrawing} /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  await act(async () => {
+    capture.click();
+    await Promise.resolve();
+  });
+
+  const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
+  assert.equal(viewpoint?.clippingPlanes?.length, 1);
+  assert.equal(viewpoint.clippingPlanes[0]?.location.z, 115,
+    'percentage conversion through primary bounds 0..10 reconstructs the absolute federated cut');
+});
+
+test('unmounting the production canvas disables its active capture lease (#4802)', () => {
+  function Harness(): React.ReactElement {
+    const [visible, setVisible] = useState(true);
+    return <>
+      {visible ? <TestSectionCanvas /> : null}
+      <button type="button" aria-label="Close section" onClick={() => setVisible(false)} />
+      <BCFPanel onClose={() => {}} />
+    </>;
+  }
+
+  const ui = render(<Harness />);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  const close = ui.querySelector<HTMLButtonElement>('[aria-label="Close section"]');
+  assert.ok(capture);
+  assert.ok(close);
+  assert.equal(capture.disabled, false, 'the mounted production canvas is capturable');
+  act(() => close.click());
+  assert.equal(capture.disabled, true, 'teardown releases the canvas and drawing without waiting for another generation');
 });
 
 test('Capture 2D stays disabled for a custom plane that BCF cannot reproduce (#4802)', () => {

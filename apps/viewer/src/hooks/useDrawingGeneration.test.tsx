@@ -26,10 +26,13 @@ import { act, StrictMode, useCallback, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { Drawing2DGenerator, GraphicOverrideEngine, type Drawing2D } from '@ifc-lite/drawing-2d';
+import { createBCFProject, createBCFTopic } from '@ifc-lite/bcf';
 import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
+import { BCFPanel } from '../components/viewer/BCFPanel.js';
 import { Drawing2DCanvas } from '../components/viewer/Drawing2DCanvas.js';
+import { TooltipProvider } from '../components/ui/tooltip.js';
+import { useViewerStore } from '../store/index.js';
 import { useDrawingGeneration } from './useDrawingGeneration.js';
-import { hasActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot.js';
 
 // ─── Fixture ─────────────────────────────────────────────────────────────
 
@@ -237,7 +240,10 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
   let run: (() => Promise<void>) | undefined;
   let regenerate: (() => Promise<void>) | undefined;
   let repaint: (() => void) | undefined;
-  const status = (value: string) => { if (value === 'generating') starts++; };
+  const status = (value: 'idle' | 'generating' | 'ready' | 'error') => {
+    if (value === 'generating') starts++;
+    if (renderCanvas) useViewerStore.setState({ drawing2DStatus: value });
+  };
   const noop = () => {};
   function Harness({ value }: { value: DrawingInputs }) {
     const [drawing, setLocalDrawing] = useState<Drawing2D | null>(null);
@@ -245,6 +251,7 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
     const publish = useCallback((next: Drawing2D | null) => {
       published = next;
       if (next) publications.push(entityIds(next));
+      if (renderCanvas) useViewerStore.setState({ drawing2D: next });
       setLocalDrawing(next);
     }, []);
     const { generateDrawing, doRegenerate } = useDrawingGeneration({
@@ -254,16 +261,19 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
     run = generateDrawing;
     regenerate = doRegenerate;
     repaint = () => setPanX((value) => value + 1);
-    return renderCanvas && drawing ? <Drawing2DCanvas
-      drawing={drawing}
-      transform={{ x: panX, y: 100, scale: 10 }}
-      showHiddenLines={false}
-      overrideEngine={new GraphicOverrideEngine()}
-      overridesEnabled={false}
-      entityColorMap={new Map()}
-      useIfcMaterials={false}
-      sectionAxis="down"
-    /> : null;
+    return renderCanvas ? <TooltipProvider>
+      {drawing ? <Drawing2DCanvas
+        drawing={drawing}
+        transform={{ x: panX, y: 100, scale: 10 }}
+        showHiddenLines={false}
+        overrideEngine={new GraphicOverrideEngine()}
+        overridesEnabled={false}
+        entityColorMap={new Map()}
+        useIfcMaterials={false}
+        sectionAxis="down"
+      /> : null}
+      <BCFPanel onClose={() => {}} />
+    </TooltipProvider> : null;
   }
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -314,6 +324,9 @@ async function drawingActivityHarness(initial: Partial<DrawingInputs> = {}, stri
     get drawing() { return published; },
     get starts() { return starts; },
     get canvas() { return container.querySelector('canvas'); },
+    get captureButton() {
+      return container.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+    },
     async generate() { await act(async () => { assert.ok(run); await run(); }); },
     regenerate() { assert.ok(regenerate); return regenerate(); },
     async repaintCanvas() { await act(async () => { assert.ok(repaint); repaint(); }); },
@@ -501,6 +514,15 @@ it('restarts active drawing demand after StrictMode effect cleanup (#3921)', asy
 });
 
 it('keeps a repainted production canvas stale until regeneration publishes its replacement (#4802)', async () => {
+  const project = createBCFProject({ name: 'Regeneration capture' });
+  const topic = createBCFTopic({ title: 'Held generation', author: 'reviewer@example.invalid' });
+  project.topics.set(topic.guid, topic);
+  useViewerStore.setState({
+    bcfProject: project,
+    activeTopicId: topic.guid,
+    drawing2DPanelVisible: true,
+    textAnnotation2DEditing: null,
+  });
   const original = Drawing2DGenerator.prototype.generate;
   const originalResizeObserver = globalThis.ResizeObserver;
   const originalWindowResizeObserver = window.ResizeObserver;
@@ -531,11 +553,9 @@ it('keeps a repainted production canvas stale until regeneration publishes its r
     await h.generate();
     await h.repaintCanvas();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    assert.equal(
-      hasActiveDrawingCanvas(),
-      true,
-      `the production canvas painted the initial drawing (${h.canvas?.width}x${h.canvas?.height}, client ${h.canvas?.clientWidth}x${h.canvas?.clientHeight})`,
-    );
+    assert.ok(h.captureButton, 'the production BCF panel exposes 2D capture');
+    assert.equal(h.captureButton.disabled, false,
+      `the production canvas painted the initial drawing (${h.canvas?.width}x${h.canvas?.height}, client ${h.canvas?.clientWidth}x${h.canvas?.clientHeight})`);
     Drawing2DGenerator.prototype.generate = async function (...args) {
       signal();
       await held;
@@ -546,12 +566,12 @@ it('keeps a repainted production canvas stale until regeneration publishes its r
       pending = h.regenerate();
       await started;
     });
-    assert.equal(hasActiveDrawingCanvas(), false, 'the old bitmap must be blocked while the new cut is pending');
+    assert.equal(h.captureButton?.disabled, true, 'the old bitmap must be blocked while the new cut is pending');
     await h.repaintCanvas();
-    assert.equal(hasActiveDrawingCanvas(), false, 'panning must not revalidate the old drawing during regeneration');
+    assert.equal(h.captureButton?.disabled, true, 'panning must not revalidate the old drawing during regeneration');
     release();
     await act(async () => pending);
-    assert.equal(hasActiveDrawingCanvas(), true, 'the completed replacement becomes capturable after its paint');
+    assert.equal(h.captureButton?.disabled, false, 'the completed replacement becomes capturable after its paint');
   } finally {
     release();
     Drawing2DGenerator.prototype.generate = original;
