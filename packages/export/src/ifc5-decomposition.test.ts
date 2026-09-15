@@ -22,6 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
 import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
+import { MutablePropertyView } from '@ifc-lite/mutations';
 import { Ifc5Exporter } from './ifc5-exporter.js';
 
 /** 22-char synthetic GlobalId, unique per `n` (same convention as the other export tests). */
@@ -232,5 +233,44 @@ describe('IFC5 export follows decomposition (#4841)', () => {
 
     expect(classCodes(file).filter((c) => c === 'IfcSlab')).toHaveLength(1);
     expect(reachablePaths(file).has(nodeNamed(file, 'Roof Slab A')?.path as string)).toBe(true);
+  });
+
+  it('uses an overlay-retargeted RelatedObjects endpoint for filtering and hierarchy', async () => {
+    // Review regression: the parsed RelationshipGraph is immutable. Reading it
+    // after this edit retained the old slab, dropped the new slab and its mesh,
+    // and made the saved tree disagree with the relationship the overlay owns.
+    const store = await parse(ROOF_MODEL);
+    const view = new MutablePropertyView(null, 'ifc5-decomposition');
+    view.setPositionalAttribute(83, 5, ['#61']);
+    const result = new Ifc5Exporter(store, geometryOf(60, 61), view).export({});
+    const file: IfcxFileLike = JSON.parse(result.content);
+
+    const oldSlab = nodeNamed(file, 'Roof Slab A');
+    const newSlab = nodeNamed(file, 'Roof Slab B');
+    expect(oldSlab).toBeUndefined();
+    expect(newSlab).toBeDefined();
+    expect(Object.values(nodeNamed(file, 'Roof')?.children ?? {})).toContain(newSlab?.path);
+    expect(reachablePaths(file).has(newSlab?.path as string)).toBe(true);
+    expect(result.stats.meshCount).toBe(1);
+  });
+
+  it('skips a first-declared back-edge when a valid aggregate parent exists', async () => {
+    // Review regression: A -> B, followed by the malformed back-edge B -> A,
+    // must not beat the later valid Roof -> A edge and orphan the A/B subtree.
+    const store = await parse(step(`#50=IFCROOF('${guid(50)}',$,'Roof',$,$,#3,$,'Roof',$);
+#60=IFCSLAB('${guid(60)}',$,'Roof Slab A',$,$,#3,$,'SlabA',.ROOF.);
+#61=IFCSLAB('${guid(61)}',$,'Roof Slab B',$,$,#3,$,'SlabB',.ROOF.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50),#40);
+#83=IFCRELAGGREGATES('${guid(83)}',$,$,$,#60,(#61));
+#84=IFCRELAGGREGATES('${guid(84)}',$,$,$,#61,(#60));
+#85=IFCRELAGGREGATES('${guid(85)}',$,$,$,#50,(#60));`));
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    const roof = nodeNamed(file, 'Roof');
+    const slabA = nodeNamed(file, 'Roof Slab A');
+    const slabB = nodeNamed(file, 'Roof Slab B');
+    expect(Object.values(roof?.children ?? {})).toContain(slabA?.path);
+    expect(Object.values(slabA?.children ?? {})).toContain(slabB?.path);
+    expect(reachablePaths(file).has(slabB?.path as string)).toBe(true);
   });
 });

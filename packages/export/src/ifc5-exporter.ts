@@ -37,7 +37,7 @@ import {
   stripNodePathPrefix,
 } from './ifc5-export-helpers.js';
 import { addClassificationAttribute } from './ifc5-classification.js';
-import { buildParentMap, buildTreeEntitySet } from './ifc5-tree-scope.js';
+import { buildIfc5TreeScope, type Ifc5TreeScope } from './ifc5-tree-scope.js';
 
 // ============================================================================
 // Types
@@ -192,9 +192,9 @@ export class Ifc5Exporter {
     // Build visible set
     const visibleIds = this.buildVisibleSet(options);
 
-    // Build spatial tree set (entities reachable from the project node, and
-    // everything they decompose into — #4841)
-    const treeIds = options.onlyTreeEntities !== false ? buildTreeEntitySet(this.dataStore) : null;
+    // One effective graph drives membership and parent selection, including overlay endpoint edits.
+    const treeScope = buildIfc5TreeScope(this.dataStore, effective, options.applyMutations !== false ? this.mutationView : null);
+    const treeIds = options.onlyTreeEntities !== false ? treeScope.treeIds : null;
 
     // The single emission gate. Three independent, deliberately separate
     // mechanisms can keep an entity out of the export — an overlay tombstone
@@ -213,7 +213,7 @@ export class Ifc5Exporter {
       || (treeIds !== null && !treeIds.has(id));
 
     // Build UUID paths and child-name maps from spatial hierarchy
-    this.buildEntityMaps(isOmitted, options.stripPathPrefix);
+    this.buildEntityMaps(isOmitted, treeScope, options.stripPathPrefix);
 
     // Build mesh lookup by expressId
     const meshByEntity = this.buildMeshLookup(options);
@@ -431,7 +431,7 @@ export class Ifc5Exporter {
    *   check alone, so the maps can never describe a node `export` never wrote.
    * @param stripPathPrefix see {@link Ifc5ExportOptions.stripPathPrefix}.
    */
-  private buildEntityMaps(isOmitted: (id: number) => boolean, stripPathPrefix?: string): void {
+  private buildEntityMaps(isOmitted: (id: number) => boolean, treeScope: Ifc5TreeScope, stripPathPrefix?: string): void {
     const { entities, strings } = this.dataStore;
 
     // --- 1. Assign UUID paths ---
@@ -452,9 +452,9 @@ export class Ifc5Exporter {
 
     // --- 2. Build parent→children and spatial maps ---
     // Containment first, decomposition second — see ifc5-tree-scope.ts. The
-    // same module answers `buildTreeEntitySet`, so what the tree filter KEEPS
-    // and what the hierarchy can PLACE cannot drift apart (#4841).
-    const { parentOf, spatialNodeNames } = buildParentMap(this.dataStore);
+    // same scope answers tree membership, so what the filter KEEPS and what
+    // the hierarchy can PLACE cannot drift apart (#4841).
+    const { parentOf, spatialNodeNames } = treeScope;
     this.spatialNodeNames = spatialNodeNames;
 
     // --- 3. Compute unique child names ---

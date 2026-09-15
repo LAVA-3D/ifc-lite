@@ -2,150 +2,241 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * Which entities the IFC5 export treats as part of the model, and who each
- * one's parent is.
- *
- * Both answers read the same two IFC mechanisms, and that is the point:
- * spatial containment (`IfcRelContainedInSpatialStructure`, pre-digested by
- * the parser into `spatialHierarchy`) AND decomposition (`IfcRelAggregates`,
- * the `IsDecomposedBy` inverse). Containment alone silently dropped every
- * element that hangs off its parent by aggregation instead: an `IfcRoof`'s
- * `IfcSlab` parts are contained in no storey, so the tree set never reached
- * them, `isOmitted` removed them along with their geometry, and the roof
- * stayed as a node with nothing under it (#4841).
- *
- * The parser folds `IfcRelNests` into the same `RelationshipType.Aggregates`
- * bucket, so nesting is followed here too — a nested part is decomposition by
- * the same argument, and its geometry disappeared the same way.
- */
+/** Effective IFC5 tree membership and parent selection (#4841). */
 
-import type { IfcDataStore } from '@ifc-lite/parser';
-import { RelationshipType } from '@ifc-lite/data';
+import { RelationshipType, createLogger } from '@ifc-lite/data';
+import { EntityExtractor, type IfcDataStore } from '@ifc-lite/parser';
+import type { MutablePropertyView, NewEntity } from '@ifc-lite/mutations';
+import { authoredEntityRefs, type EffectiveEntityIndex } from './effective-index.js';
 
-/** Recursive spatial tree node type used when walking the hierarchy. */
+const RELATING_OBJECT_INDEX = 4;
+const RELATED_OBJECTS_INDEX = 5;
+const CYCLE_CHECK_VISIT_BUDGET = 2_000_000;
+const log = createLogger('Ifc5TreeScope');
+
 interface SpatialTreeNode {
   expressId: number;
   name?: string;
   children: SpatialTreeNode[];
 }
 
-/** Child→parent edges of the exported hierarchy, plus the tree's own names. */
-export interface Ifc5ParentMap {
-  /** childId → parentId; a child absent here has no place in the hierarchy. */
+interface DecompositionGraph {
+  childrenByParent: Map<number, number[]>;
+  parentsByChild: Map<number, number[]>;
+}
+
+/** All tree answers used by one IFC5 export. */
+export interface Ifc5TreeScope {
+  treeIds: Set<number>;
   parentOf: Map<number, number>;
-  /** Names carried by `spatialHierarchy` nodes rather than the entity table. */
   spatialNodeNames: Map<number, string>;
 }
 
-/** `RelatedObjects` of the decompositions whose `RelatingObject` is `id`. */
-function decomposedChildren(dataStore: IfcDataStore, id: number): number[] {
-  const { relationships } = dataStore;
-  if (!relationships) return [];
-  return relationships.getRelated(id, RelationshipType.Aggregates, 'forward');
+function parsedSingleRef(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
-/**
- * Build the set of entity IDs reachable from the spatial tree.
- * Includes Project, Site, Building, Storey, Space, all contained elements,
- * and everything those decompose into, transitively.
- */
-export function buildTreeEntitySet(dataStore: IfcDataStore): Set<number> {
-  const ids = new Set<number>();
+function parsedRefs(value: unknown): number[] {
+  if (Array.isArray(value)) return value.flatMap(parsedRefs);
+  const id = parsedSingleRef(value);
+  return id === undefined ? [] : [id];
+}
 
-  // Walk spatial hierarchy tree
-  const { spatialHierarchy } = dataStore;
-  if (spatialHierarchy?.project) {
-    const walk = (node: { expressId: number; children: SpatialTreeNode[] }) => {
-      ids.add(node.expressId);
-      for (const child of node.children) walk(child);
-    };
-    walk(spatialHierarchy.project);
+function effectiveRelationshipAttributes(
+  id: number,
+  sourceAttributes: unknown[] | undefined,
+  created: NewEntity | undefined,
+  view: MutablePropertyView | null,
+): unknown[] | undefined {
+  const attributes = created ? [...created.attributes] : sourceAttributes?.slice();
+  if (!attributes || !view) return attributes;
+  const positional = view.getPositionalMutationsForEntity(id);
+  if (positional) {
+    for (const [index, value] of positional) attributes[index] = value;
+  }
+  // Named mutations are more specific and win over positional ones, matching
+  // the effective-index and STEP-export paths.
+  for (const { name, value } of view.getAttributeMutationsForEntity(id)) {
+    if (name === 'RelatingObject') attributes[RELATING_OBJECT_INDEX] = value;
+    if (name === 'RelatedObjects') attributes[RELATED_OBJECTS_INDEX] = value;
+  }
+  return attributes;
+}
+
+function authoredKnownRefs(value: unknown): number[] {
+  if (Array.isArray(value)) return value.flatMap(authoredKnownRefs);
+  const numeric = parsedSingleRef(value);
+  if (numeric !== undefined) return [numeric];
+  return authoredEntityRefs(value as Parameters<typeof authoredEntityRefs>[0]);
+}
+
+function authoredOrParsedSingleRef(value: unknown, authored: boolean): number | undefined {
+  return authored ? authoredKnownRefs(value)[0] : parsedSingleRef(value);
+}
+
+function authoredOrParsedRefs(value: unknown, authored: boolean): number[] {
+  return authored ? authoredKnownRefs(value) : parsedRefs(value);
+}
+
+function addEdge(graph: DecompositionGraph, parentId: number, childId: number): void {
+  if (parentId === childId) return;
+  const children = graph.childrenByParent.get(parentId) ?? [];
+  // Do not scan a potentially huge sibling list to deduplicate. Duplicate
+  // malformed edges are harmless to the visited-set closure; keeping this
+  // append O(1) avoids quadratic graph construction for large assemblies.
+  children.push(childId);
+  graph.childrenByParent.set(parentId, children);
+  const parents = graph.parentsByChild.get(childId) ?? [];
+  if (!parents.includes(parentId)) {
+    parents.push(parentId);
+    graph.parentsByChild.set(childId, parents);
+  }
+}
+
+function buildEffectiveDecompositionGraph(
+  dataStore: IfcDataStore,
+  effective: EffectiveEntityIndex,
+  view: MutablePropertyView | null,
+): DecompositionGraph {
+  const graph: DecompositionGraph = { childrenByParent: new Map(), parentsByChild: new Map() };
+  const extractor = dataStore.source ? new EntityExtractor(dataStore.source) : null;
+  const created = new Map<number, NewEntity>();
+  for (const entity of view?.getNewEntities() ?? []) created.set(entity.expressId, entity);
+
+  if (!extractor) {
+    const relationships = dataStore.relationships;
+    if (!relationships) return graph;
+    for (const parentId of relationships.forward.offsets.keys()) {
+      for (const childId of relationships.getRelated(parentId, RelationshipType.Aggregates, 'forward')) {
+        addEdge(graph, parentId, childId);
+      }
+    }
+    return graph;
   }
 
-  // Add elements from containment maps (elements assigned to storeys, etc.)
-  if (spatialHierarchy) {
-    for (const map of [spatialHierarchy.bySite, spatialHierarchy.byBuilding, spatialHierarchy.byStorey, spatialHierarchy.bySpace]) {
-      if (map) {
-        for (const children of map.values()) {
-          for (const id of children) ids.add(id);
-        }
+  // Effective-index iteration preserves source declaration order and appends
+  // overlay-created records, so candidate parents retain first-declared order.
+  for (const [id, record] of effective) {
+    const type = effective.effectiveType(id, record.type);
+    if (type !== 'IFCRELAGGREGATES' && type !== 'IFCRELNESTS') continue;
+    const newEntity = created.get(id);
+    const sourceRef = newEntity ? undefined : dataStore.entityIndex.byId.get(id);
+    const sourceEntity = sourceRef ? extractor.extractEntity(sourceRef) : null;
+    const attributes = effectiveRelationshipAttributes(id, sourceEntity?.attributes, newEntity, view);
+    if (!attributes) continue;
+
+    const named = view?.getAttributeMutationsForEntity(id) ?? [];
+    const parentAuthored = newEntity !== undefined
+      || view?.getPositionalMutationsForEntity(id)?.has(RELATING_OBJECT_INDEX) === true
+      || named.some(({ name }) => name === 'RelatingObject');
+    const parentId = authoredOrParsedSingleRef(attributes[RELATING_OBJECT_INDEX], parentAuthored);
+    if (parentId === undefined || !effective.has(parentId)) continue;
+
+    const childrenAuthored = newEntity !== undefined
+      || view?.getPositionalMutationsForEntity(id)?.has(RELATED_OBJECTS_INDEX) === true
+      || named.some(({ name }) => name === 'RelatedObjects');
+    for (const childId of authoredOrParsedRefs(attributes[RELATED_OBJECTS_INDEX], childrenAuthored)) {
+      if (effective.has(childId)) addEdge(graph, parentId, childId);
+    }
+  }
+  return graph;
+}
+
+function addSpatialHierarchy(
+  dataStore: IfcDataStore,
+  treeIds: Set<number>,
+  parentOf: Map<number, number>,
+  spatialNodeNames: Map<number, string>,
+): void {
+  const { spatialHierarchy } = dataStore;
+  if (spatialHierarchy?.project) {
+    const stack: SpatialTreeNode[] = [spatialHierarchy.project];
+    while (stack.length > 0) {
+      const node = stack.pop() as SpatialTreeNode;
+      treeIds.add(node.expressId);
+      if (node.name) spatialNodeNames.set(node.expressId, node.name);
+      for (const child of node.children) {
+        parentOf.set(child.expressId, node.expressId);
+        stack.push(child);
       }
     }
   }
+  if (!spatialHierarchy) return;
+  for (const map of [spatialHierarchy.bySite, spatialHierarchy.byBuilding, spatialHierarchy.byStorey, spatialHierarchy.bySpace]) {
+    if (!map) continue;
+    for (const [parentId, children] of map) {
+      for (const childId of children ?? []) {
+        treeIds.add(childId);
+        parentOf.set(childId, parentId);
+      }
+    }
+  }
+}
 
-  // Close the set over decomposition (#4841). Iterative, with `ids` itself as
-  // the visited set: a file-supplied aggregation graph may be cyclic or
-  // diamond-shaped, and membership is a pure function of the id, so an id
-  // already in the set never needs expanding twice. That bounds the walk at
-  // O(entities + aggregation edges) with no stack to overflow and no separate
-  // budget to keep in step.
-  const pending = [...ids];
+function aggregatedDescendants(
+  childId: number,
+  graph: DecompositionGraph,
+  budget: { visits: number },
+): Set<number> | null {
+  const visited = new Set<number>([childId]);
+  const pending = [childId];
+  while (pending.length > 0) {
+    const current = pending.pop() as number;
+    for (const descendant of graph.childrenByParent.get(current) ?? []) {
+      if (--budget.visits < 0) return null;
+      if (visited.has(descendant)) continue;
+      visited.add(descendant);
+      pending.push(descendant);
+    }
+  }
+  return visited;
+}
+
+function addDecompositionParents(graph: DecompositionGraph, parentOf: Map<number, number>): void {
+  const budget = { visits: CYCLE_CHECK_VISIT_BUDGET };
+  let exhausted = false;
+  for (const [childId, candidates] of graph.parentsByChild) {
+    if (parentOf.has(childId) || candidates.length === 0) continue;
+    let winner = candidates[0];
+    if (candidates.length > 1 && !exhausted) {
+      const descendants = aggregatedDescendants(childId, graph, budget);
+      if (descendants === null) {
+        exhausted = true;
+        log.warn(
+          `Aggregation back-edge cycle checks stopped after ${CYCLE_CHECK_VISIT_BUDGET} graph visits; `
+          + 'remaining multi-parent children use their first-declared decomposition edge',
+        );
+      } else {
+        winner = candidates.find((candidate) => !descendants.has(candidate)) ?? winner;
+      }
+    }
+    parentOf.set(childId, winner);
+  }
+}
+
+/** Build membership and hierarchy from the same effective decomposition graph. */
+export function buildIfc5TreeScope(
+  dataStore: IfcDataStore,
+  effective: EffectiveEntityIndex,
+  view: MutablePropertyView | null,
+): Ifc5TreeScope {
+  const treeIds = new Set<number>();
+  const parentOf = new Map<number, number>();
+  const spatialNodeNames = new Map<number, string>();
+  addSpatialHierarchy(dataStore, treeIds, parentOf, spatialNodeNames);
+
+  const graph = buildEffectiveDecompositionGraph(dataStore, effective, view);
+  const pending = [...treeIds];
   while (pending.length > 0) {
     const id = pending.pop() as number;
-    for (const childId of decomposedChildren(dataStore, id)) {
-      if (ids.has(childId)) continue;
-      ids.add(childId);
+    for (const childId of graph.childrenByParent.get(id) ?? []) {
+      if (treeIds.has(childId)) continue;
+      treeIds.add(childId);
       pending.push(childId);
     }
   }
-
-  return ids;
-}
-
-/**
- * Build the child→parent map the exported hierarchy is grouped by.
- *
- * Precedence is containment first, decomposition second: an element a file
- * both contains in a storey and aggregates into an assembly keeps the storey
- * it has always been exported under, and decomposition only speaks for a
- * child that containment leaves with no parent at all. Among several
- * aggregating parents (which EXPRESS forbids but files still emit) the
- * first-declared one wins, matching the parser's own canonical-parent choice.
- */
-export function buildParentMap(dataStore: IfcDataStore): Ifc5ParentMap {
-  const { spatialHierarchy, relationships } = dataStore;
-  const parentOf = new Map<number, number>();
-  const spatialNodeNames = new Map<number, string>();
-
-  if (spatialHierarchy?.project) {
-    const walkTree = (node: { expressId: number; name?: string; children: SpatialTreeNode[] }) => {
-      if (node.name) {
-        spatialNodeNames.set(node.expressId, node.name);
-      }
-      for (const child of node.children) {
-        parentOf.set(child.expressId, node.expressId);
-        walkTree(child);
-      }
-    };
-    walkTree(spatialHierarchy.project);
-  }
-
-  // Add element containment from flat maps
-  if (spatialHierarchy) {
-    for (const map of [spatialHierarchy.bySite, spatialHierarchy.byBuilding, spatialHierarchy.byStorey, spatialHierarchy.bySpace]) {
-      if (map) {
-        for (const [parentId, children] of map) {
-          if (!children) continue;
-          for (const childId of children) parentOf.set(childId, parentId);
-        }
-      }
-    }
-  }
-
-  // Decomposition fills what containment left empty (#4841). Without this an
-  // aggregated child that `buildTreeEntitySet` now keeps would be emitted as
-  // a node nothing lists as a child — present in `data`, unreachable from the
-  // root — which is the orphaning the re-parenting walk exists to prevent.
-  if (relationships) {
-    for (const childId of relationships.inverse.offsets.keys()) {
-      if (parentOf.has(childId)) continue;
-      const [firstDeclaredParent] = relationships.getRelated(childId, RelationshipType.Aggregates, 'inverse');
-      if (firstDeclaredParent !== undefined && firstDeclaredParent !== childId) {
-        parentOf.set(childId, firstDeclaredParent);
-      }
-    }
-  }
-
-  return { parentOf, spatialNodeNames };
+  // Existing containment remains authoritative for occurrences declared both
+  // ways; decomposition only fills children that containment left unplaced.
+  addDecompositionParents(graph, parentOf);
+  return { treeIds, parentOf, spatialNodeNames };
 }
