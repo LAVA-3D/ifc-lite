@@ -1,0 +1,236 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+/**
+ * The IFC5 tree filter must follow decomposition, not containment alone
+ * (#4841).
+ *
+ * An element that hangs off its parent by `IfcRelAggregates` is contained in
+ * no spatial structure, so the pre-fix `buildTreeEntitySet` never reached it:
+ * `onlyTreeEntities` defaults to `true`, so the DEFAULT export dropped the
+ * element and its geometry while keeping the aggregating parent as a node
+ * with nothing under it. Turning the filter off was not a fix — it recovers
+ * the parts and emits every type object and relationship alongside them.
+ *
+ * Every assertion below therefore runs on the DEFAULT options, and
+ * reachability is asserted by walking `children` from the document root:
+ * membership in `data` is not reachability, and an aggregated part that is
+ * emitted but that nothing lists as a child is still a broken document.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
+import type { GeometryResult, MeshData } from '@ifc-lite/geometry';
+import { Ifc5Exporter } from './ifc5-exporter.js';
+
+/** 22-char synthetic GlobalId, unique per `n` (same convention as the other export tests). */
+const guid = (n: number): string => `0GUID${String(n).padStart(17, '0')}`;
+
+/** Path of the synthetic document-root node — `generateUuid(0)`, module-private in the exporter. */
+const DOCUMENT_ROOT_PATH = '00000000-0000-4000-8000-000000000000';
+
+interface IfcxNodeLike {
+  path: string;
+  children?: Record<string, string | null>;
+  attributes?: Record<string, unknown>;
+}
+
+interface IfcxFileLike {
+  data: IfcxNodeLike[];
+}
+
+function step(body: string): string {
+  return `ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('decomposition.ifc','2024-01-01T00:00:00',(''),(''),'','','');
+FILE_SCHEMA(('IFC4'));
+ENDSEC;
+DATA;
+#1=IFCCARTESIANPOINT((0.,0.,0.));
+#2=IFCAXIS2PLACEMENT3D(#1,$,$);
+#3=IFCLOCALPLACEMENT($,#2);
+#4=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);
+#5=IFCUNITASSIGNMENT((#4));
+#6=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#2,$);
+#10=IFCPROJECT('${guid(10)}',$,'Project',$,$,'Project',$,(#6),#5);
+#20=IFCSITE('${guid(20)}',$,'Site',$,$,#3,$,$,.ELEMENT.,$,$,0.,$,$);
+#30=IFCBUILDING('${guid(30)}',$,'Building',$,$,#3,$,'Building',.ELEMENT.,$,$,$);
+#40=IFCBUILDINGSTOREY('${guid(40)}',$,'Storey',$,$,#3,$,'Storey',.ELEMENT.,0.);
+#80=IFCRELAGGREGATES('${guid(80)}',$,$,$,#10,(#20));
+#81=IFCRELAGGREGATES('${guid(81)}',$,$,$,#20,(#30));
+#82=IFCRELAGGREGATES('${guid(82)}',$,$,$,#30,(#40));
+${body}
+ENDSEC;
+END-ISO-10303-21;`;
+}
+
+/**
+ * The shape the issue measured: an `IfcRoof` contained in the storey, whose
+ * two `IfcSlab` parts are contained in nothing and reachable only through
+ * `IfcRelAggregates`. The `IfcWallType` and its `IfcRelDefinesByType` are
+ * here so a "fix" that merely stopped filtering would be visible as those
+ * reappearing.
+ */
+const ROOF_MODEL = step(`#50=IFCROOF('${guid(50)}',$,'Roof',$,$,#3,$,'Roof',$);
+#60=IFCSLAB('${guid(60)}',$,'Roof Slab A',$,$,#3,$,'SlabA',.ROOF.);
+#61=IFCSLAB('${guid(61)}',$,'Roof Slab B',$,$,#3,$,'SlabB',.ROOF.);
+#55=IFCWALL('${guid(55)}',$,'Wall',$,$,#3,$,'Wall',.NOTDEFINED.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50,#55),#40);
+#83=IFCRELAGGREGATES('${guid(83)}',$,$,$,#50,(#60,#61));
+#90=IFCWALLTYPE('${guid(90)}',$,'WallType',$,$,$,$,$,$,.NOTDEFINED.);
+#91=IFCRELDEFINESBYTYPE('${guid(91)}',$,$,$,(#55),#90);`);
+
+async function parse(model: string): Promise<IfcDataStore> {
+  return new IfcParser().parseColumnar(new TextEncoder().encode(model).buffer);
+}
+
+function mesh(expressId: number): MeshData {
+  return {
+    expressId,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    indices: new Uint32Array([0, 1, 2]),
+    color: [0.8, 0.6, 0.4, 1],
+  };
+}
+
+function geometryOf(...expressIds: number[]): GeometryResult {
+  const meshes = expressIds.map(mesh);
+  const min = { x: 0, y: 0, z: 0 };
+  const max = { x: 1, y: 1, z: 1 };
+  return {
+    meshes,
+    totalTriangles: meshes.length,
+    totalVertices: meshes.length * 3,
+    coordinateInfo: {
+      originShift: { x: 0, y: 0, z: 0 },
+      originalBounds: { min, max },
+      shiftedBounds: { min, max },
+      hasLargeCoordinates: false,
+    },
+  };
+}
+
+/** Every path actually reachable from the document root via `children`. */
+function reachablePaths(file: IfcxFileLike): Set<string> {
+  const byPath = new Map(file.data.map((n) => [n.path, n]));
+  const reached = new Set<string>();
+  const queue: string[] = byPath.has(DOCUMENT_ROOT_PATH) ? [DOCUMENT_ROOT_PATH] : [];
+  while (queue.length > 0) {
+    const path = queue.shift() as string;
+    if (reached.has(path)) continue;
+    reached.add(path);
+    for (const child of Object.values(byPath.get(path)?.children ?? {})) {
+      if (child) queue.push(child);
+    }
+  }
+  return reached;
+}
+
+function nodeNamed(file: IfcxFileLike, name: string): IfcxNodeLike | undefined {
+  return file.data.find((n) => n.attributes?.['bsi::ifc::prop::Name'] === name);
+}
+
+function classCodes(file: IfcxFileLike): string[] {
+  return file.data
+    .map((n) => n.attributes?.['bsi::ifc::class'])
+    .filter((c): c is { code: string } => typeof c === 'object' && c !== null && 'code' in c)
+    .map((c) => c.code);
+}
+
+describe('IFC5 export follows decomposition (#4841)', () => {
+  it('keeps an aggregated element the spatial structure never contains', async () => {
+    const store = await parse(ROOF_MODEL);
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    const slabA = nodeNamed(file, 'Roof Slab A');
+    const slabB = nodeNamed(file, 'Roof Slab B');
+    expect(slabA).toBeDefined();
+    expect(slabB).toBeDefined();
+
+    // ...under the roof that aggregates them, not loose at the document root
+    // and not under the storey, which contains neither.
+    const roof = nodeNamed(file, 'Roof');
+    expect(Object.values(roof?.children ?? {})).toEqual(
+      expect.arrayContaining([slabA?.path, slabB?.path]),
+    );
+
+    const reached = reachablePaths(file);
+    expect([reached.has(slabA?.path as string), reached.has(slabB?.path as string)]).toEqual([true, true]);
+  });
+
+  it('keeps the geometry of an aggregated element', async () => {
+    const store = await parse(ROOF_MODEL);
+    // Roof #50 carries no mesh of its own; all of its geometry is on its parts.
+    const result = new Ifc5Exporter(store, geometryOf(55, 60, 61)).export({});
+    const file: IfcxFileLike = JSON.parse(result.content);
+
+    const withMesh = file.data
+      .filter((n) => n.attributes?.['usd::usdgeom::mesh'] !== undefined)
+      .map((n) => n.attributes?.['bsi::ifc::prop::Name']);
+    expect(withMesh.sort()).toEqual(['Roof Slab A', 'Roof Slab B', 'Wall']);
+    expect(result.stats.meshCount).toBe(3);
+  });
+
+  it('still filters out what is not part of the model tree', async () => {
+    const store = await parse(ROOF_MODEL);
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    // The fix must not degenerate into `onlyTreeEntities: false`: type objects
+    // and relationship entities stay out, which is what the filter is for.
+    const codes = classCodes(file);
+    expect(codes).not.toContain('IfcWallType');
+    expect(codes).not.toContain('IfcRelDefinesByType');
+    expect(codes).not.toContain('IfcRelAggregates');
+    expect(codes).not.toContain('IfcRelContainedInSpatialStructure');
+    expect(codes.filter((c) => c === 'IfcSlab')).toHaveLength(2);
+  });
+
+  it('follows IfcRelNests the same way', async () => {
+    // The parser folds `IfcRelNests` into the same decomposition edge bucket,
+    // and a nested part loses its geometry to exactly the same filter.
+    const store = await parse(step(`#50=IFCFLOWTERMINAL('${guid(50)}',$,'Terminal',$,$,#3,$,'T1');
+#62=IFCDISTRIBUTIONPORT('${guid(62)}',$,'Port',$,$,#3,$,.SOURCE.,$,$);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50),#40);
+#84=IFCRELNESTS('${guid(84)}',$,$,$,#50,(#62));`));
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    const port = nodeNamed(file, 'Port');
+    expect(port).toBeDefined();
+    expect(Object.values(nodeNamed(file, 'Terminal')?.children ?? {})).toContain(port?.path);
+    expect(reachablePaths(file).has(port?.path as string)).toBe(true);
+  });
+
+  it('leaves spatial containment in charge where a file declares both', async () => {
+    // An element a file BOTH contains in a storey and aggregates into an
+    // assembly keeps the storey it has always been exported under —
+    // decomposition only speaks for a child containment leaves unplaced.
+    const store = await parse(step(`#50=IFCELEMENTASSEMBLY('${guid(50)}',$,'Assembly',$,$,#3,$,'A1',$,.NOTDEFINED.);
+#63=IFCBEAM('${guid(63)}',$,'Beam',$,$,#3,$,'B1',.BEAM.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50,#63),#40);
+#83=IFCRELAGGREGATES('${guid(83)}',$,$,$,#50,(#63));`));
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    const beam = nodeNamed(file, 'Beam');
+    expect(beam).toBeDefined();
+    expect(Object.values(nodeNamed(file, 'Storey')?.children ?? {})).toContain(beam?.path);
+    expect(Object.values(nodeNamed(file, 'Assembly')?.children ?? {})).not.toContain(beam?.path);
+  });
+
+  it('terminates on a cyclic decomposition and emits each member once', async () => {
+    // Entity references come from the file, so the aggregation graph can be
+    // cyclic; the closure is bounded by the set it is filling, so a cycle
+    // costs one visit per member rather than spinning.
+    const store = await parse(step(`#50=IFCROOF('${guid(50)}',$,'Roof',$,$,#3,$,'Roof',$);
+#60=IFCSLAB('${guid(60)}',$,'Roof Slab A',$,$,#3,$,'SlabA',.ROOF.);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid(70)}',$,$,$,(#50),#40);
+#83=IFCRELAGGREGATES('${guid(83)}',$,$,$,#50,(#60));
+#85=IFCRELAGGREGATES('${guid(85)}',$,$,$,#60,(#50));`));
+    const file: IfcxFileLike = JSON.parse(new Ifc5Exporter(store).export({ includeGeometry: false }).content);
+
+    expect(classCodes(file).filter((c) => c === 'IfcSlab')).toHaveLength(1);
+    expect(reachablePaths(file).has(nodeNamed(file, 'Roof Slab A')?.path as string)).toBe(true);
+  });
+});
