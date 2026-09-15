@@ -34,7 +34,7 @@ import { resolvePresentationIds } from '@/lib/presentation/resolvePresentationId
 import { deriveHeaderFiles } from './bcfHeaderFiles';
 import { toast } from '@/components/ui/toast';
 import { captureVisibility, describeVisibilityNotice } from './bcf/visibility-capture';
-import { sectionPlaneAtWorldPosition } from './bcf/section-plane-position';
+import { capturedSectionPlaneInput, type CapturedSectionPlane } from './bcf/section-plane-position';
 
 // ============================================================================
 // Types
@@ -51,7 +51,7 @@ interface CreateViewpointOptions {
   /** Include a snapshot image */
   includeSnapshot?: boolean;
   /** Already-rendered PNG; camera/clipping still use the canonical conversion. */ snapshotOverride?: string;
-  /** Exact world-space cut rendered by a 2D section snapshot. */ sectionPlaneWorldPosition?: number;
+  /** Exact cut rendered by a 2D section snapshot, independent of 3D clipping. */ capturedSectionPlane?: CapturedSectionPlane;
   /** Include selected entities */
   includeSelection?: boolean;
   /** Include hidden entities */
@@ -353,8 +353,7 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
   const createViewpointFromState = useCallback(
     async (opts: CreateViewpointOptions = {}): Promise<BCFViewpoint | null> => {
       const {
-        includeSnapshot = true, snapshotOverride,
-        sectionPlaneWorldPosition,
+        includeSnapshot = true, snapshotOverride, capturedSectionPlane,
         includeSelection = true,
         includeHidden = true,
         additionalSelectedRefs,
@@ -383,15 +382,16 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
       }
 
       const bounds = getBounds() ?? undefined;
-
-      const viewerSectionPlane = sectionPlane.enabled
-        ? sectionPlaneAtWorldPosition({
+      const capturedSection = capturedSectionPlane ? capturedSectionPlaneInput(capturedSectionPlane, bounds) : null;
+      const viewerSectionPlane = capturedSection?.sectionPlane ?? (sectionPlane.enabled
+        ? {
             axis: sectionPlane.axis,
             position: sectionPlane.position,
             enabled: true,
             flipped: sectionPlane.flipped,
-          }, bounds, sectionPlaneWorldPosition)
-        : undefined;
+          }
+        : undefined);
+      const viewpointBounds = capturedSection?.bounds ?? bounds;
 
       // Get selected GUIDs - convert expressIds to IFC GlobalId strings.
       // `additionalSelectedRefs` (the clash pair, #4806) is merged in
@@ -455,7 +455,7 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
       return createViewpoint({
         camera: cameraState,
         sectionPlane: viewerSectionPlane,
-        bounds,
+        bounds: viewpointBounds,
         snapshot,
         selectedGuids,
         hiddenGuids,

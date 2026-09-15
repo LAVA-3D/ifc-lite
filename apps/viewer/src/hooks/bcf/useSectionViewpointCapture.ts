@@ -15,12 +15,13 @@ import { useViewerStore } from '@/store';
 interface SectionViewpointOptions {
   includeSnapshot?: boolean;
   snapshotOverride?: string;
-  sectionPlaneWorldPosition?: number;
+  capturedSectionPlane?: { axis: 'down' | 'front' | 'side'; worldPosition: number; flipped: boolean };
   includeSelection?: boolean;
   includeHidden?: boolean;
 }
 
 type CreateViewpoint = (options?: SectionViewpointOptions) => Promise<BCFViewpoint | null>;
+const SECTION_AXIS = { x: 'side', y: 'down', z: 'front' } as const;
 
 /** Connect the mounted annotated 2D section canvas to the active BCF topic. */
 export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
@@ -52,7 +53,11 @@ export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
       const viewpoint = await createViewpoint({
         includeSnapshot: false,
         snapshotOverride: snapshot,
-        sectionPlaneWorldPosition: drawing.config.plane.position,
+        capturedSectionPlane: {
+          axis: SECTION_AXIS[drawing.config.plane.axis],
+          worldPosition: drawing.config.plane.position,
+          flipped: drawing.config.plane.flipped,
+        },
         includeSelection: true,
         includeHidden: true,
       });

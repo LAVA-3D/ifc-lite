@@ -22,6 +22,7 @@ import { useViewerStore } from '@/store/index.js';
 import { fixtureModel, fixtureModels } from '@/test/store-fixture.js';
 import { clearGlobalRefs, setGlobalRendererRef } from '@/hooks/useBCF.js';
 import { drawingWithReferenceBounds } from '@/lib/appearance/references/drawing.js';
+import { hasActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot.js';
 import { Drawing2DCanvas } from './Drawing2DCanvas.js';
 import { BCFPanel } from './BCFPanel.js';
 
@@ -191,8 +192,25 @@ test('Capture 2D accepts reference-expanded bounds painted for the generated dra
   assert.equal(capture.disabled, false, 'derived reference bounds retain the generated drawing identity');
 });
 
-test('Capture 2D preserves the generated cut across federated bounds (#4802)', async () => {
-  const small = { ...fixtureModel('small'), geometryResult: boundedGeometry(10) };
+test('Capture 2D includes its cut when the 3D clipping toggle is off (#4802)', async () => {
+  useViewerStore.setState({
+    sectionPlane: { ...useViewerStore.getState().sectionPlane, enabled: false },
+  });
+  const ui = render(<><TestSectionCanvas /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  await act(async () => {
+    capture.click();
+    await Promise.resolve();
+  });
+  const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
+  assert.equal(viewpoint?.clippingPlanes?.length, 1,
+    'the reviewed drawing carries its own cut independently of the 3D clip toggle');
+  assert.equal(viewpoint.clippingPlanes[0]?.location.z, DRAWING.config.plane.position);
+});
+
+test('Capture 2D preserves the generated cut with degenerate primary federated bounds (#4802)', async () => {
+  const small = { ...fixtureModel('small'), geometryResult: boundedGeometry(0) };
   const tall = { ...fixtureModel('tall', { idOffset: 1_000_000 }), geometryResult: boundedGeometry(30) };
   const federatedDrawing = { ...DRAWING, config: { ...DRAWING.config,
     plane: { ...DRAWING.config.plane, position: 15 } } };
@@ -212,7 +230,14 @@ test('Capture 2D preserves the generated cut across federated bounds (#4802)', a
   const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
   assert.equal(viewpoint?.clippingPlanes?.length, 1);
   assert.equal(viewpoint.clippingPlanes[0]?.location.z, 15,
-    'the BCF cut uses the merged 0..30 drawing position, not 50% of the first 0..10 model');
+    'the BCF cut preserves y=15 even though the first model has a zero-height range');
+});
+
+test('unmounting the production canvas clears its active capture lease (#4802)', () => {
+  render(<TestSectionCanvas />);
+  assert.equal(hasActiveDrawingCanvas(), true);
+  cleanup();
+  assert.equal(hasActiveDrawingCanvas(), false);
 });
 
 test('Capture 2D stays disabled for a custom plane that BCF cannot reproduce (#4802)', () => {

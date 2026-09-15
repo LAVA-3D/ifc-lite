@@ -4,17 +4,27 @@
 
 import type { ViewerBounds, ViewerSectionPlane } from '@ifc-lite/bcf';
 
-/** Convert an absolute rendered cut back through BCF's percentage input. */
-export function sectionPlaneAtWorldPosition(
-  sectionPlane: ViewerSectionPlane,
+export interface CapturedSectionPlane {
+  axis: ViewerSectionPlane['axis'];
+  worldPosition: number;
+  flipped: boolean;
+}
+
+/** Preserve an absolute rendered cut through BCF's percentage/bounds input. */
+export function capturedSectionPlaneInput(
+  captured: CapturedSectionPlane,
   bounds: ViewerBounds | undefined,
-  worldPosition: number | undefined,
-): ViewerSectionPlane {
-  if (worldPosition === undefined || !bounds) return sectionPlane;
-  const axis = sectionPlane.axis === 'side' ? 'x' : sectionPlane.axis === 'down' ? 'y' : 'z';
-  const range = bounds.max[axis] - bounds.min[axis];
-  return range === 0 ? sectionPlane : {
-    ...sectionPlane,
-    position: ((worldPosition - bounds.min[axis]) / range) * 100,
+): { sectionPlane: ViewerSectionPlane; bounds: ViewerBounds } {
+  const axis = captured.axis === 'side' ? 'x' : captured.axis === 'down' ? 'y' : 'z';
+  const source = bounds ?? { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
+  const range = source.max[axis] - source.min[axis];
+  if (range !== 0) return {
+    sectionPlane: { axis: captured.axis, flipped: captured.flipped, enabled: true,
+      position: ((captured.worldPosition - source.min[axis]) / range) * 100 },
+    bounds: source,
   };
+  const adjusted = { min: { ...source.min }, max: { ...source.max } };
+  adjusted.min[axis] = captured.worldPosition;
+  adjusted.max[axis] = captured.worldPosition;
+  return { sectionPlane: { axis: captured.axis, flipped: captured.flipped, enabled: true, position: 50 }, bounds: adjusted };
 }

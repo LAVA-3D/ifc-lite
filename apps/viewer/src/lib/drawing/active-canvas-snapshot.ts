@@ -11,8 +11,9 @@
 import type { Drawing2D } from '@ifc-lite/drawing-2d';
 
 let activeCanvas: HTMLCanvasElement | null = null;
-let renderedDrawing: Drawing2D | null = null;
-let capturableDrawing: Drawing2D | null = null;
+let activeRegistration: symbol | null = null;
+let renderedDrawing: WeakRef<Drawing2D> | null = null;
+let capturableDrawing: WeakRef<Drawing2D> | null = null;
 let renderedDrawingReady = false;
 let generationPending = false;
 const listeners = new Set<() => void>();
@@ -23,16 +24,20 @@ function notifyListeners(): void {
 
 /** Register the canvas that currently presents the 2D section. */
 export function registerActiveDrawingCanvas(canvas: HTMLCanvasElement, drawing: Drawing2D): () => void {
+  const registration = Symbol('drawing-canvas-registration');
   activeCanvas = canvas;
+  activeRegistration = registration;
   renderedDrawing = null;
   renderedDrawingReady = false;
-  if (!generationPending) capturableDrawing = drawing;
+  if (!generationPending) capturableDrawing = new WeakRef(drawing);
   notifyListeners();
   return () => {
     // A stale cleanup must not unregister a newer mounted canvas.
-    if (activeCanvas === canvas) {
+    if (activeRegistration === registration) {
       activeCanvas = null;
+      activeRegistration = null;
       renderedDrawing = null;
+      capturableDrawing = null;
       renderedDrawingReady = false;
       notifyListeners();
     }
@@ -49,7 +54,7 @@ export function markActiveDrawingGenerationStarted(): void {
 /** Identify the replacement drawing that a completed generation produced. */
 export function markActiveDrawingGenerationCompleted(drawing: Drawing2D): void {
   generationPending = false;
-  capturableDrawing = drawing;
+  capturableDrawing = new WeakRef(drawing);
   notifyListeners();
 }
 
@@ -60,7 +65,7 @@ export function markActiveDrawingCanvasRendered(
   ready: boolean,
 ): void {
   if (activeCanvas !== canvas) return;
-  renderedDrawing = drawing;
+  renderedDrawing = new WeakRef(drawing);
   renderedDrawingReady = ready;
   notifyListeners();
 }
@@ -73,10 +78,11 @@ export function subscribeActiveDrawingCanvas(listener: () => void): () => void {
 
 /** React-compatible snapshot of the mounted canvas state. */
 export function hasActiveDrawingCanvas(): boolean {
+  const rendered = renderedDrawing?.deref();
   return !generationPending
     && renderedDrawingReady
-    && renderedDrawing !== null
-    && renderedDrawing === capturableDrawing
+    && rendered !== undefined
+    && rendered === capturableDrawing?.deref()
     && activeCanvas !== null
     && activeCanvas.width > 0
     && activeCanvas.height > 0;
