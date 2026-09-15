@@ -269,6 +269,9 @@ function descendants(childId: number, edges: RelationEdges, budget: { visits: nu
 function addParents(graph: EffectiveTreeGraph, treeIds: Set<number>, parentOf: Map<number, number>): void {
   // Containment remains authoritative where a file declares both mechanisms.
   for (const [childId, parents] of graph.containment.parentsByChild) {
+    // A zero-byte/synthetic store has no record stream from which to rebuild
+    // effective relations; its pre-digested spatial hierarchy is canonical.
+    if (parentOf.has(childId)) continue;
     const winner = parents.find((parent) => treeIds.has(parent)) ?? parents[0];
     if (winner !== undefined) parentOf.set(childId, winner);
   }
