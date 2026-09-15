@@ -238,7 +238,6 @@ function drawScanSectionScreenSpace(
   ctx.restore();
 }
 
-// Static constants to avoid creating new objects/arrays on every render
 const CANVAS_STYLE = { imageRendering: 'crisp-edges' as const };
 const EMPTY_MEASURE_RESULTS: Measure2DResultData[] = [];
 const EMPTY_UNIT_DISPLAY_OVERRIDES: Record<string, string> = {};
@@ -252,6 +251,7 @@ export interface Measure2DResultData {
 
 interface Drawing2DCanvasProps {
   drawing: Drawing2D;
+  snapshotSourceDrawing?: Drawing2D;
   transform: { x: number; y: number; scale: number };
   showHiddenLines: boolean;
   overrideEngine: GraphicOverrideEngine;
@@ -302,6 +302,7 @@ interface Drawing2DCanvasProps {
 
 export function Drawing2DCanvas({
   drawing,
+  snapshotSourceDrawing = drawing,
   transform,
   showHiddenLines,
   overrideEngine,
@@ -340,8 +341,7 @@ export function Drawing2DCanvas({
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // Resolved once per (model set, polygon set) change, never per draw frame.
   const getElementProperties = useDrawingElementPropertiesLookup(drawing, overrideEngine, overridesEnabled);
-  useEffect(() => canvasRef.current ? registerActiveDrawingCanvas(canvasRef.current, drawing) : undefined, [drawing]);
-  // ResizeObserver to track canvas size changes
+  useEffect(() => canvasRef.current ? registerActiveDrawingCanvas(canvasRef.current, snapshotSourceDrawing) : undefined, [snapshotSourceDrawing]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1739,8 +1739,8 @@ export function Drawing2DCanvas({
         }
       }
     }
-    markActiveDrawingCanvasRendered(canvas, drawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, unitDisplayOverrides]);
+    markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
+  }, [referenceImages, drawing, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, unitDisplayOverrides]);
 
   return (
     <canvas

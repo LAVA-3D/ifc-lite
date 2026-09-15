@@ -15,6 +15,7 @@ import { useViewerStore } from '@/store';
 interface SectionViewpointOptions {
   includeSnapshot?: boolean;
   snapshotOverride?: string;
+  sectionPlaneWorldPosition?: number;
   includeSelection?: boolean;
   includeHidden?: boolean;
 }
@@ -41,7 +42,7 @@ export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
   const canCapture = panelVisible && status === 'ready' && drawing !== null && canvasMounted && !editingText && !customPlane;
 
   const capture = useCallback(async () => {
-    if (!activeTopicId) return;
+    if (!activeTopicId || !drawing) return;
     try {
       const snapshot = captureActiveDrawingSnapshot();
       if (!snapshot) {
@@ -51,6 +52,7 @@ export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
       const viewpoint = await createViewpoint({
         includeSnapshot: false,
         snapshotOverride: snapshot,
+        sectionPlaneWorldPosition: drawing.config.plane.position,
         includeSelection: true,
         includeHidden: true,
       });
@@ -64,7 +66,7 @@ export function useSectionViewpointCapture(createViewpoint: CreateViewpoint): {
       console.error('[BCFPanel] Failed to capture the 2D section:', error);
       toast.error('The 2D section could not be captured.');
     }
-  }, [activeTopicId, addViewpoint, createViewpoint]);
+  }, [activeTopicId, addViewpoint, createViewpoint, drawing]);
 
   return { canCapture, capture };
 }

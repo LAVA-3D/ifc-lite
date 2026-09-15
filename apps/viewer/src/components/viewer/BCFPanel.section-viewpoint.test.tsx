@@ -14,11 +14,14 @@ import { afterEach, beforeEach, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
 import type { Renderer } from '@ifc-lite/renderer';
+import type { GeometryResult } from '@ifc-lite/geometry';
 import { createBCFProject, createBCFTopic } from '@ifc-lite/bcf';
 import { GraphicOverrideEngine, type Drawing2D } from '@ifc-lite/drawing-2d';
 import { render, cleanup } from '@/test/render.js';
 import { useViewerStore } from '@/store/index.js';
+import { fixtureModel, fixtureModels } from '@/test/store-fixture.js';
 import { clearGlobalRefs, setGlobalRendererRef } from '@/hooks/useBCF.js';
+import { drawingWithReferenceBounds } from '@/lib/appearance/references/drawing.js';
 import { Drawing2DCanvas } from './Drawing2DCanvas.js';
 import { BCFPanel } from './BCFPanel.js';
 
@@ -57,12 +60,25 @@ const TEXT_ANNOTATION = {
   borderColor: '#ff0000',
 };
 
-function TestSectionCanvas(): React.ReactElement {
+function boundedGeometry(maxY: number): GeometryResult {
+  const bounds = { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: maxY, z: 10 } };
+  return {
+    meshes: [], totalVertices: 0, totalTriangles: 0,
+    coordinateInfo: { originShift: { x: 0, y: 0, z: 0 }, originalBounds: bounds,
+      shiftedBounds: bounds, hasLargeCoordinates: false },
+  };
+}
+
+function TestSectionCanvas({ drawing = DRAWING, snapshotSourceDrawing }: {
+  drawing?: Drawing2D;
+  snapshotSourceDrawing?: Drawing2D;
+} = {}): React.ReactElement {
   const textAnnotations = useViewerStore((state) => state.textAnnotations2D);
   const textAnnotationEditing = useViewerStore((state) => state.textAnnotation2DEditing);
   return (
     <Drawing2DCanvas
-      drawing={DRAWING}
+      drawing={drawing}
+      snapshotSourceDrawing={snapshotSourceDrawing}
       transform={{ x: 100, y: 100, scale: 10 }}
       showHiddenLines={false}
       overrideEngine={new GraphicOverrideEngine()}
@@ -162,6 +178,41 @@ test('Capture 2D attaches the painted annotated section to the active BCF topic 
   assert.ok(viewpoint.snapshot, 'the viewpoint carries an image');
   const imagePayload = Buffer.from(viewpoint.snapshot.split(',')[1] ?? '', 'base64').toString();
   assert.match(imagePayload, /Check fire rating/, 'the captured canvas includes the reviewed annotation');
+});
+
+test('Capture 2D accepts reference-expanded bounds painted for the generated drawing (#4802)', () => {
+  const corners = [{ x: -5, y: -4 }, { x: 15, y: -4 }, { x: 15, y: 14 }, { x: -5, y: 14 }] as const;
+  const drawingWithReferences = drawingWithReferenceBounds(DRAWING, [corners]);
+  assert.notEqual(drawingWithReferences, DRAWING, 'reference bounds are a derived display drawing');
+
+  const ui = render(<><TestSectionCanvas drawing={drawingWithReferences} snapshotSourceDrawing={DRAWING} /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  assert.equal(capture.disabled, false, 'derived reference bounds retain the generated drawing identity');
+});
+
+test('Capture 2D preserves the generated cut across federated bounds (#4802)', async () => {
+  const small = { ...fixtureModel('small'), geometryResult: boundedGeometry(10) };
+  const tall = { ...fixtureModel('tall', { idOffset: 1_000_000 }), geometryResult: boundedGeometry(30) };
+  const federatedDrawing = { ...DRAWING, config: { ...DRAWING.config,
+    plane: { ...DRAWING.config.plane, position: 15 } } };
+  useViewerStore.setState({
+    ...fixtureModels(small, tall),
+    drawing2D: federatedDrawing,
+  });
+
+  const ui = render(<><TestSectionCanvas drawing={federatedDrawing} /><BCFPanel onClose={() => {}} /></>);
+  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+  assert.ok(capture);
+  await act(async () => {
+    capture.click();
+    await Promise.resolve();
+  });
+
+  const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
+  assert.equal(viewpoint?.clippingPlanes?.length, 1);
+  assert.equal(viewpoint.clippingPlanes[0]?.location.z, 15,
+    'the BCF cut uses the merged 0..30 drawing position, not 50% of the first 0..10 model');
 });
 
 test('Capture 2D stays disabled for a custom plane that BCF cannot reproduce (#4802)', () => {

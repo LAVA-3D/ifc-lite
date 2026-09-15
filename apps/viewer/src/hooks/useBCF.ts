@@ -19,7 +19,6 @@ import {
   extractViewpointState,
   computeMarkerPositions,
   type ViewerCameraState,
-  type ViewerSectionPlane,
   type ViewerBounds,
   type OverlayBBox,
 } from '@ifc-lite/bcf';
@@ -35,6 +34,7 @@ import { resolvePresentationIds } from '@/lib/presentation/resolvePresentationId
 import { deriveHeaderFiles } from './bcfHeaderFiles';
 import { toast } from '@/components/ui/toast';
 import { captureVisibility, describeVisibilityNotice } from './bcf/visibility-capture';
+import { sectionPlaneAtWorldPosition } from './bcf/section-plane-position';
 
 // ============================================================================
 // Types
@@ -51,6 +51,7 @@ interface CreateViewpointOptions {
   /** Include a snapshot image */
   includeSnapshot?: boolean;
   /** Already-rendered PNG; camera/clipping still use the canonical conversion. */ snapshotOverride?: string;
+  /** Exact world-space cut rendered by a 2D section snapshot. */ sectionPlaneWorldPosition?: number;
   /** Include selected entities */
   includeSelection?: boolean;
   /** Include hidden entities */
@@ -353,6 +354,7 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
     async (opts: CreateViewpointOptions = {}): Promise<BCFViewpoint | null> => {
       const {
         includeSnapshot = true, snapshotOverride,
+        sectionPlaneWorldPosition,
         includeSelection = true,
         includeHidden = true,
         additionalSelectedRefs,
@@ -380,18 +382,16 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
         return null;
       }
 
-      // Convert section plane state
-      const viewerSectionPlane: ViewerSectionPlane | undefined = sectionPlane.enabled
-        ? {
+      const bounds = getBounds() ?? undefined;
+
+      const viewerSectionPlane = sectionPlane.enabled
+        ? sectionPlaneAtWorldPosition({
             axis: sectionPlane.axis,
             position: sectionPlane.position,
             enabled: true,
             flipped: sectionPlane.flipped,
-          }
+          }, bounds, sectionPlaneWorldPosition)
         : undefined;
-
-      // Get bounds for section plane conversion
-      const bounds = getBounds() ?? undefined;
 
       // Get selected GUIDs - convert expressIds to IFC GlobalId strings.
       // `additionalSelectedRefs` (the clash pair, #4806) is merged in
