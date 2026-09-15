@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { act, useState } from 'react';
 import type { Renderer } from '@ifc-lite/renderer';
 import type { GeometryResult } from '@ifc-lite/geometry';
-import { createBCFProject, createBCFTopic } from '@ifc-lite/bcf';
+import { createBCFProject, createBCFTopic, writeBCF } from '@ifc-lite/bcf';
 import { GraphicOverrideEngine, type Drawing2D } from '@ifc-lite/drawing-2d';
 import { render, cleanup } from '@/test/render.js';
 import { useViewerStore } from '@/store/index.js';
@@ -62,6 +62,10 @@ const TEXT_ANNOTATION = {
 
 function boundedGeometry(maxY: number, minY = 0): GeometryResult {
   const bounds = { min: { x: 0, y: minY, z: 0 }, max: { x: 10, y: maxY, z: 10 } };
+  return geometryWithBounds(bounds);
+}
+
+function geometryWithBounds(bounds: GeometryResult['coordinateInfo']['originalBounds']): GeometryResult {
   return {
     meshes: [], totalVertices: 0, totalTriangles: 0,
     coordinateInfo: { originShift: { x: 0, y: 0, z: 0 }, originalBounds: bounds,
@@ -256,29 +260,49 @@ test('Capture 2D preserves an absolute cut outside the primary model bounds (#48
     'percentage conversion through primary bounds 0..10 reconstructs the absolute federated cut');
 });
 
-test('Capture 2D preserves a finite cut when source bounds overflow their range (#4802)', async () => {
-  const extreme = { ...fixtureModel('extreme'),
-    geometryResult: boundedGeometry(Number.MAX_VALUE, -Number.MAX_VALUE) };
-  const extremeDrawing = { ...DRAWING, config: { ...DRAWING.config,
-    plane: { ...DRAWING.config.plane, position: 42 } } };
-  useViewerStore.setState({
-    ...fixtureModels(extreme),
-    drawing2D: extremeDrawing,
-  });
+const NUMERIC_CAPTURE_CASES = [
+  {
+    name: 'overflowing selected-axis range',
+    bounds: { min: { x: 0, y: -Number.MAX_VALUE, z: 0 }, max: { x: 10, y: Number.MAX_VALUE, z: 10 } },
+    cut: 42,
+  },
+  {
+    name: 'selected-axis cancellation',
+    bounds: { min: { x: 0, y: -1e20, z: 0 }, max: { x: 10, y: 1e20, z: 10 } },
+    cut: 42,
+  },
+  {
+    name: 'selected-axis reconstruction overflow',
+    bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: 1e6, z: 10 } },
+    cut: Number.MAX_VALUE,
+  },
+  {
+    name: 'off-axis midpoint overflow',
+    bounds: { min: { x: 1e308, y: 0, z: 0 }, max: { x: 1.1e308, y: 0, z: 10 } },
+    cut: 42,
+  },
+] as const;
 
-  const ui = render(<><TestSectionCanvas drawing={extremeDrawing} /><BCFPanel onClose={() => {}} /></>);
-  const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
-  assert.ok(capture);
-  await act(async () => {
-    capture.click();
-    await Promise.resolve();
-  });
+for (const scenario of NUMERIC_CAPTURE_CASES) {
+  test(`Capture 2D serializes the exact finite cut with ${scenario.name} (#4802)`, async () => {
+    const extreme = { ...fixtureModel('extreme'), geometryResult: geometryWithBounds(scenario.bounds) };
+    const extremeDrawing = { ...DRAWING, config: { ...DRAWING.config,
+      plane: { ...DRAWING.config.plane, position: scenario.cut } } };
+    useViewerStore.setState({ ...fixtureModels(extreme), drawing2D: extremeDrawing });
 
-  const viewpoint = useViewerStore.getState().bcfProject?.topics.get(topicGuid)?.viewpoints[0];
-  assert.equal(viewpoint?.clippingPlanes?.length, 1);
-  assert.equal(viewpoint.clippingPlanes[0]?.location.z, 42,
-    'overflowing finite source bounds fall back to bounds anchored at the exact cut');
-});
+    const ui = render(<><TestSectionCanvas drawing={extremeDrawing} /><BCFPanel onClose={() => {}} /></>);
+    const capture = ui.querySelector<HTMLButtonElement>('[aria-label="Capture current 2D section as viewpoint"]');
+    assert.ok(capture);
+    await act(async () => { capture.click(); await Promise.resolve(); });
+
+    const project = useViewerStore.getState().bcfProject;
+    const plane = project?.topics.get(topicGuid)?.viewpoints[0]?.clippingPlanes?.[0];
+    assert.ok(plane);
+    assert.equal(plane.location.z, scenario.cut, 'the serialized BCF coordinate preserves the exact viewer Y cut');
+    assert.ok(Object.values(plane.location).every(Number.isFinite), 'all clipping-plane coordinates stay finite');
+    assert.ok((await writeBCF(project)).size > 0, 'the actual BCF writer accepts the captured clipping plane');
+  });
+}
 
 test('unmounting the production canvas disables its active capture lease (#4802)', () => {
   function Harness(): React.ReactElement {
