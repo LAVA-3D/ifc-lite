@@ -19,7 +19,7 @@
  * and `schedule-calendar-types.ts` (calendars) — this file owns only the
  * cross-entity orchestration (the multi-pass walk below that wires those
  * records together via their IFC relationships); the calendar-assignment
- * half of that walk is in `schedule-calendar-extractor.ts`, split out
+ * half of that walk is in `schedule-control-extractor.ts`, split out
  * purely to keep this file under the ~400-line module-size guideline.
  */
 
@@ -291,7 +291,7 @@ export function extractScheduleOnDemand(store: IfcDataStore): ScheduleExtraction
 
   // Pass 4c: extract IfcWorkCalendar entities. Collection + the
   // calendar-assignment branch of Pass 5 live in
-  // `schedule-calendar-extractor.ts` — split out purely for module size.
+  // `schedule-control-extractor.ts` — split out purely for module size.
   const { workCalendars, calendarByExpressId } = extractWorkCalendars(extractor, store, workCalendarIds);
 
   // Pass 5: IfcRelAssignsToControl — map schedules to tasks, (a second,
