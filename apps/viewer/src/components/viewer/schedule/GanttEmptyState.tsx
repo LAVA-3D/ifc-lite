@@ -14,6 +14,8 @@ interface GanttEmptyStateProps {
   extractionError?: string | null;
   /** The extraction contains at least one visible IfcWorkPlan container. */
   hasWorkPlans?: boolean;
+  /** The model has tasks, but the selected IfcWorkSchedule contains none. */
+  selectedScheduleEmpty?: boolean;
   onClose?: () => void;
   onGenerate?: () => void;
   /** Opens the file picker to import an MS Project (MSPDI) / Gantt CSV file. */
@@ -43,6 +45,7 @@ export function GanttEmptyState({
   canGenerate,
   extractionError,
   hasWorkPlans,
+  selectedScheduleEmpty,
   onClose,
   onGenerate,
   onImport,
@@ -99,6 +102,14 @@ export function GanttEmptyState({
               )}
             </div>
           ) : null}
+        </>
+      ) : selectedScheduleEmpty ? (
+        <>
+          <h3 className="text-sm font-semibold text-foreground">No tasks in selected schedule</h3>
+          <p className="text-xs max-w-md">
+            Choose <span className="font-medium text-foreground">All tasks</span> or another
+            schedule to see the model&apos;s other <span className="font-mono">IfcTask</span> records.
+          </p>
         </>
       ) : hasWorkPlans ? (
         <>

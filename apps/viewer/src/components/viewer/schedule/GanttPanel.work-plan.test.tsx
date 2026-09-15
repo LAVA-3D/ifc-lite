@@ -11,6 +11,7 @@ import {
   serializeScheduleToStep,
   type IfcDataStore,
   type ScheduleExtraction,
+  type ScheduleTaskInfo,
   type WorkScheduleInfo,
 } from '@ifc-lite/parser';
 import { cleanup, render } from '@/test/render.js';
@@ -33,11 +34,14 @@ function control(
   };
 }
 
-async function parseSchedule(workSchedules: WorkScheduleInfo[]): Promise<IfcDataStore> {
+async function parseSchedule(
+  workSchedules: WorkScheduleInfo[],
+  tasks: ScheduleTaskInfo[] = [],
+): Promise<IfcDataStore> {
   const extraction: ScheduleExtraction = {
     hasSchedule: true,
     workSchedules,
-    tasks: [],
+    tasks,
     sequences: [],
     workCalendars: [],
   };
@@ -115,5 +119,45 @@ describe('GanttPanel loaded IfcWorkPlan read path', () => {
 
     assert.match(ui.textContent ?? '', /Federated fit-out plan.*No nested schedules/);
     assert.doesNotMatch(ui.textContent ?? '', /Delivery plan/);
+  });
+
+  it('distinguishes an empty selected schedule from a model with no IfcTask records (#4834)', async () => {
+    const scheduledTask: ScheduleTaskInfo = {
+      expressId: 0,
+      globalId: 'task-fit-out',
+      name: 'Install finishes',
+      isMilestone: false,
+      childGlobalIds: [],
+      productExpressIds: [],
+      productGlobalIds: [],
+      controllingScheduleGlobalIds: ['schedule-populated'],
+      taskTime: {
+        scheduleStart: '2026-09-15T08:00:00',
+        scheduleFinish: '2026-09-16T08:00:00',
+      },
+    };
+    const emptySchedule = {
+      ...control('WorkSchedule', 'schedule-empty', 'Empty first programme'),
+      taskGlobalIds: [],
+    };
+    const populatedSchedule = {
+      ...control('WorkSchedule', 'schedule-populated', 'Fit-out programme'),
+      taskGlobalIds: [scheduledTask.globalId],
+    };
+    const store = await parseSchedule([emptySchedule, populatedSchedule], [scheduledTask]);
+    const active = model('model-schedules', store, 0);
+    useViewerStore.setState({
+      models: new Map([[active.id, active]]),
+      activeModelId: active.id,
+      ifcDataStore: active.ifcDataStore,
+      scheduleData: null,
+    });
+
+    const ui = render(<GanttPanel />);
+
+    assert.match(ui.textContent ?? '', /No tasks in selected schedule/);
+    assert.match(ui.textContent ?? '', /Choose All tasks/);
+    assert.doesNotMatch(ui.textContent ?? '', /has no IfcTask records/);
+    assert.doesNotMatch(ui.textContent ?? '', /Generate schedule/);
   });
 });
