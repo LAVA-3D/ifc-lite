@@ -47,7 +47,11 @@ export function createSheetPersistence() {
         if (!pending) pendingReplacements.set(entry.source, pending = new Map());
         pending.set(modelId, entry);
       }
-      entry = { source, sheet: null, dirty: false, enabled: false };
+      // Returning to the same source before hashing completes must resume its
+      // original edit session, not create a blank session that shadows it.
+      const pending = source ? pendingReplacements.get(source) : undefined;
+      entry = pending?.get(modelId) ?? { source, sheet: null, dirty: false, enabled: false };
+      pending?.delete(modelId);
       sheets.set(modelId, entry);
     }
     return entry;

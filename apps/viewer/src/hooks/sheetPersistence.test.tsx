@@ -139,4 +139,24 @@ describe('sheet persistence lifecycle (#4836)', () => {
     bridge.settleHash(original.id, 'original-pending-hash', original.sourceFile);
     assert.equal(useViewerStore.getState().activeSheet?.name, 'Original pending edit');
   });
+
+  it('resumes A → B → A pending source edits before either hash settles', () => {
+    const a = model('pending-return');
+    const b = { ...a, sourceFile: new File(['other source'], 'b.ifc') };
+    useViewerStore.setState({ models: new Map([[a.id, a]]), activeModelId: a.id });
+    bridge = createSheetPersistence();
+    useViewerStore.getState().createSheet();
+    useViewerStore.getState().updateSheet({ name: 'Pending A' });
+    useViewerStore.setState({ models: new Map([[a.id, b]]) });
+    useViewerStore.getState().createSheet();
+    useViewerStore.getState().updateSheet({ name: 'Pending B' });
+    useViewerStore.setState({ models: new Map([[a.id, a]]) });
+    assert.equal(useViewerStore.getState().activeSheet?.name, 'Pending A');
+    useViewerStore.getState().updateSheet({ name: 'Newest A' });
+    bridge.settleHash(a.id, 'returned-a', a.sourceFile);
+    bridge.settleHash(a.id, 'returned-b', b.sourceFile);
+    assert.equal(useViewerStore.getState().activeSheet?.name, 'Newest A');
+    assert.equal(loadSheet('returned-a')?.name, 'Newest A');
+    assert.equal(loadSheet('returned-b')?.name, 'Pending B');
+  });
 });
