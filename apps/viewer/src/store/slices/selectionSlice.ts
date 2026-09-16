@@ -217,11 +217,12 @@ export const createSelectionSlice: StateCreator<SelectionSlice, [], [], Selectio
   removeEntityFromSelection: (ref) => set((state) => {
     const key = entityRefToString(ref);
     const newSet = new Set(state.selectedEntitiesSet);
-    newSet.delete(key);
+    const removed = newSet.delete(key);
 
     // Update primary selection if needed
     let newPrimary: EntityRef | null = state.selectedEntity;
-    if (state.selectedEntity?.modelId === ref.modelId && state.selectedEntity?.expressId === ref.expressId) {
+    const removedPrimary = state.selectedEntity?.modelId === ref.modelId && state.selectedEntity?.expressId === ref.expressId;
+    if (removedPrimary) {
       // Primary was removed, pick another if available
       const remaining = Array.from(newSet);
       newPrimary = remaining.length > 0 ? stringToEntityRef(remaining[remaining.length - 1]) : null;
@@ -230,7 +231,7 @@ export const createSelectionSlice: StateCreator<SelectionSlice, [], [], Selectio
     return {
       selectedEntitiesSet: newSet,
       selectedEntity: newPrimary,
-      selectionRevision: newPrimary ? state.selectionRevision : state.selectionRevision + 1,
+      selectionRevision: removed || removedPrimary ? state.selectionRevision + 1 : state.selectionRevision,
       // NOTE: Don't update selectedEntityId here - caller should manage it separately
       // Clear it only if nothing is selected
       selectedEntityId: newPrimary ? state.selectedEntityId : null,

@@ -44,6 +44,8 @@ export function captureUiSnapshot(store: ViewerStoreApi): UiSnapshot {
       selectedEntitiesSet: [...s.selectedEntitiesSet],
       selectedEntities: [...s.selectedEntities],
       selectedModelId: s.selectedModelId,
+      chartOwned: s.chartSelectionRevision != null
+        && s.chartSelectionRevision === s.selectionRevision,
     },
     activeStorey: s.activeStorey,
     selectedStoreys: [...s.selectedStoreys],
@@ -113,16 +115,22 @@ export function restoreUiSnapshot(
         selectionRevision: store.getState().selectionRevision + 1,
       });
     } else {
-      store.setState({
-        selectedEntityId: snapshot.selection.selectedEntityId,
-        selectedEntityIds: new Set(snapshot.selection.selectedEntityIds),
-        selectedEntity: snapshot.selection.selectedEntity,
-        selectedEntitiesSet: new Set(snapshot.selection.selectedEntitiesSet),
-        selectedEntities: [...snapshot.selection.selectedEntities],
-        selectedModelId: snapshot.selection.selectedModelId,
-        selectedStoreys: new Set(snapshot.selectedStoreys),
-        activeStorey: snapshot.activeStorey,
-        selectionRevision: store.getState().selectionRevision + 1,
+      store.setState((state) => {
+        const selectionRevision = state.selectionRevision + 1;
+        return {
+          selectedEntityId: snapshot.selection.selectedEntityId,
+          selectedEntityIds: new Set(snapshot.selection.selectedEntityIds),
+          selectedEntity: snapshot.selection.selectedEntity,
+          selectedEntitiesSet: new Set(snapshot.selection.selectedEntitiesSet),
+          selectedEntities: [...snapshot.selection.selectedEntities],
+          selectedModelId: snapshot.selection.selectedModelId,
+          selectedStoreys: new Set(snapshot.selectedStoreys),
+          activeStorey: snapshot.activeStorey,
+          selectionRevision,
+          ...(snapshot.selection.chartOwned && state.chartSlice
+            ? { chartSelectionRevision: selectionRevision }
+            : {}),
+        };
       });
     }
   }

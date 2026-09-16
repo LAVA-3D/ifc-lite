@@ -14,6 +14,7 @@ interface SelectionSnapshot {
   selectedEntitiesSet: Set<string>;
   selectedEntities: ReturnType<typeof useViewerStore.getState>['selectedEntities'];
   selectedModelId: string | null;
+  chartOwned: boolean;
 }
 
 function hasSelection(snapshot: SelectionSnapshot): boolean {
@@ -35,19 +36,27 @@ function snapshotSelectionState(): SelectionSnapshot {
     selectedEntitiesSet: new Set(state.selectedEntitiesSet),
     selectedEntities: state.selectedEntities.map((ref) => ({ ...ref })),
     selectedModelId: state.selectedModelId,
+    chartOwned: state.chartSelectionRevision != null
+      && state.chartSelectionRevision === state.selectionRevision,
   };
 }
 
 function restoreSelectionState(snapshot: SelectionSnapshot): void {
-  useViewerStore.setState((state) => ({
-    selectedEntityId: snapshot.selectedEntityId,
-    selectedEntityIds: new Set(snapshot.selectedEntityIds),
-    selectedEntity: snapshot.selectedEntity ? { ...snapshot.selectedEntity } : null,
-    selectedEntitiesSet: new Set(snapshot.selectedEntitiesSet),
-    selectedEntities: snapshot.selectedEntities.map((ref) => ({ ...ref })),
-    selectedModelId: snapshot.selectedModelId,
-    selectionRevision: state.selectionRevision + 1,
-  }));
+  useViewerStore.setState((state) => {
+    const selectionRevision = state.selectionRevision + 1;
+    return {
+      selectedEntityId: snapshot.selectedEntityId,
+      selectedEntityIds: new Set(snapshot.selectedEntityIds),
+      selectedEntity: snapshot.selectedEntity ? { ...snapshot.selectedEntity } : null,
+      selectedEntitiesSet: new Set(snapshot.selectedEntitiesSet),
+      selectedEntities: snapshot.selectedEntities.map((ref) => ({ ...ref })),
+      selectedModelId: snapshot.selectedModelId,
+      selectionRevision,
+      ...(snapshot.chartOwned && state.chartSlice
+        ? { chartSelectionRevision: selectionRevision }
+        : {}),
+    };
+  });
 }
 
 async function captureCanvasThumbnail(): Promise<string | null> {
@@ -111,16 +120,18 @@ export async function saveBasketViewWithThumbnailFromStore(
 ): Promise<string | null> {
   const before = snapshotSelectionState();
   const hadSelection = hasSelection(before);
+  let clearedSelectionRevision: number | null = null;
 
   if (hadSelection) {
     useViewerStore.getState().clearEntitySelection();
+    clearedSelectionRevision = useViewerStore.getState().selectionRevision;
   }
 
   try {
     const thumbnailDataUrl = await captureCanvasThumbnail();
     return useViewerStore.getState().saveCurrentBasketView({ source, thumbnailDataUrl });
   } finally {
-    if (hadSelection) {
+    if (hadSelection && useViewerStore.getState().selectionRevision === clearedSelectionRevision) {
       restoreSelectionState(before);
     }
   }

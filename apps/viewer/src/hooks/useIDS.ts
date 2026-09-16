@@ -690,7 +690,8 @@ export function useIDS(options: UseIDSOptions = {}): UseIDSResult {
   /** Install the row focus's ghosting (X-Ray context) into the shared channel,
    *  with the same install-record contract as `installFocusIsolation`. */
   const installFocusGhost = useCallback((ids: Set<number>): void => {
-    const installed = new Set(ids);
+    const state = useViewerStore.getState();
+    const installed = new Set(resolvePresentationIds(state.cameraCallbacks.resolveHighlightIds, [...ids]));
     installIdsFocusVisibility('ghost', installed);
   }, []);
 

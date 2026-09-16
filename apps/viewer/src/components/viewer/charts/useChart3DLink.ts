@@ -212,9 +212,14 @@ export function useChart3DLink(): Chart3DLink {
 
   // When the focus mode changes while a chart selection is on screen, re-present it.
   useEffect(() => {
-    if (chartSlice && chartSelectionRevision === selectionRevision && chartSlice.size > 0) {
-      presentChartIds([...chartSlice], focusMode);
-    }
+    if (!chartSlice || chartSelectionRevision !== selectionRevision || chartSlice.size === 0) return;
+    const current = useViewerStore.getState();
+    if (
+      current.chartSlice !== chartSlice
+      || current.chartSelectionRevision !== chartSelectionRevision
+      || current.selectionRevision !== selectionRevision
+    ) return;
+    presentChartIds([...chartSlice], current.chartFocusMode);
   }, [chartSlice, chartSelectionRevision, focusMode, selectionRevision]);
 
   // Release the presentation when the panel goes away.

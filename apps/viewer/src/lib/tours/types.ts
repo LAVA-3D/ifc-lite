@@ -172,6 +172,8 @@ export interface UiSnapshot {
     selectedEntitiesSet: string[];
     selectedEntities: EntityRef[];
     selectedModelId: string | null;
+    /** Whether Charts authored the captured entity selection revision. */
+    chartOwned: boolean;
   };
   activeStorey: EntityRef | null;
   selectedStoreys: number[];

@@ -79,9 +79,7 @@ describe('chart click replacement selection (#4832)', () => {
         };
       };
     };
-    const rawIndex = (seriesIndex: number, dataIndexInside: number): number => (
-      internals.getModel().getSeriesByIndex(seriesIndex).getData().getRawIndex(dataIndexInside)
-    );
+    const rawIndex = rawIndexResolver(chart);
     chart.on('selectchanged', (rawEvent) => {
       const event = rawEvent as Parameters<typeof selectionFromEChartEvent>[0];
       rawEvents.push(event);
@@ -160,31 +158,39 @@ describe('chart click replacement selection (#4832)', () => {
     }
   });
 
-  it('applies the inverse treemap offset when feedback highlights first and last buckets (#4832)', () => {
+  it('applies the inverse treemap offset when feedback highlights first and last buckets (#4832)', async () => {
     const host = document.createElement('div');
+    document.body.appendChild(host);
     const chart = echarts.init(host, undefined, { renderer: 'svg', width: 400, height: 300 });
     chart.setOption({
       animation: false,
       series: [{ type: 'treemap', emphasis: { focus: 'self' }, data: [{ name: 'A', value: 3 }, { name: 'B', value: 2 }, { name: 'C', value: 1 }] }],
     });
     const internals = chart as unknown as {
-      getModel: () => { getSeriesByIndex: (index: number) => { getData: () => { getItemGraphicEl: (index: number) => { currentStates?: string[] } } } };
+      getModel: () => { getSeriesByIndex: (index: number) => { getData: () => { getItemGraphicEl: (index: number) => { childrenRef?: () => Array<{ currentStates?: string[] }> } } } };
     };
     const highlighted: number[] = [];
     chart.on('highlight', (event) => { highlighted.push((event as { dataIndex: number }).dataIndex); });
     try {
       const data = internals.getModel().getSeriesByIndex(0).getData();
       chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: engineDataIndex(chart, { seriesIndex: 0, dataIndex: 0 }) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      chart.resize();
       chart.getZr().flush();
       assert.equal(highlighted.at(-1), 1, 'first aggregation bucket maps past the virtual root');
+      assert.ok(data.getItemGraphicEl(1).childrenRef?.().some(({ currentStates }) => currentStates?.includes('emphasis')));
+      assert.ok(!data.getItemGraphicEl(3).childrenRef?.().some(({ currentStates }) => currentStates?.includes('emphasis')));
       chart.dispatchAction({ type: 'downplay' });
       chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: engineDataIndex(chart, { seriesIndex: 0, dataIndex: 2 }) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      chart.resize();
       chart.getZr().flush();
       assert.equal(highlighted.at(-1), 3, 'last aggregation bucket maps to the last real treemap node');
-      assert.ok(data.getItemGraphicEl(1));
-      assert.ok(data.getItemGraphicEl(3));
+      assert.ok(!data.getItemGraphicEl(1).childrenRef?.().some(({ currentStates }) => currentStates?.includes('emphasis')));
+      assert.ok(data.getItemGraphicEl(3).childrenRef?.().some(({ currentStates }) => currentStates?.includes('emphasis')));
     } finally {
       chart.dispose();
+      host.remove();
     }
   });
 

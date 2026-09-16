@@ -18,6 +18,7 @@ import type { Clash, ClashResult } from '@ifc-lite/clash';
 import type { Renderer } from '@ifc-lite/renderer';
 import { aggregate, renderChartSvg, DEFAULT_THEME, type ChartDataset, type ChartItem, type EChartsOptionObject, type ReportSpec } from '@ifc-lite/charts';
 import { EVENT_FILE_DOWNLOADED } from '@/lib/tours/events.js';
+import { captureUiSnapshot, restoreUiSnapshot } from '@/lib/tours/snapshot.js';
 import type { ReportPdfSeams } from '@/lib/export/report/generate-report-pdf.js';
 import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-selection.js';
 import { useOverlayCompositor } from '@/components/viewer/schedule/useOverlayCompositor.js';
@@ -559,6 +560,101 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(state.ghostExceptEntities, null);
     const subtitles = [...reopened.querySelectorAll('[data-chart-subtitle]')].map((el) => el.textContent);
     assert.ok(subtitles.every((text) => /5 elements$/.test(text ?? '')), subtitles.join(' | '));
+  });
+
+  it('does not reclaim an independently replaced same-ID selection after partial federation teardown (#4832)', async () => {
+    const secondOffset = 2_000_000;
+    const second = await parsedModel('m2', secondOffset);
+    useViewerStore.setState((state) => ({ models: new Map([...state.models, [second.id, second]]) }));
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    const sourceId = useViewerStore.getState().dashboards[0].charts[0].id;
+
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const sameIds = [...useViewerStore.getState().selectedEntityIds];
+    cleanup();
+    useViewerStore.getState().setSelectedEntityIds(sameIds);
+    useViewerStore.getState().setSelectedEntityId(secondOffset + 45);
+
+    await act(async () => { useViewerStore.getState().removeModel('m1'); });
+    const afterRemoval = useViewerStore.getState();
+    assert.notEqual(afterRemoval.chartSelectionRevision, afterRemoval.selectionRevision);
+
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    const dashboard = useViewerStore.getState().dashboards[0];
+    useViewerStore.getState().setDashboards([{ ...dashboard, charts: dashboard.charts.filter(({ id }) => id !== sourceId) }]);
+    await settle();
+    const final = useViewerStore.getState();
+    assert.equal(final.chartSlice, null);
+    assert.deepEqual([...final.selectedEntityIds].sort(), [secondOffset + 44, secondOffset + 45]);
+    assert.equal(final.selectedEntityId, secondOffset + 45);
+  });
+
+  it('keeps model-A chart ownership when only model-B storey state is removed (#4832)', async () => {
+    const secondOffset = 2_000_000;
+    const unrelated = fixtureModel('m2', { idOffset: secondOffset });
+    useViewerStore.setState((state) => ({
+      models: new Map([...state.models, [unrelated.id, unrelated]]),
+      activeStorey: { modelId: 'm2', expressId: 5 },
+      selectedStoreys: new Set([secondOffset + 5]),
+    }));
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    const before = useViewerStore.getState();
+    const revision = before.selectionRevision;
+    await act(async () => { useViewerStore.getState().removeModel('m2'); });
+    await settle();
+    const after = useViewerStore.getState();
+    assert.equal(after.selectionRevision, revision, 'storey-only teardown is not an entity selection write');
+    assert.deepEqual([...(after.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(after.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+  });
+
+  it('does not reinstall a basket chart ghost after remount invalidates its scope (#4832)', async () => {
+    const dashboard = modelOverviewDashboard();
+    dashboard.scope = { kind: 'basket' };
+    useViewerStore.setState({
+      dashboards: [dashboard],
+      activeDashboardId: dashboard.id,
+      pinboardEntities: new Set(['m1:44', 'm1:45']),
+    });
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 0 }] }); });
+    await settle();
+    assert.deepEqual([...(useViewerStore.getState().ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+
+    cleanup();
+    useViewerStore.getState().clearPinboard();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.ghostExceptEntities, null);
+    assert.equal(state.chartVisibilityOwned, null);
+  });
+
+  it('preserves chart selection provenance across an unchanged tour snapshot round trip (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const snapshot = captureUiSnapshot(useViewerStore);
+
+    await act(async () => { restoreUiSnapshot(useViewerStore, snapshot); });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSelectionRevision, state.selectionRevision);
+    assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
   });
 
   it('does not restore cached chart paint after every model is cleared (#4832)', async () => {
