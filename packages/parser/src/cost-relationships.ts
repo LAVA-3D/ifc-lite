@@ -94,8 +94,8 @@ export function extractCostRelationships(
     const related = references(reader, expressId, 4);
     const process = reference(reader, expressId, 6);
     const candidateProcess = asRef(a[6]);
-    if (candidateProcess !== undefined && (assignedTasks.has(candidateProcess) ||
-        (asRefList(a[4]) ?? []).some(id => itemIds.has(id)))) {
+    if ((candidateProcess !== undefined && assignedTasks.has(candidateProcess)) ||
+        (asRefList(a[4]) ?? []).some(id => itemIds.has(id))) {
       const InvalidReferences = related.invalid || process.invalid;
       result.push({ ...base(expressId, 'IfcRelAssignsToProcess', a), RelatedObjects: related.value,
         RelatingProcess: process.value, InvalidReferences: InvalidReferences || undefined });

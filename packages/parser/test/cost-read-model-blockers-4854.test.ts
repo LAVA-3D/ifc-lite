@@ -1022,9 +1022,29 @@ describe('#4854 cost evaluator blocker regressions', () => {
   it.each(['IFC4', 'IFC4X3_ADD2'])('ignores comments around %s entity delimiters', async (schema) => {
     const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
       "#10=IFCCOSTVALUE/* ( annotation */('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$)/* ) trailing */;",
-      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
+      "#11=IFCCOSTVALUE('Component',$,IFCMONETARYMEASURE(7.),$,$,$,$,$,$,$);",
+      "#12=IFCCOSTVALUE('Expression',$,$,$,$,$,$,$,.ADD.,(#11))/* ) trailing */;",
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10,#12),$);",
     ])));
-    expect(evaluateCostItem(extraction, 20)).toMatchObject({ Amount: '10', Currency: 'CHF', Diagnostics: [] });
+    expect(extraction.CostValues.find(value => value.expressId === 12)?.Components).toEqual([11]);
+    expect(evaluateCostItem(extraction, 20)).toMatchObject({ Amount: '17', Currency: 'CHF', Diagnostics: [] });
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('retains malformed required %s process endpoints', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#10=IFCCOSTVALUE('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
+      "#30=IFCRELASSIGNSTOPROCESS('missing',$,$,$,(#20),$,$,$);",
+      "#31=IFCRELASSIGNSTOPROCESS('malformed',$,$,$,(#20),$,#bad,$);",
+    ])));
+    expect(extraction.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 30, Type: 'IfcRelAssignsToProcess', InvalidReferences: true }),
+      expect.objectContaining({ expressId: 31, Type: 'IfcRelAssignsToProcess', InvalidReferences: true }),
+    ]));
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 30 }),
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 31 }),
+    ]));
   });
 
   it.each(['IFC4', 'IFC4X3_ADD2'])('keeps non-finite %s conversions out of compatibility numbers', async (schema) => {
