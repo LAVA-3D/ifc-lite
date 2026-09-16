@@ -207,7 +207,6 @@ export const createPinboardSlice: StateCreator<
   [],
   PinboardSlice
 > = (set, get) => ({
-  // Initial state
   pinboardEntities: new Set(),
   basketVisibilityOwned: null,
   basketViews: [],
@@ -234,10 +233,8 @@ export const createPinboardSlice: StateCreator<
     });
   },
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Basket actions (= + −)
   // These are the primary API for the new basket-based isolation UX.
-  // ──────────────────────────────────────────────────────────────────────────
 
   /** = Set basket to exactly these entities and isolate them */
   setBasket: (refs) => {
