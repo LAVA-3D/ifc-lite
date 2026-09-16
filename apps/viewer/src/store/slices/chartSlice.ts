@@ -50,6 +50,8 @@ export interface ChartSlice {
   chartSelectionRevision: number | null;
   /** The panel's claim on the isolate/ghost channel, released only if still owned. */
   chartVisibilityOwned: VisibilityOwnership;
+  /** Visibility revision last authored or deliberately released by Charts. */
+  chartVisibilityRevision: number | null;
 
   setDashboards: (dashboards: DashboardSpec[]) => void;
   upsertDashboard: (dashboard: DashboardSpec) => void;
@@ -73,6 +75,7 @@ export const createChartSlice: StateCreator<ChartSlice, [], [], ChartSlice> = (s
   chartSliceBuckets: null,
   chartSelectionRevision: null,
   chartVisibilityOwned: null,
+  chartVisibilityRevision: null,
 
   setDashboards: (dashboards) => {
     set({ dashboards });
@@ -111,9 +114,9 @@ export const createChartSlice: StateCreator<ChartSlice, [], [], ChartSlice> = (s
  */
 export const chartTeardown = defineSliceTeardown(
   'chartSlice',
-  ['chartPanelVisible', 'chartSlice', 'chartSliceSource', 'chartSliceBuckets', 'chartSelectionRevision', 'chartVisibilityOwned'],
+  ['chartPanelVisible', 'chartSlice', 'chartSliceSource', 'chartSliceBuckets', 'chartSelectionRevision', 'chartVisibilityOwned', 'chartVisibilityRevision'],
   {
-    'session-reset': () => ({ chartPanelVisible: false, chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null }),
+    'session-reset': () => ({ chartPanelVisible: false, chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null, chartVisibilityRevision: null }),
     'model-removed': ({ isStale }, state) => {
       const slice = state.chartSlice;
       if (!slice) return {};
@@ -122,15 +125,25 @@ export const chartTeardown = defineSliceTeardown(
       if (kept.size === slice.size) return {};
       const ownedSelection = state.chartSelectionRevision != null
         && state.chartSelectionRevision === state.selectionRevision;
+      const ownedVisibility = state.chartVisibilityOwned;
+      const keptVisibilityIds = ownedVisibility
+        ? new Set([...ownedVisibility.ids].filter((id) => !isStale(id)))
+        : null;
       return kept.size > 0
         ? {
             chartSlice: kept,
             ...(ownedSelection
               ? { chartSelectionRevision: (state.selectionRevision ?? 0) + 1 }
               : {}),
+            ...(ownedVisibility && keptVisibilityIds && keptVisibilityIds.size > 0
+              ? {
+                  chartVisibilityOwned: { channel: ownedVisibility.channel, ids: keptVisibilityIds },
+                  chartVisibilityRevision: (state.visibilityRevision ?? 0) + 1,
+                }
+              : {}),
           }
         : { chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null };
     },
-    'all-models-cleared': () => ({ chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null }),
+    'all-models-cleared': () => ({ chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null, chartVisibilityRevision: null }),
   },
 );

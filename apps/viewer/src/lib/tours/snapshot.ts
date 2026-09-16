@@ -18,6 +18,7 @@
 
 import type { ViewerState } from '@/store';
 import { activeBottomPanel, bottomPanelFlags } from '@/lib/panels/bottom-panels';
+import { releaseOwnedVisibility } from '@/lib/visibility/ownership';
 import type { UiSnapshot, UiSnapshotKey, ViewerStoreApi } from './types';
 
 export function captureUiSnapshot(store: ViewerStoreApi): UiSnapshot {
@@ -109,6 +110,8 @@ export function restoreUiSnapshot(
   // otherwise clear both channels (stale refs must never be applied).
   if (!keep.has('selection')) {
     if (modelsChanged) {
+      const current = store.getState();
+      releaseOwnedVisibility(current, current.chartVisibilityOwned);
       store.setState({
         selectedEntityId: null,
         selectedEntityIds: new Set<number>(),
@@ -119,14 +122,24 @@ export function restoreUiSnapshot(
         selectedStoreys: new Set<number>(),
         activeStorey: null,
         selectionRevision: store.getState().selectionRevision + 1,
+        chartSlice: null,
+        chartSliceSource: null,
+        chartSliceBuckets: null,
+        chartSelectionRevision: null,
+        chartVisibilityOwned: null,
+        chartVisibilityRevision: null,
       });
     } else {
+      const capturedChartOwned = snapshot.selection.chartOwned
+        && snapshot.selection.chartSlice !== null
+        && snapshot.selection.chartSliceSource !== null
+        && snapshot.selection.chartSliceBuckets !== null;
+      if (!capturedChartOwned) {
+        const current = store.getState();
+        releaseOwnedVisibility(current, current.chartVisibilityOwned);
+      }
       store.setState((state) => {
         const selectionRevision = state.selectionRevision + 1;
-        const chartOwned = snapshot.selection.chartOwned
-          && snapshot.selection.chartSlice !== null
-          && snapshot.selection.chartSliceSource !== null
-          && snapshot.selection.chartSliceBuckets !== null;
         return {
           selectedEntityId: snapshot.selection.selectedEntityId,
           selectedEntityIds: new Set(snapshot.selection.selectedEntityIds),
@@ -137,7 +150,7 @@ export function restoreUiSnapshot(
           selectedStoreys: new Set(snapshot.selectedStoreys),
           activeStorey: snapshot.activeStorey,
           selectionRevision,
-          ...(chartOwned
+          ...(capturedChartOwned
             ? {
                 chartSlice: new Set(snapshot.selection.chartSlice ?? []),
                 chartSliceSource: snapshot.selection.chartSliceSource,
@@ -147,7 +160,14 @@ export function restoreUiSnapshot(
                 })) ?? null,
                 chartSelectionRevision: selectionRevision,
               }
-            : { chartSelectionRevision: null }),
+            : {
+                chartSlice: null,
+                chartSliceSource: null,
+                chartSliceBuckets: null,
+                chartSelectionRevision: null,
+                chartVisibilityOwned: null,
+                chartVisibilityRevision: null,
+              }),
         };
       });
     }

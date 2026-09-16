@@ -90,8 +90,12 @@ export function chartSelectionIsLive(
 /** Release the panel's claim on the isolate / ghost channel, if it still holds it. */
 export function releaseChartVisibility(): void {
   const state = useViewerStore.getState();
-  releaseOwnedVisibility(state, state.chartVisibilityOwned);
-  state.setChartVisibilityOwned(null);
+  const released = releaseOwnedVisibility(state, state.chartVisibilityOwned);
+  const current = useViewerStore.getState();
+  useViewerStore.setState({
+    chartVisibilityOwned: null,
+    ...(released ? { chartVisibilityRevision: current.visibilityRevision } : {}),
+  });
 }
 
 /** Present `ids` by `mode`, claiming the channel written. Exported for the test. */
@@ -100,8 +104,10 @@ export function presentChartIds(ids: number[], mode: ChartFocusMode): void {
   const presented = resolvePresentationIds(state.cameraCallbacks?.resolveHighlightIds, ids);
   // Release first: switching ghost → isolate must not leave a stale ghost claim.
   releaseOwnedVisibility(state, state.chartVisibilityOwned);
+  const current = useViewerStore.getState();
   if (mode === 'ghost') {
     const installed = new Set(presented);
+    const visibilityRevision = current.visibilityRevision + 1;
     useViewerStore.setState({
       ghostExceptEntities: installed,
       isolatedEntities: null,
@@ -109,9 +115,11 @@ export function presentChartIds(ids: number[], mode: ChartFocusMode): void {
       clashVisibilityOwned: null,
       basketVisibilityOwned: null,
       chartVisibilityOwned: { channel: 'ghost', ids: installed },
+      chartVisibilityRevision: visibilityRevision,
     });
   } else if (mode === 'isolate') {
     const installed = new Set(presented);
+    const visibilityRevision = current.visibilityRevision + 1;
     useViewerStore.setState({
       isolatedEntities: installed,
       ghostExceptEntities: null,
@@ -120,9 +128,13 @@ export function presentChartIds(ids: number[], mode: ChartFocusMode): void {
       clashVisibilityOwned: null,
       basketVisibilityOwned: null,
       chartVisibilityOwned: { channel: 'isolate', ids: installed },
+      chartVisibilityRevision: visibilityRevision,
     });
   } else {
-    state.setChartVisibilityOwned(null);
+    useViewerStore.setState({
+      chartVisibilityOwned: null,
+      chartVisibilityRevision: useViewerStore.getState().visibilityRevision,
+    });
   }
 }
 
@@ -212,12 +224,17 @@ export function useChart3DLink(): Chart3DLink {
 
   // When the focus mode changes while a chart selection is on screen, re-present it.
   useEffect(() => {
-    if (!chartSlice || chartSelectionRevision !== selectionRevision || chartSlice.size === 0) return;
+    if (
+      !chartSlice
+      || chartSelectionRevision !== selectionRevision
+      || chartSlice.size === 0
+    ) return;
     const current = useViewerStore.getState();
     if (
       current.chartSlice !== chartSlice
       || current.chartSelectionRevision !== chartSelectionRevision
       || current.selectionRevision !== selectionRevision
+      || current.chartVisibilityRevision !== current.visibilityRevision
     ) return;
     presentChartIds([...chartSlice], current.chartFocusMode);
   }, [chartSlice, chartSelectionRevision, focusMode, selectionRevision]);

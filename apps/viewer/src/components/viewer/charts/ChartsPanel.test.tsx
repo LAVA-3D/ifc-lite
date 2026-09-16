@@ -24,6 +24,7 @@ import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-sele
 import { useOverlayCompositor } from '@/components/viewer/schedule/useOverlayCompositor.js';
 import { useColorOverlaySync } from '@/components/viewer/useColorOverlaySync.js';
 import { useIDS, type UseIDSResult } from '@/hooks/useIDS.js';
+import { useClash } from '@/hooks/useClash.js';
 import { installIdsFocusVisibility } from '@/hooks/ids-focus-visibility.js';
 import { modelOverviewDashboard } from '@/lib/charts/presets.js';
 import { useViewerStore } from '@/store/index.js';
@@ -135,6 +136,12 @@ function IDSFocusProbe({ ready }: { ready: (focus: UseIDSResult['focusEntity']) 
   return null;
 }
 
+function ClashFocusProbe({ ready }: { ready: (focus: ReturnType<typeof useClash>['focusClash']) => void }) {
+  const { focusClash } = useClash();
+  useEffect(() => ready(focusClash), [focusClash, ready]);
+  return null;
+}
+
 function ClosableChartsProbe({ renderer, ready }: { renderer: ChartRenderer; ready: (close: () => void) => void }) {
   const [open, setOpen] = useState(true);
   useEffect(() => ready(() => setOpen(false)), [ready]);
@@ -167,6 +174,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
       chartSelectionRevision: null,
       selectionRevision: 0,
       chartVisibilityOwned: null,
+      chartVisibilityRevision: null,
       clashResult: null,
       clashGroups: null,
       selectedEntityIds: new Set(),
@@ -532,6 +540,56 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     }
   });
 
+  it('preserves a newer equal-ID clash ghost when chart cleanup runs (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    let focusClash: ReturnType<typeof useClash>['focusClash'] | null = null;
+    const ready = (focus: ReturnType<typeof useClash>['focusClash']): void => { focusClash = focus; };
+    render(<><ClashFocusProbe ready={ready} /><ChartsPanel renderer={renderer} /></>);
+    await settle();
+    assert.ok(focusClash);
+
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    assert.deepEqual([...(useViewerStore.getState().ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+
+    const clash: Clash = {
+      id: 'equal-door-pair',
+      a: { key: 'door-a', ref: GID(44), model: 'm1', tag: 'IfcDoor' },
+      b: { key: 'door-b', ref: GID(45), model: 'm1', tag: 'IfcDoor' },
+      rule: 'Doors', status: 'hard', distance: -0.05, point: [0, 0, 0],
+      bounds: { min: [0, 0, 0], max: [1, 1, 1] }, severity: 'major',
+    };
+    await act(async () => { focusClash!(clash, 'ghost'); });
+    await settle();
+
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.clashVisibilityOwned?.channel, 'ghost');
+    assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+  });
+
+  it('does not revive a chart ghost over visibility changed while Charts was closed (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    cleanup();
+    assert.equal(useViewerStore.getState().ghostExceptEntities, null);
+    assert.ok(useViewerStore.getState().chartSlice, 'closing Charts retains logical selection');
+
+    installIdsFocusVisibility('isolate', new Set([GID(41)]));
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+
+    const state = useViewerStore.getState();
+    assert.equal(state.ghostExceptEntities, null);
+    assert.deepEqual([...(state.isolatedEntities ?? [])], [GID(41)]);
+    assert.equal(state.idsFocusVisibilityOwned?.channel, 'isolate');
+    assert.equal(state.chartVisibilityOwned, null);
+  });
+
   it('reconciles same-ID independent selection after Charts closes and reopens (#4832)', async () => {
     const { renderer, charts } = recordingRenderer();
     render(<ChartsPanel renderer={renderer} />);
@@ -699,6 +757,44 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(state.chartSelectionRevision, state.selectionRevision);
     assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
     assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+  });
+
+  it('drops an in-tour chart slice when the captured selection was ordinary (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    const snapshot = captureUiSnapshot(useViewerStore);
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    cleanup();
+
+    await act(async () => { restoreUiSnapshot(useViewerStore, snapshot); });
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.chartSliceSource, null);
+    assert.equal(state.chartSliceBuckets, null);
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.ghostExceptEntities, null);
+  });
+
+  it('drops captured chart ownership when the model set changed during a tour (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const snapshot = captureUiSnapshot(useViewerStore);
+    const second = await parsedModel('m2', 2_000_000);
+    useViewerStore.setState((state) => ({ models: new Map([...state.models, [second.id, second]]) }));
+    cleanup();
+
+    await act(async () => { restoreUiSnapshot(useViewerStore, snapshot); });
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.chartSliceSource, null);
+    assert.equal(state.chartSliceBuckets, null);
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.ghostExceptEntities, null);
   });
 
   it('does not restore cached chart paint after every model is cleared (#4832)', async () => {
