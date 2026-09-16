@@ -327,7 +327,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       const child = memo.get(childId);
       if (!child) continue;
       if (!appendCategoryValues(categoryTotals, '*', [child], valueSession, categoryBudgetExhausted)) break;
-      if (child.invalid && !child.byCategory.has('') &&
+      if (child.invalid &&
           !appendCategoryValues(categoryTotals, '', [child], valueSession, categoryBudgetExhausted)) break;
       for (const [category, values] of child.byCategory) {
         if (category === '*') continue;

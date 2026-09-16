@@ -120,6 +120,23 @@ describe('#4854 cost evaluator blocker regressions', () => {
     });
   });
 
+  it('withholds named subtotals when a child mixes uncategorized cost with an invalid category', async () => {
+    const repeated = Array.from({ length: 99_997 }, () => '#11').join(',');
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE('Uncategorized',$,IFCMONETARYMEASURE(100.),$,$,$,$,$,$,$);",
+      "#11=IFCCOSTVALUE('Labour leaf',$,IFCMONETARYMEASURE(1.),$,$,$,'LABOUR',$,$,$);",
+      `#12=IFCCOSTVALUE('Invalid labour',$,$,$,$,$,'LABOUR',$,.ADD.,(${repeated}));`,
+      "#13=IFCCOSTVALUE('Labour subtotal',$,$,$,$,$,'LABOUR',$,$,$);",
+      "#20=IFCCOSTITEM('child',$,'Child',$,$,'C',$,(#10,#12),$);",
+      "#21=IFCCOSTITEM('parent',$,'Parent',$,$,'P',$,(#13),$);",
+      "#30=IFCRELNESTS('nest',$,$,$,#21,(#20));",
+    ])));
+    expect(evaluateCostItem(extraction, 21)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'INVALID_LIST' })]),
+    });
+  }, 10_000);
+
   it('reads cost attributes after a comment containing structural characters', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
       "#10=IFCCOSTVALUE/* ( , ' /* nested opener is text */('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
