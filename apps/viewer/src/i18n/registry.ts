@@ -69,8 +69,12 @@ export function subscribeLocale(listener: () => void): () => void {
  * blank one.
  */
 function pluralForm(value: PluralTranslation, params: TranslationParameters, locale: Locale): string {
-  const count = params.count;
-  if (typeof count !== 'number') return value.other;
+  if (!Object.hasOwn(value, 'other')) {
+    throw new Error('a plural translation must define its own "other" form');
+  }
+  const fallback = value.other;
+  const count = Object.hasOwn(params, 'count') ? params.count : undefined;
+  if (typeof count !== 'number') return fallback;
   let category: Intl.LDMLPluralRule;
   try {
     category = new Intl.PluralRules(locale, { maximumSignificantDigits: 21 }).select(count);
@@ -78,7 +82,8 @@ function pluralForm(value: PluralTranslation, params: TranslationParameters, loc
     console.warn(`[i18n] Invalid locale "${locale}" for plural rules; using English.`, error);
     category = new Intl.PluralRules('en', { maximumSignificantDigits: 21 }).select(count);
   }
-  return value[category] ?? value.other;
+  const selected = Object.hasOwn(value, category) ? value[category] : undefined;
+  return selected ?? fallback;
 }
 
 function interpolate(template: string, params: TranslationParameters): string {

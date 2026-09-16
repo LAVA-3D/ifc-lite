@@ -8,7 +8,7 @@ import { act } from 'react';
 import { render, cleanup } from '@/test/render';
 import { useTranslation } from './useTranslation';
 import { registerLocale, resolve, setLocale } from './registry';
-import type { TranslationParameters } from './types';
+import type { PluralTranslation, TranslationParameters } from './types';
 
 afterEach(() => {
   cleanup();
@@ -130,6 +130,45 @@ it('selects locale plural categories beyond the English one/other rule (#4785)',
   cleanup();
   const many = render(<DynamicProbe count={5} />);
   assert.equal(many.querySelector('[data-key="plural"]')?.textContent, 'MANY 5');
+});
+
+const SUMMARY_KEY = 'appearanceAssignmentList.summary';
+
+it('ignores an inherited plural count (#4785)', () => {
+  registerLocale('en-US', {
+    [SUMMARY_KEY]: { one: 'ONE {count}', other: 'OTHER {count}' },
+  });
+  setLocale('en-US');
+  const inheritedCount = Object.create({ count: 1 }) as TranslationParameters;
+  assert.equal(resolve(SUMMARY_KEY, inheritedCount), 'OTHER {count}');
+});
+
+it('ignores inherited plural categories and fallback forms (#4785)', () => {
+  const inheritedCategory = Object.create(
+    { one: 'INHERITED {count}' },
+    { other: { value: 'OTHER {count}', enumerable: true } },
+  ) as PluralTranslation;
+  registerLocale('de', { [SUMMARY_KEY]: inheritedCategory });
+  setLocale('de');
+  assert.equal(resolve(SUMMARY_KEY, { count: 1 }), 'OTHER 1');
+
+  const inheritedFallback = Object.create({ other: 'INHERITED OTHER {count}' }) as PluralTranslation;
+  registerLocale('fr', { [SUMMARY_KEY]: inheritedFallback });
+  setLocale('fr');
+  assert.throws(() => resolve(SUMMARY_KEY, { count: 1 }), /must define its own "other" form/);
+});
+
+it('selects own plural forms and counts from null-prototype maps (#4785)', () => {
+  const ownForms = Object.create(null, {
+    one: { value: 'OWN ONE {count}', enumerable: true },
+    other: { value: 'OWN OTHER {count}', enumerable: true },
+  }) as PluralTranslation;
+  const ownCount = Object.create(null, {
+    count: { value: 1, enumerable: true },
+  }) as TranslationParameters;
+  registerLocale('en-GB', { [SUMMARY_KEY]: ownForms });
+  setLocale('en-GB');
+  assert.equal(resolve(SUMMARY_KEY, ownCount), 'OWN ONE 1');
 });
 
 it('uses English plural rules when a plural message falls back to English (#4785)', () => {
