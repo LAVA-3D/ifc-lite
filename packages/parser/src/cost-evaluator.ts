@@ -233,12 +233,8 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
     }
     const categoryTotal = value.AppliedValue === undefined &&
       value.Components === undefined && value.Category !== undefined;
-    const categoryValues = categoryTotal
-      ? [...(categoryTotals?.get(value.Category as string) ?? []),
-        ...(value.Category === '*' ? [] : categoryTotals?.get('') ?? [])]
-      : [];
     const base = categoryTotal
-      ? combineCategoryValues(value.Category ?? '', categoryValues, frame.id, session,
+      ? combineCategoryValues(value.Category ?? '', categoryTotals, frame.id, session,
         () => diagnostic(context, 'INVALID_LIST', `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner),
         (Code, Message, id, Severity) => diagnostic(context, Code, Message, id, Severity))
       : value.Components === undefined

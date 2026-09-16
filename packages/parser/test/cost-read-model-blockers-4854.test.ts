@@ -349,31 +349,34 @@ describe('#4854 cost evaluator blocker regressions', () => {
   }, 2_000);
 
   it('memoizes nested category subtotal reductions while preserving multiplicity', () => {
-    const count = 4_000;
-    const subtotalValues = Array.from({ length: count }, (_, index): CostValueInfo => ({
-      expressId: 100 + index, Type: 'IfcCostValue', Category: 'Material',
+    const count = 19_000;
+    const subtotalIds = Array.from({ length: count }, (_, index) => 100 + index);
+    const subtotalValues = subtotalIds.map((expressId): CostValueInfo => ({
+      expressId, Type: 'IfcCostValue', Category: 'Material',
     }));
     const extraction = valueGraph([{
       expressId: 1, Type: 'IfcCostValue', Category: 'Material',
       AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
     }, ...subtotalValues]);
     extraction.Currency = 'CHF';
-    extraction.CostItems = [{
-      expressId: 10, CostValues: subtotalValues.map(value => value.expressId as number),
+    extraction.CostItems = Array.from({ length: 5 }, (_, index) => ({
+      expressId: 10 + index, CostValues: subtotalIds,
       globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
       productGlobalIds: [], controllingScheduleGlobalIds: [],
-    }, {
-      expressId: 11, CostValues: Array.from({ length: count }, () => 1),
+    }));
+    extraction.CostItems.push({
+      expressId: 15, CostValues: Array.from({ length: count }, () => 1),
       globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
       productGlobalIds: [], controllingScheduleGlobalIds: [],
-    }];
-    extraction.Relationships = [{
-      expressId: 20, Type: 'IfcRelNests', RelatingObject: 10, RelatedObjects: [11],
-    }];
-    expect(evaluateCostItem(extraction, 10)).toMatchObject({
-      Amount: '16000000', Currency: 'CHF', Diagnostics: [],
     });
-  }, 2_000);
+    extraction.Relationships = Array.from({ length: 5 }, (_, index) => ({
+      expressId: 20 + index, Type: 'IfcRelNests' as const,
+      RelatingObject: 10 + index, RelatedObjects: [11 + index],
+    }));
+    expect(evaluateCostItem(extraction, 10)).toMatchObject({
+      Amount: '4.7045881e+25', Currency: 'CHF', Diagnostics: [],
+    });
+  }, 3_000);
 
   it('requires direct CostValues references to target IfcCostValue', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,

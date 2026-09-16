@@ -25,18 +25,20 @@ export function appendCategoryValues(
 }
 
 export function combineCategoryValues(
-  category: string, values: readonly EvaluatedCost[], valueId: number,
+  category: string, totals: ReadonlyMap<string, readonly EvaluatedCost[]> | undefined, valueId: number,
   session: ValueEvaluationSession, onExhausted: () => void,
   onDiagnostic: Parameters<typeof combineCosts>[3],
 ): EvaluatedCost {
   const cached = session.categoryMemo.get(category);
   if (cached) return cached;
+  const categorized = totals?.get(category) ?? [];
+  const uncategorized = category === '*' ? [] : totals?.get('') ?? [];
   const wasExhausted = session.exhausted;
-  if (!consumeValueEvaluationWork(session, values.length)) {
+  if (!consumeValueEvaluationWork(session, categorized.length + uncategorized.length)) {
     if (!wasExhausted) onExhausted();
     return { invalid: true };
   }
-  const evaluated = combineCosts('ADD', [...values], valueId, onDiagnostic);
+  const evaluated = combineCosts('ADD', [...categorized, ...uncategorized], valueId, onDiagnostic);
   session.categoryMemo.set(category, evaluated);
   return evaluated;
 }
