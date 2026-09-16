@@ -13,9 +13,12 @@ export const appearanceAssignmentListEn = {
   'appearanceAssignmentList.moveEarlierAriaLabel': 'Move assignment {position} earlier',
   'appearanceAssignmentList.moveLaterAriaLabel': 'Move assignment {position} later',
   'appearanceAssignmentList.removeAriaLabel': 'Remove assignment {position}',
-  'appearanceAssignmentList.summary': {
-    one: '{productCount} object · {excludedCount} excluded · {overriddenCount} replaced by later assignments',
-    other: '{productCount} objects · {excludedCount} excluded · {overriddenCount} replaced by later assignments',
+  'appearanceAssignmentList.summary': '{products} · {excluded} · {overridden}',
+  'appearanceAssignmentList.summaryProducts': { one: '{count} object', other: '{count} objects' },
+  'appearanceAssignmentList.summaryExcluded': { one: '{count} excluded', other: '{count} excluded' },
+  'appearanceAssignmentList.summaryOverridden': {
+    one: '{count} replaced by a later assignment',
+    other: '{count} replaced by later assignments',
   },
   'appearanceAssignmentList.reviewAriaLabel': 'Review objects for assignment {position}',
   'appearanceAssignmentList.reviewButton': 'Review objects and exceptions',

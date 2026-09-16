@@ -29,6 +29,11 @@ export function AppearanceAssignmentList(props: AppearanceAssignmentListProps) {
     <ol className="space-y-2">{props.rows.map((row, index) => {
       const item = row.assignment;
       const position = index + 1;
+      const products = t('appearanceAssignmentList.summaryProducts', {
+        count: row.productIds.length,
+      });
+      const excluded = t('appearanceAssignmentList.summaryExcluded', { count: row.excluded });
+      const overridden = t('appearanceAssignmentList.summaryOverridden', { count: row.overridden });
       return <li key={item.id} className="rounded-md border p-2" aria-label={t('appearanceAssignmentList.assignmentAriaLabel', { position, sourceName: item.source.name, modelName: item.model.name })}>
         <div className="flex items-start gap-1">
           <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{position}. {item.source.name}</p>
@@ -41,10 +46,7 @@ export function AppearanceAssignmentList(props: AppearanceAssignmentListProps) {
             aria-label={t('appearanceAssignmentList.removeAriaLabel', { position })} onClick={() => props.onRemove(item.id)}><Trash2 className="h-3 w-3" /></Button>
         </div>
         <p className="mt-1 text-[11px]">{t('appearanceAssignmentList.summary', {
-          count: row.productIds.length,
-          productCount: row.productIds.length,
-          excludedCount: row.excluded,
-          overriddenCount: row.overridden,
+          products, excluded, overridden,
         })}</p>
         <Button type="button" variant="ghost" size="sm" className="mt-1 h-6 px-0 text-[11px]" disabled={props.disabled}
           aria-label={t('appearanceAssignmentList.reviewAriaLabel', { position })} aria-expanded={expandedId === item.id}

@@ -28,12 +28,7 @@ function DynamicProbe({ count }: { count: number }) {
       sourceName: 'Brick',
       modelName: 'North Wing',
     })}</span>
-    <span data-key="plural">{t('appearanceAssignmentList.summary', {
-      count,
-      productCount: count,
-      excludedCount: 0,
-      overriddenCount: 0,
-    })}</span>
+    <span data-key="plural">{t('appearanceAssignmentList.summaryProducts', { count })}</span>
   </>;
 }
 
@@ -113,7 +108,7 @@ it('interpolates only own parameters, including from null-prototype maps (#4785)
 
 it('selects locale plural categories beyond the English one/other rule (#4785)', () => {
   registerLocale('ru', {
-    'appearanceAssignmentList.summary': {
+    'appearanceAssignmentList.summaryProducts': {
       one: 'ONE {count}',
       few: 'FEW {count}',
       many: 'MANY {count}',
@@ -132,7 +127,7 @@ it('selects locale plural categories beyond the English one/other rule (#4785)',
   assert.equal(many.querySelector('[data-key="plural"]')?.textContent, 'MANY 5');
 });
 
-const SUMMARY_KEY = 'appearanceAssignmentList.summary';
+const SUMMARY_KEY = 'appearanceAssignmentList.summaryProducts';
 
 it('ignores an inherited plural count (#4785)', () => {
   registerLocale('en-US', {
@@ -184,7 +179,7 @@ it('selects plural categories at the same precision shown by interpolation (#478
   cleanup();
 
   registerLocale('ar', {
-    'appearanceAssignmentList.summary': {
+    'appearanceAssignmentList.summaryProducts': {
       zero: 'ZERO {count}',
       one: 'ONE {count}',
       two: 'TWO {count}',
