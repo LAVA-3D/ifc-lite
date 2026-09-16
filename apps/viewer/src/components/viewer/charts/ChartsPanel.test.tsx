@@ -19,6 +19,7 @@ import type { Renderer } from '@ifc-lite/renderer';
 import { aggregate, renderChartSvg, DEFAULT_THEME, type ChartDataset, type ChartItem, type EChartsOptionObject, type ReportSpec } from '@ifc-lite/charts';
 import { EVENT_FILE_DOWNLOADED } from '@/lib/tours/events.js';
 import { captureUiSnapshot, restoreUiSnapshot } from '@/lib/tours/snapshot.js';
+import { CLASH_TOUR } from '@/lib/tours/tours/clash.js';
 import type { ReportPdfSeams } from '@/lib/export/report/generate-report-pdf.js';
 import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-selection.js';
 import { useOverlayCompositor } from '@/components/viewer/schedule/useOverlayCompositor.js';
@@ -26,6 +27,7 @@ import { useColorOverlaySync } from '@/components/viewer/useColorOverlaySync.js'
 import { useIDS, type UseIDSResult } from '@/hooks/useIDS.js';
 import { useClash } from '@/hooks/useClash.js';
 import { installIdsFocusVisibility } from '@/hooks/ids-focus-visibility.js';
+import { useSpaceSceneFraming } from '@/components/viewer/tools/space-sketch/useSpaceSceneFraming.js';
 import { modelOverviewDashboard } from '@/lib/charts/presets.js';
 import { useViewerStore } from '@/store/index.js';
 import type { FederatedModel } from '@/store/types.js';
@@ -284,6 +286,45 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.deepEqual([...(s.isolatedEntities ?? [])].sort(), [GID(41), GID(42), GID(43)]);
     assert.equal(s.ghostExceptEntities, null);
     assert.equal(s.chartVisibilityOwned?.channel, 'isolate');
+  });
+
+  it('re-presents after Space Sketch captures and restores the chart-owned ghost (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    function MountedSpaceChart() {
+      const [spaceOpen, setSpaceOpen] = useState(false);
+      useSpaceSceneFraming({ enabled: spaceOpen, existingSpaceIds: [] });
+      return <>
+        <button type="button" onClick={() => setSpaceOpen((open) => !open)}>Space</button>
+        <ChartsPanel renderer={renderer} />
+      </>;
+    }
+    const ui = render(<MountedSpaceChart />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 0 }] }); });
+    await settle();
+
+    const space = ui.querySelector('button')!;
+    click(space);
+    click(space);
+    await settle();
+    const replayed = useViewerStore.getState();
+    assert.equal(replayed.chartVisibilityOwned?.channel, 'ghost');
+    assert.notEqual(
+      replayed.chartVisibilityRevision,
+      replayed.visibilityRevision,
+      'the real Space Sketch restore is a content-preserving foreign replay',
+    );
+
+    const focus = ui.querySelector<HTMLSelectElement>('select[aria-label="Focus mode"]')!;
+    await act(async () => {
+      focus.value = 'isolate';
+      focus.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.deepEqual([...(state.isolatedEntities ?? [])].sort(), [GID(41), GID(42), GID(43)]);
+    assert.equal(state.ghostExceptEntities, null);
+    assert.equal(state.chartVisibilityOwned?.channel, 'isolate');
   });
 
   it('a 3D pick highlights the matching bar and drops the slice; clearing releases only what the panel owns', async () => {
@@ -713,6 +754,39 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(state.chartSelectionRevision, state.selectionRevision);
     assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
     assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+  });
+
+  it('restores chart visibility provenance after the real clash-tour cleanup (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const snapshot = captureUiSnapshot(useViewerStore);
+    const zoomStep = CLASH_TOUR.steps.find((step) => step.id === 'zoom-to-clash');
+    assert.ok(zoomStep?.cleanup);
+    cleanup();
+
+    await act(async () => {
+      zoomStep.cleanup!(useViewerStore, {
+        baseline: { hadResultAtEntry: 0 },
+        artifacts: new Map(),
+      });
+      restoreUiSnapshot(useViewerStore, snapshot);
+    });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSelectionRevision, state.selectionRevision);
+    assert.equal(state.chartVisibilityRevision, state.visibilityRevision);
+    assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual(
+      state.chartVisibilityOwned && {
+        channel: state.chartVisibilityOwned.channel,
+        ids: [...state.chartVisibilityOwned.ids].sort(),
+      },
+      { channel: 'ghost', ids: [GID(44), GID(45)] },
+    );
   });
 
   it('restores the captured chart bucket after tour steps replace its slice (#4832)', async () => {

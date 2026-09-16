@@ -234,7 +234,14 @@ export function useChart3DLink(): Chart3DLink {
       current.chartSlice !== chartSlice
       || current.chartSelectionRevision !== chartSelectionRevision
       || current.selectionRevision !== selectionRevision
-      || current.chartVisibilityRevision !== current.visibilityRevision
+      // A content-preserving owner may replay the same channel (Space Sketch
+      // captures/restores it), advancing visibilityRevision while the chart's
+      // verified ownership record deliberately survives. That is still safe
+      // to re-present on a focus-mode change. With no live claim, the revision
+      // match remains the remount guard against overwriting a newer
+      // visibility-only action performed while Charts was closed.
+      || (current.chartVisibilityOwned === null
+        && current.chartVisibilityRevision !== current.visibilityRevision)
     ) return;
     presentChartIds([...chartSlice], current.chartFocusMode);
   }, [chartSlice, chartSelectionRevision, focusMode, selectionRevision]);

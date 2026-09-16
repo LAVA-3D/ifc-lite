@@ -53,6 +53,10 @@ export function captureUiSnapshot(store: ViewerStoreApi): UiSnapshot {
         ...bucket,
         ids: [...bucket.ids],
       })) ?? null,
+      chartVisibilityOwned: s.chartSelectionRevision === s.selectionRevision
+        && s.chartVisibilityOwned
+        ? { channel: s.chartVisibilityOwned.channel, ids: [...s.chartVisibilityOwned.ids] }
+        : null,
     },
     activeStorey: s.activeStorey,
     selectedStoreys: [...s.selectedStoreys],
@@ -134,7 +138,10 @@ export function restoreUiSnapshot(
         && snapshot.selection.chartSlice !== null
         && snapshot.selection.chartSliceSource !== null
         && snapshot.selection.chartSliceBuckets !== null;
-      if (!capturedChartOwned) {
+      const capturedChartVisibility = capturedChartOwned
+        ? snapshot.selection.chartVisibilityOwned
+        : null;
+      if (!capturedChartVisibility) {
         const current = store.getState();
         releaseOwnedVisibility(current, current.chartVisibilityOwned);
       }
@@ -159,6 +166,30 @@ export function restoreUiSnapshot(
                   ids: [...bucket.ids],
                 })) ?? null,
                 chartSelectionRevision: selectionRevision,
+                ...(capturedChartVisibility
+                  ? {
+                      isolatedEntities: capturedChartVisibility.channel === 'isolate'
+                        ? new Set(capturedChartVisibility.ids)
+                        : null,
+                      ghostExceptEntities: capturedChartVisibility.channel === 'ghost'
+                        ? new Set(capturedChartVisibility.ids)
+                        : null,
+                      ...(capturedChartVisibility.channel === 'isolate'
+                        ? { hiddenEntities: new Set<number>() }
+                        : {}),
+                      idsFocusVisibilityOwned: null,
+                      clashVisibilityOwned: null,
+                      basketVisibilityOwned: null,
+                      chartVisibilityOwned: {
+                        channel: capturedChartVisibility.channel,
+                        ids: new Set(capturedChartVisibility.ids),
+                      },
+                      chartVisibilityRevision: state.visibilityRevision + 1,
+                    }
+                  : {
+                      chartVisibilityOwned: null,
+                      chartVisibilityRevision: state.visibilityRevision,
+                    }),
               }
             : {
                 chartSlice: null,

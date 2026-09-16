@@ -178,6 +178,8 @@ export interface UiSnapshot {
     chartSlice: number[] | null;
     chartSliceSource: string | null;
     chartSliceBuckets: ViewerState['chartSliceBuckets'];
+    /** Chart-owned shared visibility captured with the slice; ids are serializable. */
+    chartVisibilityOwned: { channel: 'isolate' | 'ghost'; ids: number[] } | null;
   };
   activeStorey: EntityRef | null;
   selectedStoreys: number[];
