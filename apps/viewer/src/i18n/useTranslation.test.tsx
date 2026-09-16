@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { act } from 'react';
 import { render, cleanup } from '@/test/render';
 import { useTranslation } from './useTranslation';
-import { registerLocale, setLocale } from './registry';
+import { registerLocale, resolve, setLocale } from './registry';
+import type { TranslationParameters } from './types';
 
 afterEach(() => {
   cleanup();
@@ -86,6 +87,30 @@ it('interpolates named values from a registered locale (#4785)', () => {
   );
 });
 
+it('interpolates only own parameters, including from null-prototype maps (#4785)', () => {
+  registerLocale('parameter-ownership', {
+    'appearanceAssignmentList.assignmentAriaLabel':
+      '{constructor}|{toString}|{missing}|{sourceName}',
+  });
+  setLocale('parameter-ownership');
+
+  const inherited = Object.create({ sourceName: 'inherited' }) as TranslationParameters;
+  assert.equal(
+    resolve('appearanceAssignmentList.assignmentAriaLabel', inherited),
+    '{constructor}|{toString}|{missing}|{sourceName}',
+  );
+
+  const own = Object.create(null, {
+    constructor: { value: 'owned constructor', enumerable: true },
+    toString: { value: 'owned toString', enumerable: true },
+    sourceName: { value: 'Brick', enumerable: true },
+  }) as TranslationParameters;
+  assert.equal(
+    resolve('appearanceAssignmentList.assignmentAriaLabel', own),
+    'owned constructor|owned toString|{missing}|Brick',
+  );
+});
+
 it('selects locale plural categories beyond the English one/other rule (#4785)', () => {
   registerLocale('ru', {
     'appearanceAssignmentList.summary': {
@@ -112,4 +137,27 @@ it('uses English plural rules when a plural message falls back to English (#4785
   setLocale('ru-fallback');
   const container = render(<DynamicProbe count={21} />);
   assert.match(container.querySelector('[data-key="plural"]')?.textContent ?? '', /^21 objects/);
+});
+
+it('selects plural categories at the same precision shown by interpolation (#4785)', () => {
+  const english = render(<DynamicProbe count={1.0001} />);
+  assert.match(english.querySelector('[data-key="plural"]')?.textContent ?? '', /^1\.0001 objects/);
+  cleanup();
+
+  registerLocale('ar', {
+    'appearanceAssignmentList.summary': {
+      zero: 'ZERO {count}',
+      one: 'ONE {count}',
+      two: 'TWO {count}',
+      few: 'FEW {count}',
+      many: 'MANY {count}',
+      other: 'OTHER {count}',
+    },
+  });
+  setLocale('ar');
+  const nearZero = render(<DynamicProbe count={0.0001} />);
+  assert.equal(nearZero.querySelector('[data-key="plural"]')?.textContent, 'OTHER 0.0001');
+  cleanup();
+  const nearTwo = render(<DynamicProbe count={2.0001} />);
+  assert.equal(nearTwo.querySelector('[data-key="plural"]')?.textContent, 'OTHER 2.0001');
 });

@@ -73,17 +73,17 @@ function pluralForm(value: PluralTranslation, params: TranslationParameters, loc
   if (typeof count !== 'number') return value.other;
   let category: Intl.LDMLPluralRule;
   try {
-    category = new Intl.PluralRules(locale).select(count);
+    category = new Intl.PluralRules(locale, { maximumSignificantDigits: 21 }).select(count);
   } catch (error) {
     console.warn(`[i18n] Invalid locale "${locale}" for plural rules; using English.`, error);
-    category = new Intl.PluralRules('en').select(count);
+    category = new Intl.PluralRules('en', { maximumSignificantDigits: 21 }).select(count);
   }
   return value[category] ?? value.other;
 }
 
 function interpolate(template: string, params: TranslationParameters): string {
   return template.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (placeholder, name: string) => {
-    const value = params[name];
+    const value = Object.hasOwn(params, name) ? params[name] : undefined;
     return value === undefined ? placeholder : String(value);
   });
 }
