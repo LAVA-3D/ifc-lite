@@ -42,7 +42,7 @@ export const WELCOME_TOUR: TourDefinition = {
       id: 'orbit',
       kind: 'canvas',
       title: 'Look around',
-      body: 'Drag to orbit. Right-drag to pan. Scroll to zoom.',
+      body: 'Drag to orbit. Middle-drag or Shift+drag to pan. Scroll to zoom. Hold right-click to fly with WASD.',
       gate: { event: EVENT_CAMERA_INTERACTED },
     },
     {
