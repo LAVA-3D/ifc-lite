@@ -327,6 +327,27 @@ describe('#4854 cost evaluator blocker regressions', () => {
     expect(evaluateCostItem(extraction, 7000)).toMatchObject({ Amount: '6000', Currency: 'CHF' });
   }, 8_000);
 
+  it('accumulates repeated categorized values linearly while preserving multiplicity', () => {
+    const extraction = valueGraph([{
+      expressId: 1, Type: 'IfcCostValue', Category: 'Labour',
+      AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
+    }]);
+    extraction.Currency = 'CHF';
+    extraction.CostItems = [{
+      expressId: 2, CostValues: Array.from({ length: 40_000 }, () => 1),
+      globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
+      productGlobalIds: [], controllingScheduleGlobalIds: [],
+    }];
+    expect(evaluateCostItem(extraction, 2)).toMatchObject({ Amount: '40000', Currency: 'CHF', Diagnostics: [] });
+    extraction.CostItems[0].CostValues = Array.from({ length: 60_000 }, () => 1);
+    expect(evaluateCostItem(extraction, 2)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([
+        expect.objectContaining({ Code: 'INVALID_LIST', expressId: 2 }),
+      ]),
+    });
+  }, 2_000);
+
   it('bounds file-controlled applied-value graph work', () => {
     const values: CostValueInfo[] = [{
       expressId: 1, Type: 'IfcCostValue', AppliedValue: { Kind: 'Typed', Type: 'IFCNUMERICMEASURE', Value: '1' },
@@ -1111,6 +1132,78 @@ describe('#4854 cost evaluator blocker regressions', () => {
         expect.objectContaining({ Code: 'INVALID_LIST', expressId }),
       ]));
     }
+  });
+
+  it('uses the schema-specific IfcRelAssignsToProduct select', async () => {
+    const relationship = "#30=IFCRELASSIGNSTOPRODUCT('product-type',$,$,$,(#20),$,#21);";
+    const type = "#21=IFCWALLTYPE('type',$,'Type',$,$,$,$,$,$,.STANDARD.);";
+    const legacy = extractCostOnDemand(await parse(step('IFC2X3', [
+      "#20=IFCCOSTITEM('item',$,'Item',$,$);", type, relationship,
+    ])));
+    const modern = extractCostOnDemand(await parse(step('IFC4', [
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,$,$);", type, relationship,
+    ])));
+    expect(legacy.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 30, RelatingProduct: 21, InvalidReferences: true }),
+    ]));
+    expect(legacy.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 30 }),
+    ]));
+    expect(modern.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 30, RelatingProduct: 21, InvalidReferences: undefined }),
+    ]));
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('validates retained %s nesting and declaration endpoints', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,$,$);",
+      "#30=IFCRELNESTS('nest-parent-dangling',$,$,$,#999,(#20));",
+      "#31=IFCRELNESTS('nest-parent-wrong',$,$,$,#3,(#20));",
+      "#32=IFCRELNESTS('nest-related-dangling',$,$,$,#20,(#20,#998));",
+      "#33=IFCRELNESTS('nest-related-wrong',$,$,$,#20,(#20,#3));",
+      "#34=IFCRELDECLARES('declare-context-dangling',$,$,$,#999,(#20));",
+      "#35=IFCRELDECLARES('declare-context-wrong',$,$,$,#3,(#20));",
+      "#36=IFCRELDECLARES('declare-related-dangling',$,$,$,#1,(#20,#998));",
+      "#37=IFCRELDECLARES('declare-related-wrong',$,$,$,#1,(#20,#3));",
+    ])));
+    for (const expressId of [30, 31, 32, 33, 34, 35, 36, 37]) {
+      expect(extraction.Relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ expressId, InvalidReferences: true }),
+      ]));
+      expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ Code: 'INVALID_LIST', expressId }),
+      ]));
+    }
+  });
+
+  it('keeps compatibility value trees cycle-safe and JSON-serializable', async () => {
+    const chain = [
+      "#10=IFCCOSTVALUE('self',$,$,$,$,$,$,$,.ADD.,(#10));",
+      "#11=IFCCOSTVALUE('mutual-a',$,$,$,$,$,$,$,.ADD.,(#12));",
+      "#12=IFCCOSTVALUE('mutual-b',$,$,$,$,$,$,$,.ADD.,(#11));",
+    ];
+    for (let id = 20; id <= 50; id++) {
+      const components = id === 20 ? '$' : `(#${id - 1})`;
+      chain.push(`#${id}=IFCCOSTVALUE('deep-${id}',$,IFCMONETARYMEASURE(1.),$,$,$,$,$,.ADD.,${components});`);
+    }
+    chain.push("#60=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10,#11,#50),$);");
+    const extraction = extractCostOnDemand(await parse(step('IFC4', chain)));
+    expect(() => JSON.stringify(extraction)).not.toThrow();
+    expect(extraction.CostValues.find(value => value.expressId === 10)?.Components).toEqual([10]);
+    expect(extraction.CostValues.find(value => value.expressId === 10)?.components).toBeUndefined();
+    expect(extraction.CostValues.find(value => value.expressId === 11)?.components?.[0]?.components).toBeUndefined();
+    let compatibility = extraction.CostItems[0].costValues?.find(value => value.expressId === 50);
+    let compatibilityDepth = 0;
+    while (compatibility?.components?.[0]) {
+      compatibilityDepth++;
+      compatibility = compatibility.components[0];
+    }
+    expect(compatibilityDepth).toBeLessThanOrEqual(21);
+    expect(extraction.CostValues.find(value => value.expressId === 50)?.Components).toEqual([49]);
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'VALUE_CYCLE', expressId: 10 }),
+      expect.objectContaining({ Code: 'VALUE_CYCLE' }),
+    ]));
   });
 
   it('handles file-controlled applied-value component counts without argument-stack overflow', async () => {

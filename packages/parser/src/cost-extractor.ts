@@ -258,6 +258,23 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
   for (const quantity of quantityMap.values()) {
     if (quantity.Unit !== undefined) unitResolver.resolve(quantity.Unit);
   }
+  const legacyBudget = { remaining: 100_000 };
+  const legacyComponents = (root: number, depth = 0, visiting = new Set<number>()): CostValueInfo[] | undefined => {
+    if (depth > 20 || visiting.has(root) || legacyBudget.remaining <= 0) return undefined;
+    const source = values.get(root);
+    if (!source) return undefined;
+    visiting.add(root);
+    const components = source.Components?.flatMap(id => {
+      const child = values.get(id);
+      if (!child || visiting.has(id) || legacyBudget.remaining-- <= 0) return [];
+      const { components: omitted, ...copy } = child;
+      void omitted;
+      const nested = legacyComponents(id, depth + 1, visiting);
+      return [{ ...copy, ...(nested?.length ? { components: nested } : {}) }];
+    });
+    visiting.delete(root);
+    return components?.length ? components : undefined;
+  };
   for (const value of CostValues) {
     if (value.UnitBasis !== undefined) {
       const basis = unitResolver.resolveMeasureWithUnit(value.UnitBasis);
@@ -286,10 +303,8 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
         Severity: 'error', expressId: value.expressId, RelatedExpressId: componentId,
       });
     }
-    value.components = value.Components
-      ?.map(id => values.get(id))
-      .filter((entry): entry is CostValueInfo => entry !== undefined);
   }
+  const compatibilityBuilt = new Set<number>();
   for (const item of CostItems) {
     for (const valueId of item.CostValues ?? []) {
       if (!values.has(valueId)) diagnostics.push({
@@ -299,7 +314,14 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
       });
     }
     item.costValues = item.CostValues
-      ?.map(id => values.get(id))
+      ?.map(id => {
+        const value = values.get(id);
+        if (value && !compatibilityBuilt.has(id)) {
+          value.components = legacyComponents(id);
+          compatibilityBuilt.add(id);
+        }
+        return value;
+      })
       .filter((entry): entry is CostValueInfo => entry !== undefined);
     item.costQuantities = item.CostQuantities
       ?.map(id => quantities.get(id))

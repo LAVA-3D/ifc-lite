@@ -37,8 +37,11 @@ function targetIs(reader: CostEntityReader, expressId: number, roots: ReadonlySe
 
 const OBJECT_DEFINITION_ROOT = new Set(['IFCOBJECTDEFINITION']);
 const CONTROL_ROOT = new Set(['IFCCONTROL']);
+const CONTEXT_ROOT = new Set(['IFCCONTEXT']);
+const DEFINITION_SELECT_ROOTS = new Set(['IFCOBJECTDEFINITION', 'IFCPROPERTYDEFINITION']);
 const PROCESS_SELECT_ROOTS = new Set(['IFCPROCESS', 'IFCTYPEPROCESS']);
-const PRODUCT_SELECT_ROOTS = new Set(['IFCPRODUCT', 'IFCTYPEPRODUCT']);
+const PRODUCT_ROOT = new Set(['IFCPRODUCT']);
+const PRODUCT_SELECT_ROOTS = new Set([...PRODUCT_ROOT, 'IFCTYPEPRODUCT']);
 
 /** Preserve every cost-relevant edge with its original relationship identity. */
 export function extractCostRelationships(
@@ -75,7 +78,8 @@ export function extractCostRelationships(
     if ((asRefList(a[4]) ?? []).some(id => itemIds.has(id))) {
       const InvalidReferences = related.invalid || product.invalid ||
         related.value.some(id => !targetIs(reader, id, OBJECT_DEFINITION_ROOT)) ||
-        (product.value !== undefined && !targetIs(reader, product.value, PRODUCT_SELECT_ROOTS));
+        (product.value !== undefined && !targetIs(reader, product.value,
+          reader.schemaVersion === 'IFC2X3' ? PRODUCT_ROOT : PRODUCT_SELECT_ROOTS));
       result.push({ ...base(expressId, 'IfcRelAssignsToProduct', a), RelatedObjects: related.value,
         RelatingProduct: product.value, InvalidReferences: InvalidReferences || undefined });
     }
@@ -92,7 +96,9 @@ export function extractCostRelationships(
     if ((candidateParent !== undefined && itemIds.has(candidateParent)) || candidateRelated.some(id => itemIds.has(id))) {
       result.push({ ...base(expressId, 'IfcRelNests', a), RelatingObject, RelatedObjects,
         InvalidRelatedObjects: InvalidRelatedObjects || undefined,
-        InvalidReferences: (parent.invalid || related.invalid) || undefined });
+        InvalidReferences: (parent.invalid || related.invalid ||
+          related.value.some(id => !targetIs(reader, id, OBJECT_DEFINITION_ROOT)) ||
+          (parent.value !== undefined && !targetIs(reader, parent.value, OBJECT_DEFINITION_ROOT))) || undefined });
     }
   }
   for (const expressId of reader.ids('IFCRELDECLARES')) {
@@ -100,7 +106,9 @@ export function extractCostRelationships(
     const definitions = references(reader, expressId, 5);
     const context = reference(reader, expressId, 4);
     if ((asRefList(a[5]) ?? []).some(id => scheduleIds.has(id) || itemIds.has(id))) {
-      const InvalidReferences = definitions.invalid || context.invalid;
+      const InvalidReferences = definitions.invalid || context.invalid ||
+        definitions.value.some(id => !targetIs(reader, id, DEFINITION_SELECT_ROOTS)) ||
+        (context.value !== undefined && !targetIs(reader, context.value, CONTEXT_ROOT));
       result.push({ ...base(expressId, 'IfcRelDeclares', a), RelatingContext: context.value,
         RelatedDefinitions: definitions.value, InvalidReferences: InvalidReferences || undefined });
     }
@@ -162,7 +170,7 @@ export function diagnoseCostGraphs(
 ): void {
   for (const relationship of relationships) {
     if (relationship.InvalidReferences) diagnostics.push({
-      Code: 'INVALID_LIST', Message: `${relationship.Type} #${relationship.expressId} contains a non-reference endpoint`,
+      Code: 'INVALID_LIST', Message: `${relationship.Type} #${relationship.expressId} contains an invalid endpoint`,
       Severity: 'error', expressId: relationship.expressId,
     });
   }

@@ -3,11 +3,12 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { Decimal } from 'decimal.js';
+import { appendCategoryValues } from './cost-category-buckets.js';
 import { combineCosts, type EvaluatedCost } from './cost-evaluation-arithmetic.js';
 import { costEvaluationResult, unsupportedCostEvaluation } from './cost-evaluation-result.js';
 import { itemQuantities, type QuantityValue } from './cost-quantity-evaluator.js';
 import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
-import { valueEvaluationSession } from './cost-value-evaluation-session.js';
+import { consumeValueEvaluationWork, valueEvaluationSession } from './cost-value-evaluation-session.js';
 import type {
   CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
   CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo,
@@ -201,8 +202,7 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
   const { memo, state } = session;
   const stack: Array<{ id: number; expanded: boolean }> = [{ id: root, expanded: false }];
   while (stack.length > 0) {
-    if (++session.work > 100_000) {
-      session.exhausted = true;
+    if (!consumeValueEvaluationWork(session)) {
       diagnostic(context, 'INVALID_LIST',
         `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner);
       return { invalid: true };
@@ -346,18 +346,22 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
     }
     const quantities = itemQuantities(item, context);
     const categoryTotals = new Map<string, EvaluatedCost[]>();
+    const valueSession = valueEvaluationSession(item.expressId);
+    const categoryBudgetExhausted = () => diagnostic(context, 'INVALID_LIST',
+      `IfcAppliedValue graph on #${item.expressId} exceeds the evaluation budget`, item.expressId);
     for (const childId of children.get(item.expressId) ?? []) {
       const child = memo.get(childId);
       if (!child) continue;
-      categoryTotals.set('*', [...(categoryTotals.get('*') ?? []), child]);
-      if (child.invalid) categoryTotals.set('', [...(categoryTotals.get('') ?? []), child]);
+      if (!appendCategoryValues(categoryTotals, '*', [child], valueSession, categoryBudgetExhausted)) break;
+      if (child.invalid &&
+          !appendCategoryValues(categoryTotals, '', [child], valueSession, categoryBudgetExhausted)) break;
       for (const [category, values] of child.byCategory) {
         if (category === '*') continue;
-        categoryTotals.set(category, [...(categoryTotals.get(category) ?? []), ...values]);
+        if (!appendCategoryValues(categoryTotals, category, values, valueSession, categoryBudgetExhausted)) break;
       }
+      if (valueSession.exhausted) break;
     }
     const entries: Array<{ category?: string; evaluated: EvaluatedCost }> = [];
-    const valueSession = valueEvaluationSession(item.expressId);
     for (const valueId of item.CostValues ?? []) {
       const value = context.values.get(valueId);
       if (!value) {
@@ -371,10 +375,9 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       } else if (quantities === undefined) {
         entries.push({ category: value.Category, evaluated: { invalid: true } });
       } else {
-        entries.push({ category: value.Category, evaluated: quantities === undefined
-          ? { invalid: true }
-          : evaluateValueGraph(valueId, context, quantities, quantities.length > 0,
-              categoryTotals, quantities.length > 0, valueSession) });
+        entries.push({ category: value.Category,
+          evaluated: evaluateValueGraph(valueId, context, quantities, quantities.length > 0,
+            categoryTotals, quantities.length > 0, valueSession) });
       }
     }
     if (entries.length === 0) {
@@ -382,11 +385,14 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
     }
     const byCategory = new Map<string, EvaluatedCost[]>();
     for (const entry of entries) {
-      if (entry.category) byCategory.set(entry.category,
-        [...(byCategory.get(entry.category) ?? []), entry.evaluated]);
+      if (entry.category &&
+          !appendCategoryValues(byCategory, entry.category, [entry.evaluated], valueSession,
+            categoryBudgetExhausted)) break;
     }
-    const combined = combineCosts('ADD', entries.map(entry => entry.evaluated), item.expressId,
-      (Code, Message, id, Severity) => diagnostic(context, Code, Message, id, Severity));
+    const combined = valueSession.exhausted
+      ? { invalid: true }
+      : combineCosts('ADD', entries.map(entry => entry.evaluated), item.expressId,
+          (Code, Message, id, Severity) => diagnostic(context, Code, Message, id, Severity));
     const quantityApplied = entries.find(entry => entry.evaluated.quantityApplied)?.evaluated.quantityApplied;
     memo.set(frame.id, { ...combined, quantityApplied, byCategory });
   }

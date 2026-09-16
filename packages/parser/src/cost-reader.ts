@@ -52,6 +52,10 @@ export class CostEntityReader {
     return this.store.entityIndex.byType.get(type.toUpperCase()) ?? [];
   }
 
+  get schemaVersion(): IfcDataStore['schemaVersion'] {
+    return this.store.schemaVersion;
+  }
+
   get(expressId: number): IfcEntity | null {
     const cached = this.cache.get(expressId);
     if (cached !== undefined) return cached;
