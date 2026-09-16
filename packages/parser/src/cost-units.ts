@@ -261,14 +261,12 @@ export class CostUnitResolver {
     if (expressId === undefined) return undefined;
     const entity = this.reader.get(expressId);
     if (!entity || entity.type.toUpperCase() !== 'IFCMEASUREWITHUNIT') return undefined;
-    const value = entity.attributes?.[0];
-    const type = Array.isArray(value) && typeof value[0] === 'string' ? value[0].toUpperCase() : undefined;
     const unitId = this.reader.referenceLexeme(expressId, 1);
-    // Canonical resolution already attempted supported measures. Unsupported legacy
-    // wrappers still get a best-effort unit so existing consumers retain display data.
-    const shouldAttemptUnit = dimensionForMeasure(type) === undefined && type !== 'IFCMONETARYMEASURE';
+    // ValueComponent and UnitComponent are SELECTs whose compatibility fields
+    // have always degraded independently. Do not let a malformed value hide a
+    // valid display unit. Avoid retrying a genuinely dangling unit reference.
     const Unit = canonical?.Unit ?? (unitId === undefined ? undefined
-      : this.Units.get(unitId) ?? (shouldAttemptUnit ? this.resolve(unitId) : undefined));
+      : this.Units.get(unitId) ?? (this.reader.get(unitId) ? this.resolve(unitId) : undefined));
     return { Value: this.reader.decimalLexeme(expressId, 0), Unit };
   }
 
@@ -319,13 +317,19 @@ export class CostUnitResolver {
     const unitIds = assignment?.type.toUpperCase() === 'IFCUNITASSIGNMENT'
       ? this.references(assignmentId as number, 0, 'Units') ?? []
       : [];
+    const currencies = new Set<string>();
     for (const unitId of unitIds) {
       const unit = this.resolve(unitId);
       if (!unit) continue;
-      if (unit.Currency) this.Currency = unit.Currency;
+      if (unit.Currency) currencies.add(unit.Currency);
       if (unit.Dimension && unit.Scale !== undefined && !this.ProjectUnits.has(unit.Dimension)) {
         this.ProjectUnits.set(unit.Dimension, unit);
       }
+    }
+    if (currencies.size === 1) this.Currency = [...currencies][0];
+    else if (currencies.size > 1) {
+      this.warn('MIXED_CURRENCY',
+        `IfcUnitAssignment #${assignmentId} declares conflicting project currencies`, assignmentId as number);
     }
   }
 

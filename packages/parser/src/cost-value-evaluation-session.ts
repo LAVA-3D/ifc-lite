@@ -8,19 +8,38 @@ export interface ValueEvaluationSession {
   memo: Map<number, EvaluatedCost>;
   categoryMemo: Map<string, EvaluatedCost>;
   state: Map<number, 1 | 2>;
+  budget: ValueEvaluationBudget;
   work: number;
-  exhausted: boolean;
+  locallyExhausted: boolean;
+  readonly exhausted: boolean;
   owner: number;
 }
 
-export function valueEvaluationSession(owner: number): ValueEvaluationSession {
-  return { memo: new Map(), categoryMemo: new Map(), state: new Map(), work: 0, exhausted: false, owner };
+export interface ValueEvaluationBudget {
+  work: number;
+  exhausted: boolean;
+}
+
+export function valueEvaluationBudget(): ValueEvaluationBudget {
+  return { work: 0, exhausted: false };
+}
+
+export function valueEvaluationSession(
+  owner: number,
+  budget: ValueEvaluationBudget = valueEvaluationBudget(),
+): ValueEvaluationSession {
+  return {
+    memo: new Map(), categoryMemo: new Map(), state: new Map(), budget, owner,
+    work: 0, locallyExhausted: false,
+    get exhausted() { return this.locallyExhausted || budget.exhausted; },
+  };
 }
 
 export function consumeValueEvaluationWork(session: ValueEvaluationSession, amount = 1): boolean {
   if (session.exhausted) return false;
   session.work += amount;
-  if (session.work <= 100_000) return true;
-  session.exhausted = true;
-  return false;
+  session.budget.work += amount;
+  if (session.work > 100_000) session.locallyExhausted = true;
+  if (session.budget.work > 1_000_000) session.budget.exhausted = true;
+  return !session.exhausted;
 }

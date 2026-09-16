@@ -1242,11 +1242,17 @@ describe('#4854 cost evaluator blocker regressions', () => {
   });
 
   it('preserves legacy UnitBasis fields independently from canonical validation', async () => {
-    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [
+      "#1=IFCPROJECT('project',$,'Cost project',$,$,$,$,$,#2);",
+      '#2=IFCUNITASSIGNMENT((#4));',
+      '#3=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);',
+      "#4=IFCMONETARYUNIT('CHF');",
       '#10=IFCMEASUREWITHUNIT(IFCPOSITIVELENGTHMEASURE(2.),#3);',
       '#11=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(2.),#999);',
+      "#12=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE('bad'),#3);",
       "#20=IFCCOSTVALUE('Legacy typed rate',$,IFCMONETARYMEASURE(10.),#10,$,$,$,$,$,$);",
       "#21=IFCCOSTVALUE('Dangling-unit rate',$,IFCMONETARYMEASURE(10.),#11,$,$,$,$,$,$);",
+      "#22=IFCCOSTVALUE('Malformed-value rate',$,IFCMONETARYMEASURE(10.),#12,$,$,$,$,$,$);",
     ])));
     expect(extraction.CostValues.find(value => value.expressId === 20)?.unitBasis).toEqual({
       valueComponent: 2, unitSymbol: 'm', unitSiScale: 1,
@@ -1254,10 +1260,59 @@ describe('#4854 cost evaluator blocker regressions', () => {
     expect(extraction.CostValues.find(value => value.expressId === 21)?.unitBasis).toEqual({
       valueComponent: 2, unitSymbol: undefined, unitSiScale: undefined,
     });
+    expect(extraction.CostValues.find(value => value.expressId === 22)?.unitBasis).toEqual({
+      valueComponent: undefined, unitSymbol: 'm', unitSiScale: 1,
+    });
     expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ Code: 'INCOMPATIBLE_UNIT', expressId: 10 }),
       expect.objectContaining({ Code: 'MISSING_REFERENCE', expressId: 999 }),
     ]));
+  });
+
+  it.each(['#3,#4', '#4,#3'])('withholds totals for conflicting project currencies in order %s', async (order) => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [
+      "#1=IFCPROJECT('project',$,'Currencies',$,$,$,$,$,#2);",
+      `#2=IFCUNITASSIGNMENT((${order}));`,
+      "#3=IFCMONETARYUNIT('CHF');", "#4=IFCMONETARYUNIT('EUR');",
+      "#20=IFCCOSTVALUE('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#30=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#20),$);",
+    ])));
+    expect(extraction.Currency).toBeUndefined();
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'MIXED_CURRENCY', expressId: 2 }),
+    ]));
+    expect(evaluateCostItem(extraction, 30)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'MIXED_CURRENCY' })]),
+    });
+  });
+
+  it('shares the evaluation budget across nested items with a common expression', () => {
+    const size = 700;
+    const CostValues: CostValueInfo[] = [{
+      expressId: 1, Type: 'IfcCostValue',
+      AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
+    }];
+    for (let expressId = 2; expressId <= size; expressId++) {
+      CostValues.push({ expressId, Type: 'IfcCostValue', ArithmeticOperator: 'ADD', Components: [expressId - 1] });
+    }
+    CostValues.push({ expressId: size + 1, Type: 'IfcCostValue', Category: '*' });
+    const item = (expressId: number, valueId: number) => ({
+      expressId, CostValues: [valueId], globalId: '', name: '', childGlobalIds: [],
+      productExpressIds: [], productGlobalIds: [], controllingScheduleGlobalIds: [],
+    });
+    const children = Array.from({ length: size }, (_, index) => item(10_000 + index, size));
+    const extraction = valueGraph(CostValues);
+    extraction.Currency = 'CHF';
+    extraction.CostItems = [item(9_999, size + 1), ...children];
+    extraction.Relationships = [{
+      expressId: 20_000, Type: 'IfcRelNests', RelatingObject: 9_999,
+      RelatedObjects: children.map(child => child.expressId),
+    }];
+    expect(evaluateCostItem(extraction, 9_999)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'INVALID_LIST' })]),
+    });
   });
 
   it('validates all IFC2X3 cost relationship endpoints while retaining the edges', async () => {

@@ -8,7 +8,8 @@ import { combineCosts, type EvaluatedCost } from './cost-evaluation-arithmetic.j
 import { costEvaluationResult, unsupportedCostEvaluation } from './cost-evaluation-result.js';
 import { itemQuantities, type QuantityValue } from './cost-quantity-evaluator.js';
 import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
-import { consumeValueEvaluationWork, valueEvaluationSession } from './cost-value-evaluation-session.js';
+import { consumeValueEvaluationWork, valueEvaluationBudget,
+  valueEvaluationSession } from './cost-value-evaluation-session.js';
 import type { CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
   CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo } from './cost-types.js';
 interface Context {
@@ -82,6 +83,10 @@ function typedValue(value: CostValueInfo, valueId: number, context: Context): Ev
   if (!amount) return { invalid: true };
   if (operand.Type === 'IFCMONETARYMEASURE') {
     if (!context.extraction.Currency) {
+      if (context.extraction.Diagnostics.some(entry => entry.Code === 'MIXED_CURRENCY')) {
+        diagnostic(context, 'MIXED_CURRENCY', `IfcCostValue #${valueId} has an ambiguous project currency`, valueId);
+        return { invalid: true };
+      }
       diagnostic(context, 'MISSING_CURRENCY', `IfcCostValue #${valueId} has no project currency`, valueId, 'warning');
     }
     return { amount, currency: context.extraction.Currency };
@@ -310,6 +315,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
   }
   const memo = new Map<number, ItemResult>();
   const state = new Map<number, 1 | 2>();
+  const evaluationBudget = valueEvaluationBudget();
   const stack: Array<{ id: number; expanded: boolean }> = [{ id: expressId, expanded: false }];
   while (stack.length > 0) {
     const frame = stack.pop() as { id: number; expanded: boolean };
@@ -341,7 +347,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
     }
     const quantities = itemQuantities(item, context);
     const categoryTotals = new Map<string, EvaluatedCost[]>();
-    const valueSession = valueEvaluationSession(item.expressId);
+    const valueSession = valueEvaluationSession(item.expressId, evaluationBudget);
     const categoryBudgetExhausted = () => diagnostic(context, 'INVALID_LIST',
       `IfcAppliedValue graph on #${item.expressId} exceeds the evaluation budget`, item.expressId);
     for (const childId of children.get(item.expressId) ?? []) {
