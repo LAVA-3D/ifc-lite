@@ -581,6 +581,36 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     }
   });
 
+  it('hands equal-ID isolation to the basket before chart cleanup runs (#4832)', async () => {
+    useViewerStore.getState().setChartFocusMode('isolate');
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    assert.equal(useViewerStore.getState().chartVisibilityOwned?.channel, 'isolate');
+
+    await act(async () => {
+      useViewerStore.getState().setBasket([
+        { modelId: 'm1', expressId: 44 },
+        { modelId: 'm1', expressId: 45 },
+      ]);
+    });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.basketVisibilityOwned?.channel, 'isolate');
+    assert.deepEqual([...(state.isolatedEntities ?? [])].sort(), [GID(44), GID(45)]);
+
+    cleanup();
+    assert.deepEqual(
+      [...(useViewerStore.getState().isolatedEntities ?? [])].sort(),
+      [GID(44), GID(45)],
+      'unmount cleanup cannot release the newer equal-ID basket isolation',
+    );
+  });
+
   it('preserves a newer equal-ID clash ghost when chart cleanup runs (#4832)', async () => {
     const { renderer, charts } = recordingRenderer();
     let focusClash: ReturnType<typeof useClash>['focusClash'] | null = null;
