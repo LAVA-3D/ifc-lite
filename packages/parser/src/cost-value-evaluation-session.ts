@@ -6,6 +6,7 @@ import type { EvaluatedCost } from './cost-evaluation-arithmetic.js';
 
 export interface ValueEvaluationSession {
   memo: Map<number, EvaluatedCost>;
+  categoryMemo: Map<string, EvaluatedCost>;
   state: Map<number, 1 | 2>;
   work: number;
   exhausted: boolean;
@@ -13,7 +14,7 @@ export interface ValueEvaluationSession {
 }
 
 export function valueEvaluationSession(owner: number): ValueEvaluationSession {
-  return { memo: new Map(), state: new Map(), work: 0, exhausted: false, owner };
+  return { memo: new Map(), categoryMemo: new Map(), state: new Map(), work: 0, exhausted: false, owner };
 }
 
 export function consumeValueEvaluationWork(session: ValueEvaluationSession, amount = 1): boolean {

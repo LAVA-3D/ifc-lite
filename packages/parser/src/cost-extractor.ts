@@ -307,9 +307,15 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
   const compatibilityBuilt = new Set<number>();
   for (const item of CostItems) {
     for (const valueId of item.CostValues ?? []) {
-      if (!values.has(valueId)) diagnostics.push({
+      const value = values.get(valueId);
+      if (!value) diagnostics.push({
         Code: 'MISSING_REFERENCE',
         Message: `IfcCostValue #${valueId} cannot be resolved`,
+        Severity: 'error', expressId: item.expressId, RelatedExpressId: valueId,
+      });
+      else if (value.Type !== 'IfcCostValue') diagnostics.push({
+        Code: 'INVALID_LIST',
+        Message: `CostValues on IfcCostItem #${item.expressId} must reference IfcCostValue`,
         Severity: 'error', expressId: item.expressId, RelatedExpressId: valueId,
       });
     }

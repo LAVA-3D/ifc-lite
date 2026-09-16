@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import type { EvaluatedCost } from './cost-evaluation-arithmetic.js';
+import { combineCosts, type EvaluatedCost } from './cost-evaluation-arithmetic.js';
 import {
   consumeValueEvaluationWork, type ValueEvaluationSession,
 } from './cost-value-evaluation-session.js';
@@ -22,4 +22,21 @@ export function appendCategoryValues(
     bucket.push(value);
   }
   return true;
+}
+
+export function combineCategoryValues(
+  category: string, values: readonly EvaluatedCost[], valueId: number,
+  session: ValueEvaluationSession, onExhausted: () => void,
+  onDiagnostic: Parameters<typeof combineCosts>[3],
+): EvaluatedCost {
+  const cached = session.categoryMemo.get(category);
+  if (cached) return cached;
+  const wasExhausted = session.exhausted;
+  if (!consumeValueEvaluationWork(session, values.length)) {
+    if (!wasExhausted) onExhausted();
+    return { invalid: true };
+  }
+  const evaluated = combineCosts('ADD', [...values], valueId, onDiagnostic);
+  session.categoryMemo.set(category, evaluated);
+  return evaluated;
 }

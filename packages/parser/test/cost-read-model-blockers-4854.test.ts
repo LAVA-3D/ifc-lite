@@ -348,6 +348,52 @@ describe('#4854 cost evaluator blocker regressions', () => {
     });
   }, 2_000);
 
+  it('memoizes nested category subtotal reductions while preserving multiplicity', () => {
+    const count = 4_000;
+    const subtotalValues = Array.from({ length: count }, (_, index): CostValueInfo => ({
+      expressId: 100 + index, Type: 'IfcCostValue', Category: 'Material',
+    }));
+    const extraction = valueGraph([{
+      expressId: 1, Type: 'IfcCostValue', Category: 'Material',
+      AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
+    }, ...subtotalValues]);
+    extraction.Currency = 'CHF';
+    extraction.CostItems = [{
+      expressId: 10, CostValues: subtotalValues.map(value => value.expressId as number),
+      globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
+      productGlobalIds: [], controllingScheduleGlobalIds: [],
+    }, {
+      expressId: 11, CostValues: Array.from({ length: count }, () => 1),
+      globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
+      productGlobalIds: [], controllingScheduleGlobalIds: [],
+    }];
+    extraction.Relationships = [{
+      expressId: 20, Type: 'IfcRelNests', RelatingObject: 10, RelatedObjects: [11],
+    }];
+    expect(evaluateCostItem(extraction, 10)).toMatchObject({
+      Amount: '16000000', Currency: 'CHF', Diagnostics: [],
+    });
+  }, 2_000);
+
+  it('requires direct CostValues references to target IfcCostValue', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#20=IFCAPPLIEDVALUE('base',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#21=IFCCOSTVALUE('sum',$,$,$,$,$,$,$,.ADD.,(#20));",
+      "#30=IFCCOSTITEM('bad',$,'Bad',$,$,'B',$,(#20),$);",
+      "#31=IFCCOSTITEM('valid',$,'Valid',$,$,'V',$,(#21),$);",
+    ])));
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 30, RelatedExpressId: 20 }),
+    ]));
+    expect(evaluateCostItem(extraction, 30)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([
+        expect.objectContaining({ Code: 'INVALID_LIST', expressId: 30 }),
+      ]),
+    });
+    expect(evaluateCostItem(extraction, 31)).toMatchObject({ Amount: '10', Currency: 'CHF' });
+  });
+
   it('bounds file-controlled applied-value graph work', () => {
     const values: CostValueInfo[] = [{
       expressId: 1, Type: 'IfcCostValue', AppliedValue: { Kind: 'Typed', Type: 'IFCNUMERICMEASURE', Value: '1' },
@@ -1152,6 +1198,32 @@ describe('#4854 cost evaluator blocker regressions', () => {
     expect(modern.Relationships).toEqual(expect.arrayContaining([
       expect.objectContaining({ expressId: 30, RelatingProduct: 21, InvalidReferences: undefined }),
     ]));
+  });
+
+  it('validates all IFC2X3 cost relationship endpoints while retaining the edges', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC2X3', [
+      "#10=IFCCOSTITEM('item',$,'Item',$,$);",
+      "#20=IFCAPPLIEDVALUE('value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#30=IFCRELASSOCIATESAPPLIEDVALUE('missing',$,$,$,(#10),#999);",
+      "#31=IFCRELSCHEDULESCOSTITEMS('missing',$,$,$,(#10),$,#999);",
+      '#32=IFCAPPLIEDVALUERELATIONSHIP(#20,(#999),.ADD.,$,$);',
+      "#33=IFCRELASSOCIATESAPPLIEDVALUE('related-wrong',$,$,$,(#10,#3),#20);",
+      "#34=IFCRELASSOCIATESAPPLIEDVALUE('value-wrong',$,$,$,(#10),#3);",
+      "#35=IFCRELSCHEDULESCOSTITEMS('related-wrong',$,$,$,(#10,#3),$,#40);",
+      "#36=IFCRELSCHEDULESCOSTITEMS('control-wrong',$,$,$,(#10),$,#20);",
+      '#37=IFCAPPLIEDVALUERELATIONSHIP(#3,(#20),.ADD.,$,$);',
+      '#38=IFCAPPLIEDVALUERELATIONSHIP(#20,(#3),.ADD.,$,$);',
+      '#3=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);',
+      "#40=IFCCOSTSCHEDULE('schedule',$,'Schedule',$,$,$,$,$,$,$,$,'S',.BUDGET.);",
+    ])));
+    for (let expressId = 30; expressId <= 38; expressId++) {
+      expect(extraction.Relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ expressId, InvalidReferences: true }),
+      ]));
+      expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ Code: 'INVALID_LIST', expressId }),
+      ]));
+    }
   });
 
   it.each(['IFC4', 'IFC4X3_ADD2'])('validates retained %s nesting and declaration endpoints', async (schema) => {

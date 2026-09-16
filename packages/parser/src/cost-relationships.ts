@@ -42,6 +42,10 @@ const DEFINITION_SELECT_ROOTS = new Set(['IFCOBJECTDEFINITION', 'IFCPROPERTYDEFI
 const PROCESS_SELECT_ROOTS = new Set(['IFCPROCESS', 'IFCTYPEPROCESS']);
 const PRODUCT_ROOT = new Set(['IFCPRODUCT']);
 const PRODUCT_SELECT_ROOTS = new Set([...PRODUCT_ROOT, 'IFCTYPEPRODUCT']);
+const ROOT = new Set(['IFCROOT']);
+const APPLIED_VALUE_ROOT = new Set(['IFCAPPLIEDVALUE']);
+const COST_ITEM = new Set(['IFCCOSTITEM']);
+const COST_SCHEDULE = new Set(['IFCCOSTSCHEDULE']);
 
 /** Preserve every cost-relevant edge with its original relationship identity. */
 export function extractCostRelationships(
@@ -134,7 +138,9 @@ export function extractCostRelationships(
     const candidateApplied = asRef(a[5]);
     if ((asRefList(a[4]) ?? []).some(id => itemIds.has(id)) ||
         (candidateApplied !== undefined && valueIds.has(candidateApplied))) {
-      const InvalidReferences = related.invalid || applied.invalid;
+      const InvalidReferences = related.invalid || applied.invalid ||
+        related.value.some(id => !targetIs(reader, id, ROOT)) ||
+        (applied.value !== undefined && !targetIs(reader, applied.value, APPLIED_VALUE_ROOT));
       result.push({ ...base(expressId, 'IfcRelAssociatesAppliedValue', a), RelatedObjects: related.value,
         RelatingAppliedValue: applied.value, InvalidReferences: InvalidReferences || undefined });
     }
@@ -143,7 +149,9 @@ export function extractCostRelationships(
     const a = reader.get(expressId)?.attributes ?? [];
     const related = references(reader, expressId, 4);
     const control = reference(reader, expressId, 6);
-    const InvalidReferences = related.invalid || control.invalid;
+    const InvalidReferences = related.invalid || control.invalid ||
+      related.value.some(id => !targetIs(reader, id, COST_ITEM)) ||
+      (control.value !== undefined && !targetIs(reader, control.value, COST_SCHEDULE));
     result.push({ ...base(expressId, 'IfcRelSchedulesCostItems', a), RelatedObjects: related.value,
       RelatingControl: control.value, InvalidReferences: InvalidReferences || undefined });
   }
@@ -155,7 +163,9 @@ export function extractCostRelationships(
       expressId, Type: 'IfcAppliedValueRelationship', ComponentOfTotal: total.value,
       Components: components.value, ArithmeticOperator: asEnum(a[2]),
       Name: asString(a[3]), Description: asString(a[4]),
-      InvalidReferences: (total.invalid || components.invalid) || undefined,
+      InvalidReferences: (total.invalid || components.invalid ||
+        (total.value !== undefined && !targetIs(reader, total.value, APPLIED_VALUE_ROOT)) ||
+        components.value.some(id => !targetIs(reader, id, APPLIED_VALUE_ROOT))) || undefined,
     });
   }
   return result;

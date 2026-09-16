@@ -3,16 +3,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { Decimal } from 'decimal.js';
-import { appendCategoryValues } from './cost-category-buckets.js';
+import { appendCategoryValues, combineCategoryValues } from './cost-category-buckets.js';
 import { combineCosts, type EvaluatedCost } from './cost-evaluation-arithmetic.js';
 import { costEvaluationResult, unsupportedCostEvaluation } from './cost-evaluation-result.js';
 import { itemQuantities, type QuantityValue } from './cost-quantity-evaluator.js';
 import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
 import { consumeValueEvaluationWork, valueEvaluationSession } from './cost-value-evaluation-session.js';
-import type {
-  CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
-  CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo,
-} from './cost-types.js';
+import type { CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
+  CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo } from './cost-types.js';
 
 interface Context {
   DecimalValue: Decimal.Constructor;
@@ -194,7 +192,6 @@ function extendQuantity(
   }
   return { ...evaluated, amount, quantityApplied, rateDimension: undefined };
 }
-
 function evaluateValueGraph(root: number, context: Context, quantities: QuantityValue[], implicitRoot: boolean,
   categoryTotals?: Map<string, EvaluatedCost[]>, applyUnitBasis = true,
   session = valueEvaluationSession(root)): EvaluatedCost {
@@ -241,7 +238,8 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
         ...(value.Category === '*' ? [] : categoryTotals?.get('') ?? [])]
       : [];
     const base = categoryTotal
-      ? combineCosts('ADD', categoryValues, frame.id,
+      ? combineCategoryValues(value.Category ?? '', categoryValues, frame.id, session,
+        () => diagnostic(context, 'INVALID_LIST', `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner),
         (Code, Message, id, Severity) => diagnostic(context, Code, Message, id, Severity))
       : value.Components === undefined
         ? typedValue(value, frame.id, context)
@@ -272,7 +270,6 @@ function createContext(extraction: CostGraphExtraction, options?: CostEvaluation
     units: new Map(extraction.Units.map(value => [value.expressId, value])), diagnostics: [],
   };
 }
-
 /** Evaluate one IFC4/IFC4X3 applied-value expression using decimal arithmetic. */
 export function evaluateCostValue(extraction: CostGraphExtraction, expressId: number,
   options?: CostEvaluationOptions): CostEvaluationResult {
@@ -281,9 +278,7 @@ export function evaluateCostValue(extraction: CostGraphExtraction, expressId: nu
   const context = createContext(extraction, options);
   return costEvaluationResult(expressId, evaluateValueGraph(expressId, context, [], false), context.diagnostics);
 }
-
 interface ItemResult extends EvaluatedCost { byCategory: Map<string, EvaluatedCost[]> }
-
 /** Evaluate a cost item, including IFC category-based totals of nested cost items. */
 export function evaluateCostItem(extraction: CostGraphExtraction, expressId: number,
   options?: CostEvaluationOptions): CostEvaluationResult {
@@ -366,6 +361,11 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       const value = context.values.get(valueId);
       if (!value) {
         diagnostic(context, 'MISSING_REFERENCE', `IfcCostValue #${valueId} cannot be resolved`, item.expressId);
+        entries.push({ evaluated: { invalid: true } });
+        continue;
+      }
+      if (value.Type === 'IfcAppliedValue') {
+        diagnostic(context, 'INVALID_LIST', `CostValues on IfcCostItem #${item.expressId} must reference IfcCostValue`, item.expressId);
         entries.push({ evaluated: { invalid: true } });
         continue;
       }
