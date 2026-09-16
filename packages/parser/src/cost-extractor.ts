@@ -7,6 +7,7 @@ import type { IfcDataStore } from './columnar-parser.js';
 import { costQuantityExactValue, extractCostQuantities } from './cost-quantities.js';
 import { asEnum, asRef, asString, CostEntityReader } from './cost-reader.js';
 import { diagnoseCostGraphs, extractCostRelationships } from './cost-relationships.js';
+import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
 import type {
   CostAppliedValue,
   CostDiagnostic,
@@ -93,7 +94,8 @@ function quantityType(dimension: CostQuantityDimension | undefined): QuantityTyp
 function finiteCompatibilityNumber(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   const converted = Number(value);
-  return Number.isFinite(converted) ? converted : undefined;
+  if (!Number.isFinite(converted)) return undefined;
+  return converted !== 0 || isZeroCostNumericLexeme(value) ? converted : undefined;
 }
 
 function pushInvalidList(
@@ -196,8 +198,8 @@ function extractValues(
       UnitBasis, InvalidUnitBasis: InvalidUnitBasis || undefined, ApplicableDate, FixedUntilDate,
       InvalidCondition: InvalidCondition || undefined,
       name: asString(a[0]), description: asString(a[1]),
-      appliedValue: AppliedValue?.Kind === 'Typed' && Number.isFinite(Number(AppliedValue.Value))
-        ? Number(AppliedValue.Value)
+      appliedValue: AppliedValue?.Kind === 'Typed'
+        ? finiteCompatibilityNumber(AppliedValue.Value)
         : undefined,
       applicableDate: ApplicableDate, fixedUntilDate: FixedUntilDate,
     };

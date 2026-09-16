@@ -1036,27 +1036,55 @@ describe('#4854 cost evaluator blocker regressions', () => {
       "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
       "#30=IFCRELASSIGNSTOPROCESS('missing',$,$,$,(#20),$,$,$);",
       "#31=IFCRELASSIGNSTOPROCESS('malformed',$,$,$,(#20),$,#bad,$);",
+      "#32=IFCRELASSIGNSTOPROCESS('dangling',$,$,$,(#20),$,#999,$);",
+      "#33=IFCRELASSIGNSTOPROCESS('wrong-type',$,$,$,(#20),$,#3,$);",
+      "#34=IFCTASK('task',$,'Task',$,$,$,$,$,$,.F.,$,$,.CONSTRUCTION.);",
+      "#35=IFCRELASSIGNSTOPROCESS('bad-related',$,$,$,(#20,#998),$,#34,$);",
     ])));
     expect(extraction.Relationships).toEqual(expect.arrayContaining([
       expect.objectContaining({ expressId: 30, Type: 'IfcRelAssignsToProcess', InvalidReferences: true }),
       expect.objectContaining({ expressId: 31, Type: 'IfcRelAssignsToProcess', InvalidReferences: true }),
+      expect.objectContaining({ expressId: 32, RelatingProcess: 999, InvalidReferences: true }),
+      expect.objectContaining({ expressId: 33, RelatingProcess: 3, InvalidReferences: true }),
+      expect.objectContaining({ expressId: 35, RelatedObjects: [20, 998], InvalidReferences: true }),
     ]));
     expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ Code: 'INVALID_LIST', expressId: 30 }),
       expect.objectContaining({ Code: 'INVALID_LIST', expressId: 31 }),
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 32 }),
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 33 }),
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 35 }),
     ]));
   });
+
+  it('handles file-controlled applied-value component counts without argument-stack overflow', async () => {
+    const repeated = Array.from({ length: 130_000 }, () => '#20').join(',');
+    const extraction = extractCostOnDemand(await parse(step('IFC2X3', [
+      "#20=IFCCOSTVALUE('Value',$,IFCMONETARYMEASURE(10.),$,$,$,'Labour',$);",
+      `#30=IFCAPPLIEDVALUERELATIONSHIP(#20,(${repeated}),.ADD.,$,$);`,
+    ])));
+    expect(extraction.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 30, Components: expect.arrayContaining([20]) }),
+    ]));
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'VALUE_CYCLE', expressId: 20 }),
+    ]));
+  }, 10_000);
 
   it.each(['IFC4', 'IFC4X3_ADD2'])('keeps non-finite %s conversions out of compatibility numbers', async (schema) => {
     const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
       '#8=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1E400),#3);',
       "#9=IFCCONVERSIONBASEDUNIT($,.LENGTHUNIT.,'Huge unit',#8);",
       '#10=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1.),#9);',
+      '#13=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1E-400),#3);',
       "#11=IFCQUANTITYLENGTH('Huge quantity',$,$,1E400,$);",
       "#12=IFCQUANTITYLENGTH('Huge scale',$,#9,2.,$);",
+      "#14=IFCQUANTITYLENGTH('Tiny quantity',$,$,1E-400,$);",
       "#20=IFCCOSTVALUE('Rate',$,IFCMONETARYMEASURE(10.),#10,$,$,$,$,$,$);",
+      "#21=IFCCOSTVALUE('Tiny',$,IFCNUMERICMEASURE(1E-400),#13,$,$,$,$,$,$);",
       "#30=IFCCOSTITEM('huge quantity',$,'Huge quantity',$,$,'Q',$,(#20),(#11));",
       "#31=IFCCOSTITEM('huge scale',$,'Huge scale',$,$,'S',$,(#20),(#12));",
+      "#32=IFCCOSTITEM('tiny quantity',$,'Tiny quantity',$,$,'T',$,(#21),(#14));",
     ])));
     const hugeQuantity = extraction.CostItems.find(item => item.expressId === 30);
     const hugeScale = extraction.CostItems.find(item => item.expressId === 31);
@@ -1067,6 +1095,11 @@ describe('#4854 cost evaluator blocker regressions', () => {
       valueComponent: 1,
       unitSiScale: undefined,
     });
+    expect(extraction.CostValues.find(value => value.expressId === 21)).toMatchObject({
+      appliedValue: undefined,
+      unitBasis: { valueComponent: undefined, unitSiScale: 1 },
+    });
+    expect(extraction.CostItems.find(item => item.expressId === 32)?.costQuantities).toBeUndefined();
     expect(extraction.CostQuantities.find(quantity => quantity.expressId === 11)?.LengthValue).toBe('1E400');
   });
 

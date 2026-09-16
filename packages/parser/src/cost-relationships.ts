@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { asEnum, asRef, asRefList, asString, CostEntityReader } from './cost-reader.js';
+import { getInheritanceChain } from './ifc-schema.js';
 import type {
   CostDiagnostic,
   CostRelationshipInfo,
@@ -27,6 +28,15 @@ function references(reader: CostEntityReader, expressId: number, index: number, 
   const value = reader.referenceListLexeme(expressId, index);
   return { value: value ?? [], invalid: value === undefined && (required || reader.attributePresent(expressId, index)) };
 }
+
+function targetIs(reader: CostEntityReader, expressId: number, roots: ReadonlySet<string>): boolean {
+  const type = reader.typeOf(expressId);
+  if (type === undefined) return false;
+  return getInheritanceChain(type).some(entry => roots.has(entry.toUpperCase()));
+}
+
+const OBJECT_DEFINITION_ROOT = new Set(['IFCOBJECTDEFINITION']);
+const PROCESS_SELECT_ROOTS = new Set(['IFCPROCESS', 'IFCTYPEPROCESS']);
 
 /** Preserve every cost-relevant edge with its original relationship identity. */
 export function extractCostRelationships(
@@ -96,7 +106,9 @@ export function extractCostRelationships(
     const candidateProcess = asRef(a[6]);
     if ((candidateProcess !== undefined && assignedTasks.has(candidateProcess)) ||
         (asRefList(a[4]) ?? []).some(id => itemIds.has(id))) {
-      const InvalidReferences = related.invalid || process.invalid;
+      const InvalidReferences = related.invalid || process.invalid ||
+        related.value.some(id => !targetIs(reader, id, OBJECT_DEFINITION_ROOT)) ||
+        (process.value !== undefined && !targetIs(reader, process.value, PROCESS_SELECT_ROOTS));
       result.push({ ...base(expressId, 'IfcRelAssignsToProcess', a), RelatedObjects: related.value,
         RelatingProcess: process.value, InvalidReferences: InvalidReferences || undefined });
     }
@@ -174,7 +186,7 @@ export function diagnoseCostGraphs(
   for (const relationship of relationships) {
     if (relationship.Type !== 'IfcAppliedValueRelationship' || relationship.ComponentOfTotal === undefined) continue;
     const edges = valueEdges.get(relationship.ComponentOfTotal) ?? [];
-    edges.push(...(relationship.Components ?? []));
+    for (const component of relationship.Components ?? []) edges.push(component);
     valueEdges.set(relationship.ComponentOfTotal, edges);
   }
   diagnoseCycles(children, itemIds, 'NESTING_CYCLE', 'Cost item nesting', diagnostics);
