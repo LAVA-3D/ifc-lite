@@ -12,7 +12,7 @@
 import '@/test/setup-dom.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { act, useEffect, useRef } from 'react';
+import { act, useEffect, useRef, useState } from 'react';
 import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
 import type { Clash, ClashResult } from '@ifc-lite/clash';
 import type { Renderer } from '@ifc-lite/renderer';
@@ -23,6 +23,7 @@ import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-sele
 import { useOverlayCompositor } from '@/components/viewer/schedule/useOverlayCompositor.js';
 import { useColorOverlaySync } from '@/components/viewer/useColorOverlaySync.js';
 import { useIDS, type UseIDSResult } from '@/hooks/useIDS.js';
+import { installIdsFocusVisibility } from '@/hooks/ids-focus-visibility.js';
 import { modelOverviewDashboard } from '@/lib/charts/presets.js';
 import { useViewerStore } from '@/store/index.js';
 import type { FederatedModel } from '@/store/types.js';
@@ -131,6 +132,12 @@ function IDSFocusProbe({ ready }: { ready: (focus: UseIDSResult['focusEntity']) 
   const { focusEntity } = useIDS();
   useEffect(() => ready(focusEntity), [focusEntity, ready]);
   return null;
+}
+
+function ClosableChartsProbe({ renderer, ready }: { renderer: ChartRenderer; ready: (close: () => void) => void }) {
+  const [open, setOpen] = useState(true);
+  useEffect(() => ready(() => setOpen(false)), [ready]);
+  return open ? <ChartsPanel renderer={renderer} /> : null;
 }
 
 function barData(option: EChartsOptionObject): Array<[string, number, boolean]> {
@@ -345,6 +352,27 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(useViewerStore.getState().ghostExceptEntities, null, 'federation teardown cannot strand surviving ghost IDs after Charts closes');
   });
 
+  it('keeps chart presentation when an unrelated federated model is removed (#4832)', async () => {
+    const unrelated = fixtureModel('m2', { idOffset: 2_000_000 });
+    useViewerStore.setState((state) => ({ models: new Map([...state.models, [unrelated.id, unrelated]]) }));
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const before = useViewerStore.getState();
+    assert.deepEqual([...(before.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(before.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+
+    await act(async () => { useViewerStore.getState().removeModel('m2'); });
+    await settle();
+    const after = useViewerStore.getState();
+    assert.deepEqual([...(after.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(after.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+    assert.equal(after.chartVisibilityOwned?.channel, 'ghost');
+  });
+
   it('uses the clicked chart bucket colour rather than the headline chart colour', async () => {
     const { renderer, charts } = recordingRenderer();
     const ui = render(<ChartsPanel renderer={renderer} />);
@@ -441,6 +469,66 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(state.chartSlice, null);
     assert.equal(state.chartVisibilityOwned, null);
     assert.equal(state.ghostExceptEntities, null);
+  });
+
+  it('preserves newer same-ID IDS ghost and isolate ownership during chart cleanup (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    let focusEntity: UseIDSResult['focusEntity'] | null = null;
+    let closeCharts: (() => void) | null = null;
+    const ready = (focus: UseIDSResult['focusEntity']): void => { focusEntity = focus; };
+    const readyToClose = (close: () => void): void => { closeCharts = close; };
+    render(<><IDSFocusProbe ready={ready} /><ClosableChartsProbe renderer={renderer} ready={readyToClose} /></>);
+    await settle();
+    assert.ok(focusEntity && closeCharts);
+
+    for (const mode of ['ghost', 'isolate'] as const) {
+      const chart = charts.at(-1)!;
+      const stacked = chart.options.at(-1)!.series as Array<{ name: string; data: Array<{ name: string }> }>;
+      const doorSeries = stacked.findIndex(({ name }) => name === 'IfcDoor');
+      const level1 = stacked[doorSeries].data.findIndex(({ name }) => name === 'Level 1');
+      assert.ok(doorSeries >= 0 && level1 >= 0);
+
+      await act(async () => { chart.events.onSelect({ items: [{ seriesIndex: doorSeries, dataIndex: level1 }] }); });
+      assert.deepEqual([...useViewerStore.getState().selectedEntityIds], [GID(44)]);
+      assert.equal(useViewerStore.getState().chartVisibilityOwned?.channel, 'ghost');
+
+      await act(async () => {
+        installIdsFocusVisibility(mode, new Set([GID(44)]));
+        assert.equal(
+          useViewerStore.getState().chartVisibilityOwned,
+          null,
+          'the IDS visibility installer must atomically supersede equal-content chart ownership',
+        );
+        focusEntity!('m1', 44, mode, false);
+        assert.equal(
+          useViewerStore.getState().chartVisibilityOwned,
+          null,
+          'the IDS write must atomically supersede equal-content chart ownership',
+        );
+        closeCharts!();
+      });
+      await settle();
+      const state = useViewerStore.getState();
+      const expected = state.selectedEntityId === 44 ? 44 : GID(44);
+      assert.equal(state.chartVisibilityOwned, null, 'the atomic IDS claim supersedes the equal-ID chart claim');
+      assert.equal(state.idsFocusVisibilityOwned?.channel, mode);
+      assert.deepEqual(
+        [...(mode === 'ghost' ? state.ghostExceptEntities ?? [] : state.isolatedEntities ?? [])],
+        [expected],
+        `chart cleanup must preserve IDS ${mode}`,
+      );
+
+      if (mode === 'ghost') {
+        useViewerStore.getState().clearEntitySelection();
+        useViewerStore.getState().setChartSlice(null);
+        cleanup();
+        focusEntity = null;
+        closeCharts = null;
+        render(<><IDSFocusProbe ready={ready} /><ClosableChartsProbe renderer={renderer} ready={readyToClose} /></>);
+        await settle();
+        assert.ok(focusEntity && closeCharts);
+      }
+    }
   });
 
   it('reconciles same-ID independent selection after Charts closes and reopens (#4832)', async () => {

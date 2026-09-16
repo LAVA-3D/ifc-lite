@@ -120,7 +120,9 @@ export const chartTeardown = defineSliceTeardown(
       const kept = new Set<number>();
       for (const id of slice) if (!isStale(id)) kept.add(id);
       if (kept.size === slice.size) return {};
-      return kept.size > 0 ? { chartSlice: kept } : { chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null };
+      return kept.size > 0
+        ? { chartSlice: kept, chartSelectionRevision: (state.selectionRevision ?? 0) + 1 }
+        : { chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null };
     },
     'all-models-cleared': () => ({ chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null }),
   },

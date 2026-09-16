@@ -5,8 +5,8 @@
 import { releaseOwnedVisibility, type VisibilityOwnership } from '@/lib/visibility/ownership';
 
 interface ChartVisibilityState {
-  chartVisibilityOwned: VisibilityOwnership;
-  setChartVisibilityOwned: (owned: VisibilityOwnership) => void;
+  chartVisibilityOwned?: VisibilityOwnership;
+  setChartVisibilityOwned?: (owned: VisibilityOwnership) => void;
   isolatedEntities?: Set<number> | null;
   ghostExceptEntities?: Set<number> | null;
   clearIsolation?: () => void;
@@ -15,6 +15,6 @@ interface ChartVisibilityState {
 
 /** Release the chart's shared visibility channel before teardown can invalidate its claim. */
 export function endChartVisibilityPresentation(state: ChartVisibilityState): void {
-  releaseOwnedVisibility(state, state.chartVisibilityOwned);
-  state.setChartVisibilityOwned(null);
+  releaseOwnedVisibility(state, state.chartVisibilityOwned ?? null);
+  state.setChartVisibilityOwned?.(null);
 }

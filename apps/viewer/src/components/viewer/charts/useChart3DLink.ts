@@ -101,13 +101,26 @@ export function presentChartIds(ids: number[], mode: ChartFocusMode): void {
   // Release first: switching ghost → isolate must not leave a stale ghost claim.
   releaseOwnedVisibility(state, state.chartVisibilityOwned);
   if (mode === 'ghost') {
-    state.setGhostExceptEntities(new Set(presented));
-    const installed = useViewerStore.getState().ghostExceptEntities;
-    state.setChartVisibilityOwned(installed ? { channel: 'ghost', ids: installed } : null);
+    const installed = new Set(presented);
+    useViewerStore.setState({
+      ghostExceptEntities: installed,
+      isolatedEntities: null,
+      idsFocusVisibilityOwned: null,
+      clashVisibilityOwned: null,
+      basketVisibilityOwned: null,
+      chartVisibilityOwned: { channel: 'ghost', ids: installed },
+    });
   } else if (mode === 'isolate') {
-    state.setIsolatedEntities(new Set(presented));
-    const installed = useViewerStore.getState().isolatedEntities;
-    state.setChartVisibilityOwned(installed ? { channel: 'isolate', ids: installed } : null);
+    const installed = new Set(presented);
+    useViewerStore.setState({
+      isolatedEntities: installed,
+      ghostExceptEntities: null,
+      hiddenEntities: new Set(),
+      idsFocusVisibilityOwned: null,
+      clashVisibilityOwned: null,
+      basketVisibilityOwned: null,
+      chartVisibilityOwned: { channel: 'isolate', ids: installed },
+    });
   } else {
     state.setChartVisibilityOwned(null);
   }

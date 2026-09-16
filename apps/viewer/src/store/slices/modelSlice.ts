@@ -284,8 +284,6 @@ export const createModelSlice: StateCreator<ViewerState, [], [], ModelSlice> = (
     // — verified against `mutationSlice.clearMutations` — but that is a
     // property of today's implementations, not of this call site.
     endClashScenePresentation(() => get() as unknown as ClashSceneTeardown, 'model-removed');
-    endChartVisibilityPresentation(get());
-
     // The IDS per-row focus (#2867) owns the same two shared channels clash
     // does — `focusEntity` installs the activated row's element into
     // `isolatedEntities` or `ghostExceptEntities` — and a row isolation left
