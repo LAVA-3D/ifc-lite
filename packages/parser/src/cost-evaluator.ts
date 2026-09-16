@@ -174,15 +174,19 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
   session = valueEvaluationSession(root)): EvaluatedCost {
   if (session.exhausted) return { invalid: true };
   const { memo, state } = session;
+  const cached = memo.get(root);
+  if (cached !== undefined) {
+    return implicitRoot ? extendQuantity(root, cached, quantities, context) : cached;
+  }
   const stack: Array<{ id: number; expanded: boolean }> = [{ id: root, expanded: false }];
   while (stack.length > 0) {
-    if (!consumeValueEvaluationWork(session)) {
+    const frame = stack.pop() as { id: number; expanded: boolean };
+    if (memo.has(frame.id)) continue;
+    if (!frame.expanded && !consumeValueEvaluationWork(session)) {
       diagnostic(context, 'INVALID_LIST',
         `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner);
       return { invalid: true };
     }
-    const frame = stack.pop() as { id: number; expanded: boolean };
-    if (memo.has(frame.id)) continue;
     const value = context.values.get(frame.id);
     if (!value) {
       diagnostic(context, 'MISSING_REFERENCE', `IfcAppliedValue #${frame.id} cannot be resolved`, frame.id);
@@ -261,7 +265,12 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
     if (relation.Type === 'IfcRelNests' && relation.RelatingObject !== undefined) {
       const related = relation.RelatedObjects ?? [];
       if (relation.InvalidRelatedObjects || relation.InvalidReferences) invalidNesting.add(relation.RelatingObject);
-      children.set(relation.RelatingObject, [...(children.get(relation.RelatingObject) ?? []), ...related]);
+      const nested = children.get(relation.RelatingObject);
+      if (nested) {
+        for (const child of related) nested.push(child);
+      } else {
+        children.set(relation.RelatingObject, [...related]);
+      }
       for (const child of related) {
         const previous = parentByChild.get(child);
         if (previous !== undefined) {
@@ -326,7 +335,11 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       if (valueSession.exhausted) break;
     }
     const entries: Array<{ category?: string; evaluated: EvaluatedCost }> = [];
-    for (const valueId of item.CostValues ?? []) {
+    const costValueIds = item.CostValues ?? [];
+    const wasExhausted = valueSession.exhausted;
+    const costValuesWithinBudget = consumeValueEvaluationWork(valueSession, costValueIds.length);
+    if (!costValuesWithinBudget && !wasExhausted) categoryBudgetExhausted();
+    for (const valueId of costValuesWithinBudget ? costValueIds : []) {
       const value = context.values.get(valueId);
       if (!value) {
         diagnostic(context, 'MISSING_REFERENCE', `IfcCostValue #${valueId} cannot be resolved`, item.expressId);

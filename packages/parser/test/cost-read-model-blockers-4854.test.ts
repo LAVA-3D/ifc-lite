@@ -415,19 +415,16 @@ describe('#4854 cost evaluator blocker regressions', () => {
   });
 
   it('charges repeated component operands in cold and warmed evaluation order', async () => {
-    const repeated = Array.from({ length: 100_000 }, () => '#10').join(',');
+    const repeated = Array.from({ length: 99_996 }, () => '#10').join(',');
     const extraction = extractCostOnDemand(await parse(step('IFC4', [
       "#10=IFCCOSTVALUE('leaf',$,IFCNUMERICMEASURE(1.),$,$,$,$,$,$,$);",
       `#11=IFCCOSTVALUE('sum',$,$,$,$,$,$,$,.ADD.,(${repeated}));`,
-      "#20=IFCCOSTITEM('cold',$,'Cold',$,$,'C',$,(#11),$);",
+      "#20=IFCCOSTITEM('cold',$,'Cold',$,$,'C',$,(#11,#10),$);",
       "#21=IFCCOSTITEM('warmed',$,'Warmed',$,$,'W',$,(#10,#11),$);",
     ])));
     for (const expressId of [20, 21]) {
       expect(evaluateCostItem(extraction, expressId)).toMatchObject({
-        Amount: undefined,
-        Diagnostics: expect.arrayContaining([
-          expect.objectContaining({ Code: 'INVALID_LIST', expressId }),
-        ]),
+        Amount: '99997', Diagnostics: [],
       });
     }
   }, 10_000);
@@ -446,6 +443,19 @@ describe('#4854 cost evaluator blocker regressions', () => {
       });
     }
   }, 10_000);
+
+  it('accumulates many nesting relationships for one parent in linear time', () => {
+    const extraction = valueGraph([]);
+    extraction.Relationships = Array.from({ length: 20_000 }, (_, index) => ({
+      expressId: index + 1, Type: 'IfcRelNests' as const,
+      RelatingObject: 1, RelatedObjects: [100_000 + index],
+    }));
+    const result = evaluateCostItem(extraction, -1);
+    expect(result.Amount).toBeUndefined();
+    expect(result).toMatchObject({
+      Diagnostics: [expect.objectContaining({ Code: 'MISSING_REFERENCE', expressId: -1 })],
+    });
+  }, 2_000);
 
   it('memoizes a shared normalized quantity graph across nested items', () => {
     const size = 700;
@@ -1384,7 +1394,7 @@ describe('#4854 cost evaluator blocker regressions', () => {
   });
 
   it('shares the evaluation budget across nested items with a common expression', () => {
-    const size = 700;
+    const size = 800;
     const CostValues: CostValueInfo[] = [{
       expressId: 1, Type: 'IfcCostValue',
       AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
