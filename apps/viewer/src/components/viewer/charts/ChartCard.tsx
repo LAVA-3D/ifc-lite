@@ -77,7 +77,7 @@ export function ChartCard({ spec, dataset, link, renderer, onEdit, onRemove, onA
       && chartSlice
       && chartSliceBuckets
       && !chartSelectionIsLive(aggregation, chartSliceBuckets, chartSlice)
-    ) link.clearSelection();
+    ) link.clearSelectionIfOwned(spec.id, chartSlice, chartSliceBuckets);
   }, [aggregation, chartSlice, chartSliceBuckets, chartSliceSource, link, spec.id]);
 
   const selection = useMemo(() => (aggregation ? link.selectionFor(aggregation) : { full: [], partial: [] }), [aggregation, link]);

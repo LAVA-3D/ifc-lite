@@ -93,6 +93,11 @@ export function ChartsPanel({ onClose, renderer, reportSeams }: ChartsPanelProps
       return next.size === prev.size ? prev : next;
     });
   }, [chartIdSet, modelCount]);
+  useEffect(() => {
+    if (chartSliceSource && chartSlice && chartSliceBuckets && !chartIdSet.has(chartSliceSource)) {
+      link.clearSelectionIfOwned(chartSliceSource, chartSlice, chartSliceBuckets);
+    }
+  }, [chartIdSet, chartSlice, chartSliceBuckets, chartSliceSource, link]);
   // A clicked bucket keeps the colour of the chart it came from. With no
   // selection, colour by the first populated chart (the dashboard headline).
   const overlayAggregation = useMemo(() => {

@@ -367,6 +367,35 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(restored.selectedIds, selected, 'deleted charts cannot suppress selection through a cached aggregation');
   });
 
+  it('releases chart-owned selection and presentation when its source card is deleted (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const selectedSource = useViewerStore.getState().chartSliceSource;
+    assert.ok(selectedSource);
+    assert.ok(useViewerStore.getState().ghostExceptEntities?.size);
+
+    const active = useViewerStore.getState().dashboards.find((d) => d.id === useViewerStore.getState().activeDashboardId)!;
+    await act(async () => {
+      useViewerStore.getState().upsertDashboard({
+        ...active,
+        charts: active.charts.filter(({ id }) => id !== selectedSource),
+        layout: active.layout.filter(({ chartId }) => chartId !== selectedSource),
+      });
+    });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.ok(state.dashboards[0].charts.length > 0, 'the panel and another chart remain mounted');
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.chartSliceSource, null);
+    assert.equal(state.chartSliceBuckets, null);
+    assert.equal(state.selectedEntityIds.size, 0);
+    assert.equal(state.ghostExceptEntities, null);
+    assert.equal(state.chartVisibilityOwned, null);
+  });
+
   it('does not restore cached chart paint after every model is cleared (#4832)', async () => {
     const { renderer, charts } = recordingRenderer();
     const applied: number[][] = [];
@@ -569,13 +598,28 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
       summary: { ...clashResult.summary, total: 2, byRule: { 'Rule A': 2 }, bySeverity: { critical: 2, major: 0, minor: 0, info: 0 } },
     };
     await act(async () => {
+      useViewerStore.getState().setSelectedEntityIds([GID(41)]);
+      useViewerStore.getState().setSelectedEntityId(GID(41));
       useViewerStore.setState({ clashResult: withoutSelectedRule, clashRunSeq: useViewerStore.getState().clashRunSeq + 1 });
     });
     await settle();
+    const preserved = useViewerStore.getState();
+    assert.equal(preserved.chartSlice, null, 'a removed selected category cannot retain stale slice ownership');
+    assert.deepEqual([...preserved.selectedEntityIds], [GID(41)], 'stale cleanup cannot erase a newer independent 3D pick');
+    assert.equal(preserved.ghostExceptEntities, null);
+
+    await act(async () => { charts[1].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 0 }] }); });
+    await settle();
+    await act(async () => {
+      useViewerStore.setState({
+        clashResult: { ...withoutSelectedRule, clashes: [], summary: { ...withoutSelectedRule.summary, total: 0, byRule: {}, bySeverity: { critical: 0, major: 0, minor: 0, info: 0 } } },
+        clashRunSeq: useViewerStore.getState().clashRunSeq + 1,
+      });
+    });
+    await settle();
     const cleared = useViewerStore.getState();
-    assert.equal(cleared.chartSlice, null, 'a removed selected category cannot retain stale slice ownership');
-    assert.equal(cleared.selectedEntityIds.size, 0);
-    assert.equal(cleared.ghostExceptEntities, null);
+    assert.equal(cleared.chartSlice, null);
+    assert.equal(cleared.selectedEntityIds.size, 0, 'stale cleanup still clears the chart selection when it remains the current owner');
   });
 
   it('distinguishes synthetic top-N Other from a literal __other__ bucket (#4832)', async () => {

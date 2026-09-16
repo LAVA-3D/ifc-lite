@@ -138,6 +138,8 @@ export interface Chart3DLink {
   selectItems: (aggregation: Aggregation, items: readonly ChartItem[]) => void;
   /** Clear the chart selection, the slice, and release any presentation the panel installed. */
   clearSelection: () => void;
+  /** Drop stale chart ownership, clearing entity selection only if it is still the chart's exact write. */
+  clearSelectionIfOwned: (sourceId: string, slice: Set<number>, buckets: readonly ChartBucketIdentity[]) => void;
   /** Frame the items' elements in the camera. */
   frameItems: (aggregation: Aggregation, items: readonly ChartItem[]) => void;
   /** What the current 3D selection means for this aggregation. */
@@ -166,6 +168,18 @@ export function useChart3DLink(): Chart3DLink {
     lastWrittenRef.current = null;
     const state = useViewerStore.getState();
     state.clearEntitySelection();
+    state.setChartSlice(null);
+    releaseChartVisibility();
+  }, []);
+
+  const clearSelectionIfOwned = useCallback((sourceId: string, slice: Set<number>, buckets: readonly ChartBucketIdentity[]) => {
+    const state = useViewerStore.getState();
+    // A newer chart click owns different object identities. An ordinary 3D
+    // pick may have replaced selectedEntityIds before the hook that drops the
+    // slice has run. In either case, never erase the newer selection.
+    if (state.chartSliceSource !== sourceId || state.chartSlice !== slice || state.chartSliceBuckets !== buckets) return;
+    lastWrittenRef.current = null;
+    if (sameSet(state.selectedEntityIds, slice)) state.clearEntitySelection();
     state.setChartSlice(null);
     releaseChartVisibility();
   }, []);
@@ -200,7 +214,7 @@ export function useChart3DLink(): Chart3DLink {
   // Release the presentation when the panel goes away.
   useEffect(() => () => releaseChartVisibility(), []);
 
-  return { selectItems, clearSelection, frameItems, selectionFor };
+  return { selectItems, clearSelection, clearSelectionIfOwned, frameItems, selectionFor };
 }
 
 /**

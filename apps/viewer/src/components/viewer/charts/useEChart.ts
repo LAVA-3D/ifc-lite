@@ -37,16 +37,22 @@ type RawDataIndex = (seriesIndex: number, dataIndexInside: number) => number | u
 interface EChartDataModel {
   getModel: () => {
     getSeriesByIndex: (seriesIndex: number) => {
+      subType?: string;
       getData: () => { getRawIndex: (dataIndexInside: number) => number };
     } | undefined;
   };
 }
 
-function rawIndexResolver(chart: unknown): RawDataIndex {
+/** Map an engine-internal item index to the flat aggregation bucket index. */
+export function rawIndexResolver(chart: unknown): RawDataIndex {
   const engine = chart as EChartDataModel;
-  return (seriesIndex, dataIndexInside) => (
-    engine.getModel().getSeriesByIndex(seriesIndex)?.getData().getRawIndex(dataIndexInside)
-  );
+  return (seriesIndex, dataIndexInside) => {
+    const series = engine.getModel().getSeriesByIndex(seriesIndex);
+    const rawIndex = series?.getData().getRawIndex(dataIndexInside);
+    // ECharts' treemap raw-data store reserves index zero for its virtual
+    // root. Aggregations expose only the rendered top-level buckets.
+    return rawIndex === undefined || series?.subType !== 'treemap' ? rawIndex : rawIndex - 1;
+  };
 }
 
 /**
