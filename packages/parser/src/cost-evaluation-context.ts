@@ -20,6 +20,7 @@ export interface CostEvaluationContext {
   mixedProjectCurrency: boolean;
   quantityCache: QuantityEvaluationCache;
   diagnostics: CostDiagnostic[];
+  invalidOptions: boolean;
 }
 
 export function diagnostic(context: CostEvaluationContext, Code: CostDiagnostic['Code'], Message: string,
@@ -51,8 +52,17 @@ export function projectUnit(
 export function createContext(
   extraction: CostGraphExtraction, options?: CostEvaluationOptions,
 ): CostEvaluationContext {
+  const requestedPrecision = options?.Precision;
+  const invalidOptions = requestedPrecision !== undefined &&
+    (!Number.isInteger(requestedPrecision) || requestedPrecision < 1 || requestedPrecision > 1_000_000_000);
+  const diagnostics: CostDiagnostic[] = invalidOptions ? [{
+    Code: 'INVALID_NUMBER',
+    Message: `Cost evaluation Precision must be an integer from 1 through 1000000000; received ${String(requestedPrecision)}`,
+    Severity: 'error',
+  }] : [];
   const DecimalValue = Decimal.clone({
-    precision: options?.Precision ?? 34, rounding: Decimal.ROUND_HALF_EVEN, maxE: 6144, minE: -6144,
+    precision: invalidOptions ? 34 : requestedPrecision ?? 34,
+    rounding: Decimal.ROUND_HALF_EVEN, maxE: 6144, minE: -6144,
   });
   const values = new Map<number, CostValueInfo>();
   for (const value of extraction.CostValues) if (value.expressId !== undefined) values.set(value.expressId, value);
@@ -62,6 +72,6 @@ export function createContext(
     units: new Map(extraction.Units.map(value => [value.expressId, value])),
     measures: new Map(extraction.MeasuresWithUnit.map(value => [value.expressId, value])),
     mixedProjectCurrency: extraction.Diagnostics.some(entry => entry.Code === 'MIXED_CURRENCY'),
-    quantityCache: quantityEvaluationCache(), diagnostics: [],
+    quantityCache: quantityEvaluationCache(), diagnostics, invalidOptions,
   };
 }

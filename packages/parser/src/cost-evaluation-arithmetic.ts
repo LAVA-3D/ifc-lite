@@ -45,22 +45,13 @@ function combinedRateDimension(
   return false;
 }
 
-function multipliedRateDimension(
-  operands: EvaluatedCost[], valueId: number, report: CostDiagnosticSink,
-): CostQuantityDimension | undefined | false {
-  const dimensions = operands.flatMap(entry => entry.rateDimension === undefined ? [] : [entry.rateDimension]);
-  if (dimensions.length <= 1) return dimensions[0];
-  report('INCOMPATIBLE_UNIT', 'Multiplication produces an unsupported compound cost rate', valueId);
-  return false;
-}
-
-function divisionDimensions(
+function multiplicationDimensions(
   operands: EvaluatedCost[], valueId: number, report: CostDiagnosticSink,
 ): Pick<EvaluatedCost, 'currency' | 'dimension' | 'rateDimension' | 'monetary'> | false {
   let moneyExponent = 0;
   const dimensions = new Map<CostQuantityDimension, number>();
-  operands.forEach((operand, index) => {
-    const sign = index === 0 ? 1 : -1;
+  operands.forEach((operand) => {
+    const sign = 1;
     if (operand.monetary || operand.currency !== undefined) moneyExponent += sign;
     else if (operand.dimension !== undefined && operand.dimension !== 'ratio') {
       dimensions.set(operand.dimension, (dimensions.get(operand.dimension) ?? 0) + sign);
@@ -76,19 +67,44 @@ function divisionDimensions(
   const rate = moneyExponent === 1 && nonzero.length === 1 && nonzero[0][1] === -1;
   if (scalar) return { dimension: 'ratio', monetary: false };
   if (quantity) return { dimension: nonzero[0][0], monetary: false };
-  if (money) return { currency: operands[0].currency, monetary: true };
-  if (rate) return {
-    currency: operands[0].currency, rateDimension: nonzero[0][0], monetary: true,
+  if (money) return {
+    currency: operands.find(entry => entry.monetary || entry.currency !== undefined)?.currency,
+    monetary: true,
   };
-  report('INCOMPATIBLE_UNIT', 'Division produces an unsupported inverse or compound dimension', valueId);
+  if (rate) return {
+    currency: operands.find(entry => entry.monetary || entry.currency !== undefined)?.currency,
+    rateDimension: nonzero[0][0], monetary: true,
+  };
+  report('INCOMPATIBLE_UNIT', 'Multiplication produces an unsupported compound dimension', valueId);
   return false;
 }
 
-function multiplyIdentity(operands: EvaluatedCost[]): Pick<EvaluatedCost, 'currency' | 'dimension'> | undefined {
-  const dimensional = operands.filter(entry => entry.currency !== undefined || entry.dimension !== 'ratio');
-  if (dimensional.length === 0) return { dimension: 'ratio' };
-  if (dimensional.length > 1) return undefined;
-  return { currency: dimensional[0].currency, dimension: dimensional[0].dimension };
+function divisionDimensions(
+  operands: EvaluatedCost[], valueId: number, report: CostDiagnosticSink,
+): Pick<EvaluatedCost, 'currency' | 'dimension' | 'rateDimension' | 'monetary'> | false {
+  const signed = operands.map((operand, index) => ({ operand, sign: index === 0 ? 1 : -1 }));
+  let moneyExponent = 0;
+  const dimensions = new Map<CostQuantityDimension, number>();
+  for (const { operand, sign } of signed) {
+    if (operand.monetary || operand.currency !== undefined) moneyExponent += sign;
+    else if (operand.dimension !== undefined && operand.dimension !== 'ratio') {
+      dimensions.set(operand.dimension, (dimensions.get(operand.dimension) ?? 0) + sign);
+    }
+    if (operand.rateDimension !== undefined) {
+      dimensions.set(operand.rateDimension, (dimensions.get(operand.rateDimension) ?? 0) - sign);
+    }
+  }
+  const nonzero = [...dimensions].filter(([, exponent]) => exponent !== 0);
+  if (moneyExponent === 0 && nonzero.length === 0) return { dimension: 'ratio', monetary: false };
+  if (moneyExponent === 0 && nonzero.length === 1 && nonzero[0][1] === 1) {
+    return { dimension: nonzero[0][0], monetary: false };
+  }
+  if (moneyExponent === 1 && nonzero.length === 0) return { currency: operands[0].currency, monetary: true };
+  if (moneyExponent === 1 && nonzero.length === 1 && nonzero[0][1] === -1) {
+    return { currency: operands[0].currency, rateDimension: nonzero[0][0], monetary: true };
+  }
+  report('INCOMPATIBLE_UNIT', 'Division produces an unsupported inverse or compound dimension', valueId);
+  return false;
 }
 
 function divideIdentity(operands: EvaluatedCost[]): Pick<EvaluatedCost, 'currency' | 'dimension'> | undefined {
@@ -155,13 +171,10 @@ export function combineCosts(
     }, valueId, report);
   }
   if (operator === 'MULTIPLY') {
-    const identity = multiplyIdentity(operands);
+    const identity = multiplicationDimensions(operands, valueId, report);
     if (!identity) {
-      report('INCOMPATIBLE_UNIT', 'Multiplication of multiple dimensional or monetary operands is unsupported', valueId);
       return { invalid: true };
     }
-    const rateDimension = multipliedRateDimension(operands, valueId, report);
-    if (rateDimension === false) return { invalid: true };
     let amount = amounts[0];
     for (const next of amounts.slice(1)) {
       const multiplied = amount.mul(next);
@@ -172,7 +185,7 @@ export function combineCosts(
       amount = multiplied;
     }
     return finite({
-      amount, ...identity, rateDimension, monetary: operands.some(entry => entry.monetary),
+      amount, ...identity,
       quantityApplied: operands.find(entry => entry.quantityApplied)?.quantityApplied,
     }, valueId, report);
   }

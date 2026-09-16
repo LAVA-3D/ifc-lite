@@ -248,6 +248,7 @@ export function evaluateCostValue(extraction: CostGraphExtraction, expressId: nu
   const refused = unsupportedCostEvaluation(extraction, expressId);
   if (refused) return refused;
   const context = createContext(extraction, options);
+  if (context.invalidOptions) return costEvaluationResult(expressId, { invalid: true }, context.diagnostics);
   return costEvaluationResult(expressId, evaluateValueGraph(expressId, context, [], false), context.diagnostics);
 }
 interface ItemResult extends EvaluatedCost { byCategory: Map<string, EvaluatedCost[]> }
@@ -257,6 +258,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
   const refused = unsupportedCostEvaluation(extraction, expressId);
   if (refused) return refused;
   const context = createContext(extraction, options);
+  if (context.invalidOptions) return costEvaluationResult(expressId, { invalid: true }, context.diagnostics);
   const items = new Map(extraction.CostItems.map(item => [item.expressId, item]));
   const children = new Map<number, number[]>();
   const parentByChild = new Map<number, number>();

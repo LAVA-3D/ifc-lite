@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { asString, CostEntityReader } from './cost-reader.js';
+import { getInheritanceChain } from './ifc-schema.js';
 import type { CostDiagnostic, CostQuantityDimension, CostQuantityInfo } from './cost-types.js';
 
 function quantityDimension(type: string): CostQuantityDimension | undefined {
@@ -74,6 +75,13 @@ export function extractCostQuantities(
       continue;
     }
     const type = entity.type.toUpperCase();
+    if (!getInheritanceChain(type).some(entry => entry.toUpperCase() === 'IFCPHYSICALQUANTITY')) {
+      diagnostics.push({ Code: 'INVALID_LIST',
+        Message: `Cost quantity reference #${frame.id} does not resolve to IfcPhysicalQuantity`,
+        Severity: 'error', expressId: frame.id });
+      state.set(frame.id, 2);
+      continue;
+    }
     const attributes = entity.attributes ?? [];
     const isComplex = type === 'IFCPHYSICALCOMPLEXQUANTITY';
     const children = isComplex ? reader.referenceListLexeme(frame.id, 2) : undefined;

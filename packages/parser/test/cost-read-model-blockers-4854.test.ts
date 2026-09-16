@@ -70,6 +70,24 @@ function valueGraph(CostValues: CostValueInfo[]): CostGraphExtraction {
 }
 
 describe('#4854 cost evaluator blocker regressions', () => {
+  it.each([0, 1.5, 1_000_000_001, Number.NaN, Number.POSITIVE_INFINITY])(
+    'refuses invalid evaluation Precision %s without throwing', async (Precision) => {
+      const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+        "#10=IFCCOSTVALUE('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+        "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
+      ])));
+      expect(() => evaluateCostValue(extraction, 10, { Precision })).not.toThrow();
+      expect(evaluateCostValue(extraction, 10, { Precision })).toMatchObject({
+        Amount: undefined,
+        Diagnostics: [expect.objectContaining({ Code: 'INVALID_NUMBER', Severity: 'error' })],
+      });
+      expect(evaluateCostItem(extraction, 20, { Precision })).toMatchObject({
+        Amount: undefined,
+        Diagnostics: [expect.objectContaining({ Code: 'INVALID_NUMBER', Severity: 'error' })],
+      });
+    },
+  );
+
   it('reproduces the buildingSMART canonical cost-composition record', async () => {
     // IFC4 IfcCostItem Figure 3: scaffolding 100 m² × (5 + 3) = 800,
     // brickwork 100 m³ × (10 + 3) = 1300, wildcard subtotal = 2100.
@@ -367,6 +385,41 @@ describe('#4854 cost evaluator blocker regressions', () => {
     expect(evaluateCostValue(extraction, 22)).toMatchObject({
       Amount: undefined,
       Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'INCOMPATIBLE_UNIT' })]),
+    });
+  });
+
+  it('multiplies a currency-less monetary rate by its matching quantity', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [
+      "#1=IFCPROJECT('project',$,'No currency',$,$,$,$,$,#2);",
+      '#2=IFCUNITASSIGNMENT((#3));',
+      '#3=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);',
+      '#10=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1.),#3);',
+      "#20=IFCCOSTVALUE('Rate',$,IFCMONETARYMEASURE(10.),#10,$,$,$,$,$,$);",
+      "#21=IFCCOSTVALUE('Length',$,IFCLENGTHMEASURE(2.),$,$,$,$,$,$,$);",
+      "#22=IFCCOSTVALUE('Product',$,$,$,$,$,$,$,.MULTIPLY.,(#20,#21));",
+    ])));
+    expect(evaluateCostValue(extraction, 22)).toMatchObject({
+      Amount: '20', Currency: undefined, Dimension: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'MISSING_CURRENCY' })]),
+    });
+    expect(evaluateCostValue(extraction, 22).Diagnostics).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INCOMPATIBLE_UNIT' }),
+    ]));
+  });
+
+  it('rejects non-IfcPhysicalQuantity references without inserting malformed quantity nodes', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE('Rate',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),(#40));",
+      "#40=IFCTASK('task',$,'Not a quantity',$,$,$,$,$,$,.F.,$,$,.CONSTRUCTION.);",
+    ])));
+    expect(extraction.CostQuantities.some(quantity => quantity.expressId === 40)).toBe(false);
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 40 }),
+    ]));
+    expect(evaluateCostItem(extraction, 20)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'MISSING_REFERENCE' })]),
     });
   });
 
@@ -1636,12 +1689,15 @@ describe('#4854 cost evaluator blocker regressions', () => {
     expect(extraction.CostValues.find(value => value.expressId === 10)?.Components).toEqual([10]);
     expect(extraction.CostValues.find(value => value.expressId === 10)?.components).toBeUndefined();
     expect(extraction.CostValues.find(value => value.expressId === 11)?.components?.[0]?.components).toBeUndefined();
-    let compatibility = extraction.CostItems[0].costValues?.find(value => value.expressId === 50);
+    const compatibilityRoot = extraction.CostItems[0].costValues?.find(value => value.expressId === 50);
+    expect(compatibilityRoot).toBeDefined();
+    let compatibility = compatibilityRoot;
     let compatibilityDepth = 0;
     while (compatibility?.components?.[0]) {
       compatibilityDepth++;
       compatibility = compatibility.components[0];
     }
+    expect(compatibilityDepth).toBeGreaterThan(0);
     expect(compatibilityDepth).toBeLessThanOrEqual(21);
     expect(extraction.CostValues.find(value => value.expressId === 50)?.Components).toEqual([49]);
     expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
@@ -1717,6 +1773,8 @@ describe('#4854 cost evaluator blocker regressions', () => {
     ])));
     const hugeQuantity = extraction.CostItems.find(item => item.expressId === 30);
     const hugeScale = extraction.CostItems.find(item => item.expressId === 31);
+    expect(hugeQuantity).toBeDefined();
+    expect(hugeScale).toBeDefined();
     expect(hugeQuantity?.costQuantities).toBeUndefined();
     expect(hugeScale?.costQuantities).toEqual([expect.objectContaining({ value: 2 })]);
     expect(hugeScale?.costQuantities?.[0]).not.toHaveProperty('explicitUnitSiScale');
