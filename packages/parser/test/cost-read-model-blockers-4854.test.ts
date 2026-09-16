@@ -932,6 +932,54 @@ describe('#4854 cost evaluator blocker regressions', () => {
     ]));
   });
 
+  it.each(['IFC4', 'IFC4X3_ADD2'])('treats empty %s cost slots as malformed presence', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#10=IFCCOSTVALUE('Control',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#11=IFCCOSTVALUE('Bad basis',$,IFCMONETARYMEASURE(10.),,$,$,$,$,$,$);",
+      "#12=IFCCOSTVALUE('Bad components',$,$,$,$,$,$,$,.ADD.,);",
+      "#20=IFCCOSTITEM('control',$,'Control',$,$,'C',$,(#10),$);",
+      "#21=IFCCOSTITEM('basis',$,'Basis',$,$,'B',$,(#11),$);",
+      "#22=IFCCOSTITEM('components',$,'Components',$,$,'X',$,(#12),$);",
+      "#23=IFCCOSTITEM('quantities',$,'Quantities',$,$,'Q',$,(#10),);",
+    ])));
+    expect(evaluateCostItem(extraction, 20)).toMatchObject({ Amount: '10', Diagnostics: [] });
+    for (const id of [21, 22, 23]) {
+      expect(evaluateCostItem(extraction, id)).toMatchObject({
+        Amount: undefined,
+        Diagnostics: expect.arrayContaining([expect.objectContaining({ Severity: expect.stringMatching(/warning|error/) })]),
+      });
+    }
+    expect(extraction.CostValues.find(value => value.expressId === 11)).toMatchObject({ InvalidUnitBasis: true });
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 12 }),
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 23 }),
+    ]));
+  });
+
+  it.each([
+    ['IFC4', '#bad'],
+    ['IFC4', '#4294967296'],
+    ['IFC4X3_ADD2', '#bad'],
+    ['IFC4X3_ADD2', '#4294967296'],
+  ])('withholds %s category totals for malformed AppliedValue %s', async (schema, token) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#10=IFCCOSTVALUE('Child value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      `#11=IFCCOSTVALUE('Malformed wildcard',$,${token},$,$,$,'*',$,$,$);`,
+      "#20=IFCCOSTITEM('child',$,'Child',$,$,'C',$,(#10),$);",
+      "#21=IFCCOSTITEM('parent',$,'Parent',$,$,'P',$,(#11),$);",
+      "#30=IFCRELNESTS('nest',$,$,$,#21,(#20));",
+    ])));
+    expect(extraction.CostValues.find(value => value.expressId === 11)?.AppliedValue).toMatchObject({
+      Kind: 'Unsupported',
+    });
+    expect(evaluateCostItem(extraction, 21)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([
+        expect.objectContaining({ Code: 'UNSUPPORTED_APPLIED_VALUE', expressId: 11 }),
+      ]),
+    });
+  });
+
   it('keeps the legacy CostValueInfo construction source-compatible', () => {
     const legacy: CostValueInfo = { appliedValue: 10 };
     expect(legacy.appliedValue).toBe(10);

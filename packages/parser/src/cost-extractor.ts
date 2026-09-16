@@ -63,7 +63,8 @@ function appliedValue(
   reader: CostEntityReader,
   expressId: number,
 ): CostAppliedValue | undefined {
-  if (value === null || value === undefined) return undefined;
+  if (!reader.attributePresent(expressId, 2)) return undefined;
+  if (value === null || value === undefined) return { Kind: 'Unsupported', Raw: value };
   if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'string') {
     const parsed = reader.decimalLexeme(expressId, 2);
     return parsed === undefined

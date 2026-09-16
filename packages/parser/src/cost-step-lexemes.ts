@@ -13,7 +13,7 @@ function withoutComments(token: string): string {
 
 /** Distinguish an omitted STEP attribute from malformed-but-present input. */
 export function costAttributePresent(token: string | undefined): boolean {
-  if (!token) return false;
+  if (token === undefined) return false;
   const candidate = withoutComments(token);
   return candidate !== '$' && candidate !== '*';
 }
