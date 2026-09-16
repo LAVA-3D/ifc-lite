@@ -46,6 +46,12 @@ export function captureUiSnapshot(store: ViewerStoreApi): UiSnapshot {
       selectedModelId: s.selectedModelId,
       chartOwned: s.chartSelectionRevision != null
         && s.chartSelectionRevision === s.selectionRevision,
+      chartSlice: s.chartSlice ? [...s.chartSlice] : null,
+      chartSliceSource: s.chartSliceSource,
+      chartSliceBuckets: s.chartSliceBuckets?.map((bucket) => ({
+        ...bucket,
+        ids: [...bucket.ids],
+      })) ?? null,
     },
     activeStorey: s.activeStorey,
     selectedStoreys: [...s.selectedStoreys],
@@ -117,6 +123,10 @@ export function restoreUiSnapshot(
     } else {
       store.setState((state) => {
         const selectionRevision = state.selectionRevision + 1;
+        const chartOwned = snapshot.selection.chartOwned
+          && snapshot.selection.chartSlice !== null
+          && snapshot.selection.chartSliceSource !== null
+          && snapshot.selection.chartSliceBuckets !== null;
         return {
           selectedEntityId: snapshot.selection.selectedEntityId,
           selectedEntityIds: new Set(snapshot.selection.selectedEntityIds),
@@ -127,9 +137,17 @@ export function restoreUiSnapshot(
           selectedStoreys: new Set(snapshot.selectedStoreys),
           activeStorey: snapshot.activeStorey,
           selectionRevision,
-          ...(snapshot.selection.chartOwned && state.chartSlice
-            ? { chartSelectionRevision: selectionRevision }
-            : {}),
+          ...(chartOwned
+            ? {
+                chartSlice: new Set(snapshot.selection.chartSlice ?? []),
+                chartSliceSource: snapshot.selection.chartSliceSource,
+                chartSliceBuckets: snapshot.selection.chartSliceBuckets?.map((bucket) => ({
+                  ...bucket,
+                  ids: [...bucket.ids],
+                })) ?? null,
+                chartSelectionRevision: selectionRevision,
+              }
+            : { chartSelectionRevision: null }),
         };
       });
     }

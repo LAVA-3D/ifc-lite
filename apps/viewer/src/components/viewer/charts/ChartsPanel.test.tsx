@@ -657,6 +657,50 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
   });
 
+  it('restores the captured chart bucket after tour steps replace its slice (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const snapshot = captureUiSnapshot(useViewerStore);
+    const capturedBuckets = snapshot.selection.chartSliceBuckets;
+
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 0 }] }); });
+    await settle();
+    assert.deepEqual([...(useViewerStore.getState().chartSlice ?? [])].sort(), [GID(41), GID(42), GID(43)]);
+
+    await act(async () => { restoreUiSnapshot(useViewerStore, snapshot); });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSelectionRevision, state.selectionRevision);
+    assert.equal(state.chartSliceSource, snapshot.selection.chartSliceSource);
+    assert.deepEqual(state.chartSliceBuckets, capturedBuckets);
+    assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+  });
+
+  it('restores captured chart ownership after a tour step clears the live slice (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const snapshot = captureUiSnapshot(useViewerStore);
+
+    await act(async () => { useViewerStore.getState().setSelectedEntityIds([GID(41)]); });
+    await settle();
+    assert.equal(useViewerStore.getState().chartSlice, null);
+    assert.equal(useViewerStore.getState().ghostExceptEntities, null);
+
+    await act(async () => { restoreUiSnapshot(useViewerStore, snapshot); });
+    await settle();
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSelectionRevision, state.selectionRevision);
+    assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.deepEqual([...(state.ghostExceptEntities ?? [])].sort(), [GID(44), GID(45)]);
+  });
+
   it('does not restore cached chart paint after every model is cleared (#4832)', async () => {
     const { renderer, charts } = recordingRenderer();
     const applied: number[][] = [];

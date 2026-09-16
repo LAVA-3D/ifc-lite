@@ -174,6 +174,10 @@ export interface UiSnapshot {
     selectedModelId: string | null;
     /** Whether Charts authored the captured entity selection revision. */
     chartOwned: boolean;
+    /** Exact chart ownership restored with the selection after tour steps mutate it. */
+    chartSlice: number[] | null;
+    chartSliceSource: string | null;
+    chartSliceBuckets: ViewerState['chartSliceBuckets'];
   };
   activeStorey: EntityRef | null;
   selectedStoreys: number[];
