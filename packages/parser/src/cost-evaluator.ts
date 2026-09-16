@@ -327,7 +327,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       const child = memo.get(childId);
       if (!child) continue;
       if (!appendCategoryValues(categoryTotals, '*', [child], valueSession, categoryBudgetExhausted)) break;
-      if (child.invalid &&
+      if (child.invalid && !child.byCategory.has('') &&
           !appendCategoryValues(categoryTotals, '', [child], valueSession, categoryBudgetExhausted)) break;
       for (const [category, values] of child.byCategory) {
         if (category === '*') continue;
@@ -368,9 +368,14 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
     }
     const byCategory = new Map<string, EvaluatedCost[]>();
     for (const entry of entries) {
-      if (entry.category &&
-          !appendCategoryValues(byCategory, entry.category, [entry.evaluated], valueSession,
-            categoryBudgetExhausted)) break;
+      if (entry.category) {
+        if (!appendCategoryValues(byCategory, entry.category, [entry.evaluated], valueSession,
+          categoryBudgetExhausted)) break;
+      } else {
+        const uncategorized = byCategory.get('') ?? [];
+        if (!byCategory.has('')) byCategory.set('', uncategorized);
+        uncategorized.push(entry.evaluated);
+      }
     }
     const combined = valueSession.exhausted
       ? { invalid: true }

@@ -106,6 +106,33 @@ describe('#4854 cost evaluator blocker regressions', () => {
     });
   });
 
+  it('includes uncategorized nested costs in named category subtotals', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE('Uncategorized',$,IFCMONETARYMEASURE(100.),$,$,$,$,$,$,$);",
+      "#11=IFCCOSTVALUE('Labour',$,IFCMONETARYMEASURE(50.),$,$,$,'LABOUR',$,$,$);",
+      "#12=IFCCOSTVALUE('Labour subtotal',$,$,$,$,$,'LABOUR',$,$,$);",
+      "#20=IFCCOSTITEM('child',$,'Child',$,$,'C',$,(#10,#11),$);",
+      "#21=IFCCOSTITEM('parent',$,'Parent',$,$,'P',$,(#12),$);",
+      "#30=IFCRELNESTS('nest',$,$,$,#21,(#20));",
+    ])));
+    expect(evaluateCostItem(extraction, 21)).toMatchObject({
+      Amount: '150', Currency: 'CHF', Diagnostics: [],
+    });
+  });
+
+  it('reads cost attributes after a comment containing structural characters', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE/* ( , ' /* nested opener is text */('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#20=IFCCOSTITEM/* ) , ' ( */('item',$,'Item',$,$,'I',$,(#10),$);",
+    ])));
+    expect(extraction.CostValues[0]).toMatchObject({
+      expressId: 10, Name: 'Value', AppliedValue: { Kind: 'Typed', Value: '10.' },
+    });
+    expect(evaluateCostItem(extraction, 20)).toMatchObject({
+      Amount: '10', Currency: 'CHF', Diagnostics: [],
+    });
+  });
+
   it('multiplies unit costs by direct CostQuantities even without UnitBasis', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
       "#10=IFCQUANTITYCOUNT('Count',$,$,3.,$);",

@@ -23,21 +23,14 @@ export function splitCostAttributeLexemes(record: string): string[] {
   let open = -1;
   let close = -1;
   let depth = 0;
-  let quoted = false;
-  for (let index = 0; index < record.length; index++) {
+  const recordScan = new StepTextScan(record);
+  for (let index = 0; index < record.length;) {
+    const skipped = recordScan.skipLexicalAt(index);
+    if (skipped > index) {
+      index = skipped;
+      continue;
+    }
     const char = record[index];
-    if (char === "'") {
-      if (quoted && record[index + 1] === "'") index++;
-      else quoted = !quoted;
-      continue;
-    }
-    if (quoted) continue;
-    if (char === '/' && record[index + 1] === '*') {
-      const end = record.indexOf('*/', index + 2);
-      if (end < 0) return [];
-      index = end + 1;
-      continue;
-    }
     if (char === '(') {
       if (open < 0) open = index;
       depth++;
@@ -48,31 +41,28 @@ export function splitCostAttributeLexemes(record: string): string[] {
         break;
       }
     }
+    index++;
   }
   if (open < 0 || close <= open) return [];
   const params = record.slice(open + 1, close);
   const result: string[] = [];
   let start = 0;
   depth = 0;
-  quoted = false;
-  for (let index = 0; index < params.length; index++) {
-    const char = params[index];
-    if (char === "'") {
-      if (quoted && params[index + 1] === "'") index++;
-      else quoted = !quoted;
+  const parameterScan = new StepTextScan(params);
+  for (let index = 0; index < params.length;) {
+    const skipped = parameterScan.skipLexicalAt(index);
+    if (skipped > index) {
+      index = skipped;
       continue;
     }
-    if (quoted) continue;
-    if (char === '/' && params[index + 1] === '*') {
-      const end = params.indexOf('*/', index + 2);
-      if (end < 0) break;
-      index = end + 1;
-    } else if (char === '(') depth++;
+    const char = params[index];
+    if (char === '(') depth++;
     else if (char === ')') depth--;
     else if (char === ',' && depth === 0) {
       result.push(params.slice(start, index).trim());
       start = index + 1;
     }
+    index++;
   }
   result.push(params.slice(start).trim());
   return result;
@@ -116,3 +106,4 @@ export function costReferenceListLexeme(token: string | undefined): number[] | u
   const refs = entries.map(entry => costReferenceLexeme(entry));
   return refs.every((ref): ref is number => ref !== undefined) ? refs : undefined;
 }
+import { StepTextScan } from './step-lexing.js';
