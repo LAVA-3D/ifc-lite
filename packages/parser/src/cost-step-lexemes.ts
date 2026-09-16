@@ -20,14 +20,41 @@ export function costAttributePresent(token: string | undefined): boolean {
 
 /** Split one entity parameter list while retaining the original STEP lexemes. */
 export function splitCostAttributeLexemes(record: string): string[] {
-  const open = record.indexOf('(');
-  const close = record.lastIndexOf(')');
+  let open = -1;
+  let close = -1;
+  let depth = 0;
+  let quoted = false;
+  for (let index = 0; index < record.length; index++) {
+    const char = record[index];
+    if (char === "'") {
+      if (quoted && record[index + 1] === "'") index++;
+      else quoted = !quoted;
+      continue;
+    }
+    if (quoted) continue;
+    if (char === '/' && record[index + 1] === '*') {
+      const end = record.indexOf('*/', index + 2);
+      if (end < 0) return [];
+      index = end + 1;
+      continue;
+    }
+    if (char === '(') {
+      if (open < 0) open = index;
+      depth++;
+    } else if (char === ')' && open >= 0) {
+      depth--;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+  }
   if (open < 0 || close <= open) return [];
   const params = record.slice(open + 1, close);
   const result: string[] = [];
   let start = 0;
-  let depth = 0;
-  let quoted = false;
+  depth = 0;
+  quoted = false;
   for (let index = 0; index < params.length; index++) {
     const char = params[index];
     if (char === "'") {

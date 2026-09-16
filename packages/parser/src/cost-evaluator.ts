@@ -110,9 +110,8 @@ function typedValue(value: CostValueInfo, valueId: number, context: Context): Ev
   }
   return { amount: normalized, dimension };
 }
-function normalizeUnitBasis(
-  value: CostValueInfo, valueId: number, evaluated: EvaluatedCost, context: Context,
-): EvaluatedCost {
+function normalizeUnitBasis(value: CostValueInfo, valueId: number, evaluated: EvaluatedCost,
+  context: Context, apply = true): EvaluatedCost {
   if (evaluated.invalid || evaluated.amount === undefined) return evaluated;
   if (value.InvalidUnitBasis) {
     diagnostic(context, 'UNSUPPORTED_UNIT', `UnitBasis on #${valueId} is not an entity reference`, valueId);
@@ -136,6 +135,7 @@ function normalizeUnitBasis(
       `UnitBasis #${value.UnitBasis} is not positive`, valueId);
     return { invalid: true };
   }
+  if (!apply) return evaluated;
   const amount = evaluated.amount.div(denominator);
   if (!amount.isFinite() || (amount.isZero() && !evaluated.amount.isZero())) {
     diagnostic(context, 'INVALID_NUMBER', `IfcCostValue #${valueId} produced a non-finite rate`, valueId);
@@ -191,10 +191,8 @@ function extendQuantity(
   }
   return { ...evaluated, amount, quantityApplied, rateDimension: undefined };
 }
-function evaluateValueGraph(
-  root: number, context: Context, quantities: QuantityValue[], implicitRoot: boolean,
-  categoryTotals?: Map<string, EvaluatedCost[]>,
-): EvaluatedCost {
+function evaluateValueGraph(root: number, context: Context, quantities: QuantityValue[], implicitRoot: boolean,
+  categoryTotals?: Map<string, EvaluatedCost[]>, applyUnitBasis = true): EvaluatedCost {
   const memo = new Map<number, EvaluatedCost>();
   const state = new Map<number, 1 | 2>();
   const stack: Array<{ id: number; expanded: boolean }> = [{ id: root, expanded: false }];
@@ -240,7 +238,7 @@ function evaluateValueGraph(
       : combineCosts(value.ArithmeticOperator ?? '', value.Components.map(id => memo.get(id) ?? { invalid: true }), frame.id,
         (Code, Message, id, Severity) => diagnostic(context, Code, Message, id, Severity),
         (operand, dimension) => normalizeImplicitRate(operand, dimension, frame.id, context));
-    const evaluated = normalizeUnitBasis(value, frame.id, base, context);
+    const evaluated = normalizeUnitBasis(value, frame.id, base, context, applyUnitBasis);
     if (!evaluated.invalid && evaluated.amount === undefined) {
       diagnostic(context, 'MISSING_VALUE', `IfcAppliedValue #${frame.id} has no evaluable value`, frame.id, 'warning');
     }
@@ -277,7 +275,7 @@ function unsupported(extraction: CostGraphExtraction, expressId: number): CostEv
 function result(expressId: number, value: EvaluatedCost, diagnostics: CostDiagnostic[]): CostEvaluationResult {
   return {
     expressId, Amount: value.invalid ? undefined : value.amount?.toString(), Currency: value.currency,
-    Dimension: value.dimension, QuantityApplied: value.quantityApplied?.toString(), Diagnostics: diagnostics,
+    Dimension: value.rateDimension ?? value.dimension, QuantityApplied: value.quantityApplied?.toString(), Diagnostics: diagnostics,
   };
 }
 
@@ -380,7 +378,8 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       } else {
         entries.push({ category: value.Category, evaluated: quantities === undefined
           ? { invalid: true }
-          : evaluateValueGraph(valueId, context, quantities, quantities.length > 0, categoryTotals) });
+          : evaluateValueGraph(valueId, context, quantities, quantities.length > 0,
+              categoryTotals, quantities.length > 0) });
       }
     }
     if (entries.length === 0) {

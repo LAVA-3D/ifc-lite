@@ -90,6 +90,12 @@ function quantityType(dimension: CostQuantityDimension | undefined): QuantityTyp
   }
 }
 
+function finiteCompatibilityNumber(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const converted = Number(value);
+  return Number.isFinite(converted) ? converted : undefined;
+}
+
 function pushInvalidList(
   reader: CostEntityReader,
   diagnostics: CostDiagnostic[],
@@ -253,10 +259,12 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
   for (const value of CostValues) {
     if (value.UnitBasis !== undefined) {
       const basis = unitResolver.resolveMeasureWithUnit(value.UnitBasis);
+      const valueComponent = finiteCompatibilityNumber(basis?.Value);
+      const unitSiScale = finiteCompatibilityNumber(basis?.Unit.Scale);
       value.unitBasis = basis ? {
-        valueComponent: Number(basis.Value),
+        valueComponent,
         unitSymbol: basis.Unit.Scale === undefined ? undefined : basis.Unit.Symbol,
-        unitSiScale: basis.Unit.Scale === undefined ? undefined : Number(basis.Unit.Scale),
+        unitSiScale,
       } : undefined;
     }
     if (value.AppliedValue?.Kind === 'Reference' && reader.typeOf(value.AppliedValue.expressId) === 'IFCMEASUREWITHUNIT') {
@@ -294,14 +302,17 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
     item.costQuantities = item.CostQuantities
       ?.map(id => quantities.get(id))
       .filter((entry): entry is CostQuantityInfo => entry !== undefined && costQuantityExactValue(entry) !== undefined)
-      .map(quantity => {
+      .flatMap(quantity => {
+        const value = finiteCompatibilityNumber(costQuantityExactValue(quantity));
+        if (value === undefined) return [];
         const unit = quantity.Unit === undefined ? undefined : unitResolver.Units.get(quantity.Unit);
-        return {
+        const explicitUnitSiScale = finiteCompatibilityNumber(unit?.Scale);
+        return [{
           name: quantity.Name ?? '',
           type: quantityType(quantity.Dimension),
-          value: Number(costQuantityExactValue(quantity)),
-          ...(unit?.Scale !== undefined ? { explicitUnitSiScale: Number(unit.Scale) } : {}),
-        };
+          value,
+          ...(explicitUnitSiScale !== undefined ? { explicitUnitSiScale } : {}),
+        }];
       });
     if (item.costQuantities?.length === 0) item.costQuantities = undefined;
   }

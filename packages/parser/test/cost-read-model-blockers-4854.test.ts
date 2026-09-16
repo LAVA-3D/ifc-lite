@@ -579,7 +579,7 @@ describe('#4854 cost evaluator blocker regressions', () => {
     expect(evaluateCostItem(extraction, 30).Amount).toBeUndefined();
   });
 
-  it('diagnoses underflow in quantities, UnitBasis division, and quantity extension', async () => {
+  it('diagnoses quantity underflow without applying UnitBasis to a total cost', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
       "#10=IFCQUANTITYCOUNT('Tiny',$,$,1E-6145,$);",
       "#11=IFCQUANTITYCOUNT('Tenth',$,$,.1,$);",
@@ -591,12 +591,13 @@ describe('#4854 cost evaluator blocker regressions', () => {
       "#31=IFCCOSTITEM('basis',$,'Basis',$,$,'B',$,(#21),$);",
       "#32=IFCCOSTITEM('extension',$,'Extension',$,$,'E',$,(#22),(#11));",
     ])));
-    for (const id of [30, 31, 32]) {
+    for (const id of [30, 32]) {
       expect(evaluateCostItem(extraction, id)).toMatchObject({
         Amount: undefined,
         Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'INVALID_NUMBER' })]),
       });
     }
+    expect(evaluateCostItem(extraction, 31)).toMatchObject({ Amount: '1e-6144', Diagnostics: [] });
   });
 
   it('rejects integer literals in every cost reference aggregate', async () => {
@@ -978,6 +979,75 @@ describe('#4854 cost evaluator blocker regressions', () => {
         expect.objectContaining({ Code: 'UNSUPPORTED_APPLIED_VALUE', expressId: 11 }),
       ]),
     });
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('keeps %s total costs whole when CostQuantities is absent', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      '#8=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(10.),#3);',
+      "#10=IFCCOSTVALUE('Total with metadata',$,IFCMONETARYMEASURE(100.),#8,$,$,$,$,$,$);",
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
+    ])));
+    expect(evaluateCostItem(extraction, 20)).toMatchObject({
+      Amount: '100', Currency: 'CHF', Dimension: undefined, Diagnostics: [],
+    });
+    expect(evaluateCostValue(extraction, 10)).toMatchObject({
+      Amount: '10', Currency: 'CHF', Dimension: 'length', Diagnostics: [],
+    });
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('retains malformed required %s relationship endpoints', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#10=IFCCOSTVALUE('Child value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#11=IFCCOSTVALUE('Wildcard total',$,$,$,$,$,'*',$,$,$);",
+      "#20=IFCCOSTITEM('child',$,'Child',$,$,'C',$,(#10),$);",
+      "#21=IFCCOSTITEM('parent',$,'Parent',$,$,'P',$,(#11),$);",
+      "#30=IFCRELNESTS('valid',$,$,$,#21,(#20));",
+      "#31=IFCRELNESTS('invalid',$,$,$,#21,$);",
+      "#32=IFCRELASSIGNSTOCONTROL('control',$,$,$,(#21),$,#bad);",
+    ])));
+    expect(extraction.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 31, Type: 'IfcRelNests', InvalidReferences: true }),
+      expect.objectContaining({ expressId: 32, Type: 'IfcRelAssignsToControl', InvalidReferences: true }),
+    ]));
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 31 }),
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 32 }),
+    ]));
+    expect(evaluateCostItem(extraction, 21)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'MULTIPLE_NESTING_PARENTS' })]),
+    });
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('ignores comments around %s entity delimiters', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#10=IFCCOSTVALUE/* ( annotation */('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$)/* ) trailing */;",
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
+    ])));
+    expect(evaluateCostItem(extraction, 20)).toMatchObject({ Amount: '10', Currency: 'CHF', Diagnostics: [] });
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('keeps non-finite %s conversions out of compatibility numbers', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      '#8=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1E400),#3);',
+      "#9=IFCCONVERSIONBASEDUNIT($,.LENGTHUNIT.,'Huge unit',#8);",
+      '#10=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1.),#9);',
+      "#11=IFCQUANTITYLENGTH('Huge quantity',$,$,1E400,$);",
+      "#12=IFCQUANTITYLENGTH('Huge scale',$,#9,2.,$);",
+      "#20=IFCCOSTVALUE('Rate',$,IFCMONETARYMEASURE(10.),#10,$,$,$,$,$,$);",
+      "#30=IFCCOSTITEM('huge quantity',$,'Huge quantity',$,$,'Q',$,(#20),(#11));",
+      "#31=IFCCOSTITEM('huge scale',$,'Huge scale',$,$,'S',$,(#20),(#12));",
+    ])));
+    const hugeQuantity = extraction.CostItems.find(item => item.expressId === 30);
+    const hugeScale = extraction.CostItems.find(item => item.expressId === 31);
+    expect(hugeQuantity?.costQuantities).toBeUndefined();
+    expect(hugeScale?.costQuantities).toEqual([expect.objectContaining({ value: 2 })]);
+    expect(hugeScale?.costQuantities?.[0]).not.toHaveProperty('explicitUnitSiScale');
+    expect(extraction.CostValues.find(value => value.expressId === 20)?.unitBasis).toMatchObject({
+      valueComponent: 1,
+      unitSiScale: undefined,
+    });
+    expect(extraction.CostQuantities.find(quantity => quantity.expressId === 11)?.LengthValue).toBe('1E400');
   });
 
   it('keeps the legacy CostValueInfo construction source-compatible', () => {

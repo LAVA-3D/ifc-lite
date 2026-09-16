@@ -14,18 +14,18 @@ function base(expressId: number, Type: CostRelationshipType, a: unknown[]): Cost
   return { expressId, Type, GlobalId: asString(a[0]), Name: asString(a[2]), Description: asString(a[3]) };
 }
 
-function reference(reader: CostEntityReader, expressId: number, index: number): {
+function reference(reader: CostEntityReader, expressId: number, index: number, required = true): {
   value?: number; invalid: boolean;
 } {
   const value = reader.referenceLexeme(expressId, index);
-  return { value, invalid: reader.attributePresent(expressId, index) && value === undefined };
+  return { value, invalid: value === undefined && (required || reader.attributePresent(expressId, index)) };
 }
 
-function references(reader: CostEntityReader, expressId: number, index: number): {
+function references(reader: CostEntityReader, expressId: number, index: number, required = true): {
   value: number[]; invalid: boolean;
 } {
   const value = reader.referenceListLexeme(expressId, index);
-  return { value: value ?? [], invalid: reader.attributePresent(expressId, index) && value === undefined };
+  return { value: value ?? [], invalid: value === undefined && (required || reader.attributePresent(expressId, index)) };
 }
 
 /** Preserve every cost-relevant edge with its original relationship identity. */
@@ -43,8 +43,8 @@ export function extractCostRelationships(
     const control = reference(reader, expressId, 6);
     const candidates = asRefList(a[4]) ?? [];
     const candidateControl = asRef(a[6]);
-    if (candidateControl === undefined || (!itemIds.has(candidateControl) && !scheduleIds.has(candidateControl) &&
-        !candidates.some(id => itemIds.has(id)))) continue;
+    if (!itemIds.has(candidateControl ?? -1) && !scheduleIds.has(candidateControl ?? -1) &&
+        !candidates.some(id => itemIds.has(id))) continue;
     const InvalidReferences = related.invalid || control.invalid;
     const RelatedObjects = related.value;
     const RelatingControl = control.value;
