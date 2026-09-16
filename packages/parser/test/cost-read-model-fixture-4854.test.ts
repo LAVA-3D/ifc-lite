@@ -56,7 +56,11 @@ describe('#4854 redistributable canonical cost fixture', () => {
       expect.objectContaining({ Type: 'IfcQuantityArea', AreaValue: '100.' }),
       expect.objectContaining({ Type: 'IfcQuantityVolume', VolumeValue: '100.' }),
     ]));
-    expect(scaffolding?.costValues?.[0]).toBe(shared?.costValues?.[0]);
+    const scaffoldingSharedValue = scaffolding?.costValues?.[0];
+    const sharedCostValue = shared?.costValues?.[0];
+    expect(scaffoldingSharedValue).toBeDefined();
+    expect(sharedCostValue).toBeDefined();
+    expect(scaffoldingSharedValue).toBe(sharedCostValue);
     expect(extraction.Relationships).toEqual(expect.arrayContaining([
       expect.objectContaining({ Type: 'IfcRelAssignsToControl', RelatingControl: 50, RelatedObjects: [42] }),
       expect.objectContaining({ Type: 'IfcRelAssignsToProduct', RelatingProduct: 10, RelatedObjects: [40] }),

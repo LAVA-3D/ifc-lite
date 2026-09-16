@@ -102,7 +102,11 @@ describe('#4854 schema-aware cost graph', () => {
     expect(extraction.CostQuantities.map(quantity => quantity.expressId)).toEqual([30, 34]);
     expect(extraction.CostQuantities.some(quantity => quantity.AreaValue === '999')).toBe(false);
     expect(childB?.CostValues).toEqual([50, 55]);
-    expect(root?.costValues?.[0]).toBe(childB?.costValues?.[0]);
+    const rootSharedValue = root?.costValues?.[0];
+    const childSharedValue = childB?.costValues?.[0];
+    expect(rootSharedValue).toBeDefined();
+    expect(childSharedValue).toBeDefined();
+    expect(rootSharedValue).toBe(childSharedValue);
 
     expect(extraction.Relationships).toEqual(expect.arrayContaining([
       expect.objectContaining({ expressId: 81, Type: 'IfcRelNests', RelatingObject: 60, RelatedObjects: [61, 62] }),
