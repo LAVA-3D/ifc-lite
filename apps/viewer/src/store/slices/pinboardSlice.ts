@@ -77,6 +77,7 @@ export interface SaveBasketViewOptions {
  */
 interface PinboardCrossSliceState {
   isolatedEntities: Set<number> | null;
+  ghostExceptEntities: Set<number> | null;
   hiddenEntities: Set<number>;
   models: Map<string, { idOffset: number }>;
   cameraCallbacks: CameraCallbacks;
@@ -97,12 +98,18 @@ interface PinboardCrossSliceState {
  * producer's. Neutral capture/restore replays intentionally preserve equal
  * ownership in the middleware, so producers must name the handoff atomically. */
 function basketVisibilityHandoff(owned: BasketIsolationOwnership): {
+  ghostExceptEntities?: null;
   idsFocusVisibilityOwned?: null;
   clashVisibilityOwned?: null;
   chartVisibilityOwned?: null;
 } {
   return owned
-    ? { idsFocusVisibilityOwned: null, clashVisibilityOwned: null, chartVisibilityOwned: null }
+    ? {
+        ghostExceptEntities: null,
+        idsFocusVisibilityOwned: null,
+        clashVisibilityOwned: null,
+        chartVisibilityOwned: null,
+      }
     : {};
 }
 

@@ -582,13 +582,12 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
   });
 
   it('hands equal-ID isolation to the basket before chart cleanup runs (#4832)', async () => {
-    useViewerStore.getState().setChartFocusMode('isolate');
     const { renderer, charts } = recordingRenderer();
     render(<ChartsPanel renderer={renderer} />);
     await settle();
     await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
     await settle();
-    assert.equal(useViewerStore.getState().chartVisibilityOwned?.channel, 'isolate');
+    assert.equal(useViewerStore.getState().chartVisibilityOwned?.channel, 'ghost');
 
     await act(async () => {
       useViewerStore.getState().setBasket([
@@ -601,6 +600,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(state.chartSlice, null);
     assert.equal(state.chartVisibilityOwned, null);
     assert.equal(state.basketVisibilityOwned?.channel, 'isolate');
+    assert.equal(state.ghostExceptEntities, null);
     assert.deepEqual([...(state.isolatedEntities ?? [])].sort(), [GID(44), GID(45)]);
 
     cleanup();
@@ -817,6 +817,31 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
       },
       { channel: 'ghost', ids: [GID(44), GID(45)] },
     );
+  });
+
+  it('does not revive chart visibility when a tour captured a foreign presentation (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    await act(async () => {
+      installIdsFocusVisibility('isolate', new Set([GID(41)]));
+    });
+    const snapshot = captureUiSnapshot(useViewerStore);
+    assert.equal(snapshot.selection.chartOwned, true);
+    assert.equal(snapshot.selection.chartVisibilityOwned, null);
+    cleanup();
+
+    await act(async () => { restoreUiSnapshot(useViewerStore, snapshot); });
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    const state = useViewerStore.getState();
+    assert.deepEqual([...(state.chartSlice ?? [])].sort(), [GID(44), GID(45)]);
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.chartVisibilityRevision, null);
+    assert.deepEqual([...(state.isolatedEntities ?? [])], [GID(41)]);
+    assert.equal(state.ghostExceptEntities, null);
   });
 
   it('restores the captured chart bucket after tour steps replace its slice (#4832)', async () => {

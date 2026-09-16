@@ -188,7 +188,11 @@ export function restoreUiSnapshot(
                     }
                   : {
                       chartVisibilityOwned: null,
-                      chartVisibilityRevision: state.visibilityRevision,
+                      // The captured chart selection had no live visibility
+                      // claim (for example, an IDS isolation replaced it).
+                      // Keep the remount guard closed so restoring the logical
+                      // slice cannot overwrite that foreign presentation.
+                      chartVisibilityRevision: null,
                     }),
               }
             : {
