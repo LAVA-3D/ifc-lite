@@ -37,11 +37,17 @@ function namedSymbol(name: string | undefined): string | undefined {
   return name ? symbols[name.toUpperCase()] ?? name : undefined;
 }
 
-function exactProduct(left: string, right: string): string {
-  const significantDigits = (value: string): number => (value.match(/\d/g) ?? []).length;
-  const ExactDecimal = Decimal.clone({ precision: significantDigits(left) + significantDigits(right) + 2 });
+function significantDigits(value: string): number {
+  return (value.match(/\d/g) ?? []).length;
+}
+
+function exactProduct(left: string, right: string, precision: number): string {
+  const ExactDecimal = Decimal.clone({ precision });
   return new ExactDecimal(left).mul(right).toString();
 }
+
+const MAX_CONVERSION_SCALE_DIGITS = 10_000;
+const MAX_CONVERSION_SCALE_WORK = 100_000;
 
 function dimensionForUnitType(unitType: string | undefined): CostQuantityDimension | undefined {
   switch (unitType) {
@@ -104,6 +110,8 @@ export class CostUnitResolver {
   readonly MeasuresWithUnit = new Map<number, CostMeasureWithUnitInfo>();
   readonly ProjectUnits = new Map<CostQuantityDimension, CostUnitInfo>();
   Currency?: string;
+  private conversionScaleWork = 0;
+  private conversionScaleBudgetReported = false;
 
   constructor(
     private readonly reader: CostEntityReader,
@@ -228,7 +236,7 @@ export class CostUnitResolver {
     const Dimension = dimensionForUnitType(UnitType);
     const compatible = factor?.Unit.Dimension === Dimension && factor?.ValueDimension === Dimension;
     const Scale = compatible && factor?.Unit.Scale
-      ? exactProduct(factor.Value, factor.Unit.Scale) : undefined;
+      ? this.conversionScale(factor.Value, factor.Unit.Scale, expressId) : undefined;
     const validScale = Scale !== undefined && new Decimal(Scale).isFinite() && new Decimal(Scale).gt(0);
     const unit: CostUnitInfo = {
       expressId, Type: 'IfcConversionBasedUnit', UnitType,
@@ -241,9 +249,25 @@ export class CostUnitResolver {
       this.warn('INCOMPATIBLE_UNIT', `Conversion unit #${expressId} has an incompatible factor dimension`, expressId);
     } else if (Scale !== undefined && !validScale) {
       this.warn('INVALID_NUMBER', `Conversion unit #${expressId} has a non-positive or non-finite scale`, expressId);
-    } else if (unit.Scale === undefined) {
+    } else if (unit.Scale === undefined && this.conversionScaleWork <= MAX_CONVERSION_SCALE_WORK) {
       this.warn('UNSUPPORTED_UNIT', `Unsupported or unresolved ${unit.Type} #${expressId}`, expressId);
     }
+  }
+
+  private conversionScale(left: string, right: string, expressId: number): string | undefined {
+    const precision = significantDigits(left) + significantDigits(right) + 2;
+    if (precision > MAX_CONVERSION_SCALE_DIGITS ||
+        this.conversionScaleWork + precision > MAX_CONVERSION_SCALE_WORK) {
+      this.conversionScaleWork = MAX_CONVERSION_SCALE_WORK + 1;
+      if (!this.conversionScaleBudgetReported) {
+        this.conversionScaleBudgetReported = true;
+        this.warn('UNSUPPORTED_UNIT',
+          `Conversion unit #${expressId} exceeds the exact scale evaluation budget`, expressId);
+      }
+      return undefined;
+    }
+    this.conversionScaleWork += precision;
+    return exactProduct(left, right, precision);
   }
 
   resolveMeasureWithUnit(expressId: number | undefined): ResolvedMeasureWithUnit | undefined {

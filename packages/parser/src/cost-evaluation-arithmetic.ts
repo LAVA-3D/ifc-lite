@@ -57,7 +57,13 @@ function dividedRateDimension(
 ): CostQuantityDimension | undefined | false {
   let dimension = operands[0].rateDimension;
   for (const divisor of operands.slice(1)) {
-    if (divisor.rateDimension === undefined) continue;
+    if (divisor.rateDimension === undefined) {
+      if (dimension !== undefined && divisor.currency !== undefined) {
+        report('INCOMPATIBLE_UNIT', 'Division produces an unsupported inverse cost-rate dimension', valueId);
+        return false;
+      }
+      continue;
+    }
     if (dimension === divisor.rateDimension) dimension = undefined;
     else {
       report('INCOMPATIBLE_UNIT', 'Division produces an unsupported inverse or compound cost rate', valueId);

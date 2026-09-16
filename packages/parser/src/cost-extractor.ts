@@ -4,6 +4,7 @@
 
 import { QuantityType } from '@ifc-lite/data';
 import type { IfcDataStore } from './columnar-parser.js';
+import { compatibilityTreeBuilder } from './cost-compatibility-tree.js';
 import { costQuantityExactValue, extractCostQuantities } from './cost-quantities.js';
 import { asEnum, asRef, asString, CostEntityReader } from './cost-reader.js';
 import { diagnoseCostGraphs, extractCostRelationships } from './cost-relationships.js';
@@ -258,23 +259,6 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
   for (const quantity of quantityMap.values()) {
     if (quantity.Unit !== undefined) unitResolver.resolve(quantity.Unit);
   }
-  const legacyBudget = { remaining: 100_000 };
-  const legacyComponents = (root: number, depth = 0, visiting = new Set<number>()): CostValueInfo[] | undefined => {
-    if (depth > 20 || visiting.has(root) || legacyBudget.remaining <= 0) return undefined;
-    const source = values.get(root);
-    if (!source) return undefined;
-    visiting.add(root);
-    const components = source.Components?.flatMap(id => {
-      const child = values.get(id);
-      if (!child || visiting.has(id) || legacyBudget.remaining-- <= 0) return [];
-      const { components: omitted, ...copy } = child;
-      void omitted;
-      const nested = legacyComponents(id, depth + 1, visiting);
-      return [{ ...copy, ...(nested?.length ? { components: nested } : {}) }];
-    });
-    visiting.delete(root);
-    return components?.length ? components : undefined;
-  };
   for (const value of CostValues) {
     if (value.UnitBasis !== undefined) {
       const basis = unitResolver.resolveMeasureWithUnit(value.UnitBasis);
@@ -295,6 +279,7 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
   const schedules = new Map(CostSchedules.map(schedule => [schedule.expressId, schedule]));
   const items = new Map(CostItems.map(item => [item.expressId, item]));
   const values = new Map(CostValues.map(value => [value.expressId, value]));
+  const legacyComponents = compatibilityTreeBuilder(values, diagnostics);
   const quantities = new Map([...quantityMap.values()].map(quantity => [quantity.expressId, quantity]));
   for (const value of CostValues) {
     for (const componentId of value.Components ?? []) {

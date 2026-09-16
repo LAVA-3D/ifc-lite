@@ -284,6 +284,19 @@ describe('#4854 cost evaluator blocker regressions', () => {
     });
   });
 
+  it.each(['IFC4', 'IFC4X3_ADD2'])('rejects inverse quantity dimensions in %s division', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      '#10=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1.),#3);',
+      "#20=IFCCOSTVALUE('Rate',$,IFCMONETARYMEASURE(10.),#10,$,$,$,$,$,$);",
+      "#21=IFCCOSTVALUE('Money',$,IFCMONETARYMEASURE(2.),$,$,$,$,$,$,$);",
+      "#22=IFCCOSTVALUE('Inverse',$,$,$,$,$,$,$,.DIVIDE.,(#20,#21));",
+    ])));
+    expect(evaluateCostValue(extraction, 22)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'INCOMPATIBLE_UNIT' })]),
+    });
+  });
+
   it('withholds totals for dangling, negative, or overflowing quantities', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
       "#10=IFCQUANTITYAREA('Valid',$,$,2.,$);",
@@ -562,6 +575,53 @@ describe('#4854 cost evaluator blocker regressions', () => {
     const unitExtraction = extractCostOnDemand(await parse(step('IFC4', units)));
     expect(unitExtraction.Units.find(unit => unit.expressId === 15000)?.Scale).toBe('1');
   }, 20_000);
+
+  it('bounds cumulative exact conversion-scale work for non-unit factors', async () => {
+    const units = [
+      "#1=IFCPROJECT('project',$,'Units',$,$,$,$,$,#2);",
+      '#2=IFCUNITASSIGNMENT((#10500));',
+      '#10=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);',
+    ];
+    for (let index = 1; index <= 500; index++) {
+      const unit = 10_000 + index;
+      const measure = 20_000 + index;
+      const previous = index === 1 ? 10 : unit - 1;
+      units.push(`#${measure}=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1.234567890123456789),#${previous});`);
+      units.push(`#${unit}=IFCCONVERSIONBASEDUNIT($,.LENGTHUNIT.,'U${index}',#${measure});`);
+    }
+    units.push("#30001=IFCCOSTVALUE('Value',$,IFCNUMERICMEASURE(1.),$,$,$,$,$,$,$);");
+    const extraction = extractCostOnDemand(await parse(step('IFC4', units)));
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'UNSUPPORTED_UNIT', Message: expect.stringContaining('evaluation budget') }),
+    ]));
+    const storedScaleCharacters = extraction.Units.reduce((sum, unit) => sum + (unit.Scale?.length ?? 0), 0);
+    expect(storedScaleCharacters).toBeLessThan(100_000);
+    expect(extraction.Units.find(unit => unit.expressId === 10_500)?.Scale).toBeUndefined();
+  }, 20_000);
+
+  it('ignores valid non-cost IfcRelNests children while retaining invalid-reference failures', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE('Child value',$,IFCMONETARYMEASURE(100.),$,$,$,'LABOUR',$,$,$);",
+      "#11=IFCCOSTVALUE('Total',$,$,$,$,$,'*',$,$,$);",
+      "#20=IFCCOSTITEM('child',$,'Child',$,$,'C',$,(#10),$);",
+      "#21=IFCCOSTITEM('parent',$,'Parent',$,$,'P',$,(#11),$);",
+      "#22=IFCTASK('task',$,'Task',$,$,$,$,$,$,.F.,$,$,.CONSTRUCTION.);",
+      "#30=IFCRELNESTS('valid-mixed',$,$,$,#21,(#20,#22));",
+    ])));
+    expect(evaluateCostItem(extraction, 21)).toMatchObject({ Amount: '100', Diagnostics: [] });
+
+    const invalid = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE('Child value',$,IFCMONETARYMEASURE(100.),$,$,$,'LABOUR',$,$,$);",
+      "#11=IFCCOSTVALUE('Total',$,$,$,$,$,'*',$,$,$);",
+      "#20=IFCCOSTITEM('child',$,'Child',$,$,'C',$,(#10),$);",
+      "#21=IFCCOSTITEM('parent',$,'Parent',$,$,'P',$,(#11),$);",
+      "#30=IFCRELNESTS('invalid-mixed',$,$,$,#21,(#20,#999));",
+    ])));
+    expect(evaluateCostItem(invalid, 21)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'MISSING_REFERENCE', expressId: 999 })]),
+    });
+  });
 
   it('preserves shared complex-quantity DAGs without reporting cycles', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
@@ -1498,6 +1558,25 @@ describe('#4854 cost evaluator blocker regressions', () => {
       expect.objectContaining({ Code: 'VALUE_CYCLE' }),
     ]));
   });
+
+  it('diagnoses compatibility component truncation across the shared root budget', async () => {
+    const repeated = Array.from({ length: 100_000 }, () => '#10').join(',');
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [
+      "#10=IFCCOSTVALUE('Leaf',$,IFCMONETARYMEASURE(1.),$,$,$,$,$,$,$);",
+      `#11=IFCCOSTVALUE('First',$,$,$,$,$,$,$,.ADD.,(${repeated}));`,
+      "#12=IFCCOSTVALUE('Second',$,$,$,$,$,$,$,.ADD.,(#10));",
+      "#20=IFCCOSTITEM('first',$,'First',$,$,'F',$,(#11),$);",
+      "#21=IFCCOSTITEM('second',$,'Second',$,$,'S',$,(#12),$);",
+    ])));
+    expect(extraction.CostValues.find(value => value.expressId === 11)?.components).toHaveLength(100_000);
+    expect(extraction.CostValues.find(value => value.expressId === 12)?.components).toBeUndefined();
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        Code: 'INVALID_LIST', expressId: 12,
+        Message: expect.stringContaining('shared 100000-component budget'),
+      }),
+    ]));
+  }, 15_000);
 
   it('handles file-controlled applied-value component counts without argument-stack overflow', async () => {
     const repeated = Array.from({ length: 130_000 }, () => '#20').join(',');

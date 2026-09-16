@@ -263,7 +263,8 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
   const invalidNesting = new Set<number>();
   for (const relation of extraction.Relationships) {
     if (relation.Type === 'IfcRelNests' && relation.RelatingObject !== undefined) {
-      const related = relation.RelatedObjects ?? [];
+      const related = (relation.RelatedObjects ?? []).filter(id =>
+        items.has(id) || relation.InvalidReferences === true);
       if (relation.InvalidRelatedObjects || relation.InvalidReferences) invalidNesting.add(relation.RelatingObject);
       const nested = children.get(relation.RelatingObject);
       if (nested) {
