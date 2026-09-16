@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 import { ColumnarParser } from '../src/columnar-parser.js';
 import { evaluateCostItem, evaluateCostValue } from '../src/cost-evaluator.js';
 import { extractCostOnDemand } from '../src/cost-extractor.js';
-import type { CostGraphExtraction, CostValueInfo } from '../src/cost-types.js';
+import type {
+  CostDiagnostic, CostGraphExtraction, CostMeasureWithUnitInfo, CostQuantityInfo, CostValueInfo,
+} from '../src/cost-types.js';
 import type { IfcSourceBytes } from '../src/source-bytes.js';
 import { StepTokenizer } from '../src/tokenizer.js';
 
@@ -429,6 +431,100 @@ describe('#4854 cost evaluator blocker regressions', () => {
       });
     }
   }, 10_000);
+
+  it('schedules repeated component dependencies once in cold and warmed order', async () => {
+    const repeated = Array.from({ length: 60_000 }, () => '#10').join(',');
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      "#10=IFCCOSTVALUE('leaf',$,IFCMONETARYMEASURE(1.),$,$,$,$,$,$,$);",
+      `#11=IFCCOSTVALUE('sum',$,$,$,$,$,$,$,.ADD.,(${repeated}));`,
+      "#20=IFCCOSTITEM('warm',$,'Warm',$,$,'W',$,(#10,#11),$);",
+      "#21=IFCCOSTITEM('cold',$,'Cold',$,$,'C',$,(#11,#10),$);",
+    ])));
+    for (const expressId of [20, 21]) {
+      expect(evaluateCostItem(extraction, expressId)).toMatchObject({
+        Amount: '60001', Currency: 'CHF', Diagnostics: [],
+      });
+    }
+  }, 10_000);
+
+  it('memoizes a shared normalized quantity graph across nested items', () => {
+    const size = 700;
+    let childReads = 0;
+    const CostQuantities: CostQuantityInfo[] = [{
+      expressId: 1, Type: 'IfcQuantityCount', Dimension: 'count', CountValue: '1',
+    }];
+    for (let expressId = 2; expressId <= size; expressId++) {
+      const child = expressId - 1;
+      CostQuantities.push({
+        expressId, Type: 'IfcPhysicalComplexQuantity',
+        get HasQuantities() { childReads++; return [child]; },
+      });
+    }
+    const extraction = valueGraph([{
+      expressId: 1_000, Type: 'IfcCostValue',
+      AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
+    }, { expressId: 1_001, Type: 'IfcCostValue', Category: '*' }]);
+    extraction.Currency = 'CHF';
+    extraction.CostQuantities = CostQuantities;
+    const item = (expressId: number, valueId: number, quantities?: number[]) => ({
+      expressId, CostValues: [valueId], CostQuantities: quantities,
+      globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
+      productGlobalIds: [], controllingScheduleGlobalIds: [],
+    });
+    const children = Array.from({ length: size }, (_, index) => item(10_000 + index, 1_000, [size]));
+    extraction.CostItems = [item(9_999, 1_001), ...children];
+    extraction.Relationships = [{
+      expressId: 20_000, Type: 'IfcRelNests', RelatingObject: 9_999,
+      RelatedObjects: children.map(child => child.expressId),
+    }];
+    expect(evaluateCostItem(extraction, 9_999)).toMatchObject({ Amount: '700', Diagnostics: [] });
+    expect(childReads).toBeLessThan(5_000);
+  });
+
+  it('indexes currency ambiguity and measures once per evaluation call', () => {
+    const count = 500;
+    let diagnosticReads = 0;
+    const unrelated: CostDiagnostic = {
+      get Code(): CostDiagnostic['Code'] { diagnosticReads++; return 'INVALID_NUMBER'; },
+      Message: 'Unrelated extraction diagnostic', Severity: 'warning',
+    };
+    const currencyValues: CostValueInfo[] = Array.from({ length: count }, (_, index) => ({
+      expressId: index + 1, Type: 'IfcCostValue',
+      AppliedValue: { Kind: 'Typed', Type: 'IFCMONETARYMEASURE', Value: '1' },
+    }));
+    const currency = valueGraph(currencyValues);
+    currency.Diagnostics = Array.from({ length: count }, () => unrelated);
+    currency.CostItems = [{
+      expressId: 10_000, CostValues: currencyValues.map(value => value.expressId as number),
+      globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
+      productGlobalIds: [], controllingScheduleGlobalIds: [],
+    }];
+    expect(evaluateCostItem(currency, 10_000).Amount).toBe('500');
+    expect(diagnosticReads).toBe(count);
+
+    let measureReads = 0;
+    const measures: CostMeasureWithUnitInfo[] = Array.from({ length: count }, (_, index) => {
+      const expressId = 20_000 + index;
+      return {
+        get expressId() { measureReads++; return expressId; },
+        ValueComponent: '1', UnitComponent: 30_000, ValueType: 'IFCMONETARYMEASURE',
+      };
+    });
+    const measureValues: CostValueInfo[] = measures.map((_, index) => ({
+      expressId: index + 1, Type: 'IfcCostValue',
+      AppliedValue: { Kind: 'Reference', expressId: 20_000 + index },
+    }));
+    const referenced = valueGraph(measureValues);
+    referenced.MeasuresWithUnit = measures;
+    referenced.Units = [{ expressId: 30_000, Type: 'IfcMonetaryUnit', Currency: 'CHF' }];
+    referenced.CostItems = [{
+      expressId: 10_001, CostValues: measureValues.map(value => value.expressId as number),
+      globalId: '', name: '', childGlobalIds: [], productExpressIds: [],
+      productGlobalIds: [], controllingScheduleGlobalIds: [],
+    }];
+    expect(evaluateCostItem(referenced, 10_001).Amount).toBe('500');
+    expect(measureReads).toBe(count);
+  });
 
   it('handles 5k complex-quantity and conversion-unit chains without recursion', async () => {
     const quantities = ["#1=IFCQUANTITYCOUNT('Leaf',$,$,2.,$);"];

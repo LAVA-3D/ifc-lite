@@ -22,6 +22,17 @@ interface QuantityContext {
   diagnostics: CostDiagnostic[];
 }
 
+export interface QuantityEvaluationCache {
+  memo: Map<number, QuantityValue[]>;
+  work: number;
+  exhausted: boolean;
+  reported: boolean;
+}
+
+export function quantityEvaluationCache(): QuantityEvaluationCache {
+  return { memo: new Map(), work: 0, exhausted: false, reported: false };
+}
+
 function diagnostic(context: QuantityContext, Code: CostDiagnostic['Code'], Message: string,
   expressId: number): void {
   context.diagnostics.push({ Code, Message, Severity: 'error', expressId });
@@ -53,28 +64,42 @@ function quantityValue(quantity: CostQuantityInfo): string | undefined {
     quantity.WeightValue ?? quantity.TimeValue ?? quantity.NumberValue;
 }
 
-export function itemQuantities(item: CostItemInfo, context: QuantityContext): QuantityValue[] | undefined {
+export function itemQuantities(
+  item: CostItemInfo,
+  context: QuantityContext,
+  cache: QuantityEvaluationCache = quantityEvaluationCache(),
+): QuantityValue[] | undefined {
   if (item.CostQuantities === undefined) return [];
   if (item.CostQuantities.length === 0) {
     diagnostic(context, 'INVALID_LIST', `CostQuantities on #${item.expressId} must not be empty`, item.expressId);
     return undefined;
   }
-  const memo = new Map<number, QuantityValue[]>();
+  const memo = cache.memo;
   const state = new Map<number, 1 | 2>();
   let work = 0;
+  const consume = (amount = 1): boolean => {
+    work += amount;
+    cache.work += amount;
+    if (work > 100_000 || cache.work > 1_000_000) cache.exhausted = true;
+    if (!cache.exhausted) return true;
+    if (!cache.reported) {
+      diagnostic(context, 'INVALID_LIST',
+        `Cost quantity graph on #${item.expressId} exceeds the evaluation budget`, item.expressId);
+      cache.reported = true;
+    }
+    return false;
+  };
   for (const root of item.CostQuantities) {
     const stack: Array<{ id: number; exit: boolean }> = [{ id: root, exit: false }];
     while (stack.length > 0) {
-      if (++work > 100_000) {
-        diagnostic(context, 'INVALID_LIST', `Cost quantity graph on #${item.expressId} exceeds the evaluation budget`, item.expressId);
-        return undefined;
-      }
+      if (!consume()) return undefined;
       const frame = stack.pop() as { id: number; exit: boolean };
     const id = frame.id;
     if (frame.exit) {
       state.set(id, 2);
       const quantity = context.quantities.get(id);
       if (quantity?.HasQuantities !== undefined) {
+        if (!consume(quantity.HasQuantities.length)) return undefined;
         const totals = new Map<CostQuantityDimension, Decimal>();
         for (const child of quantity.HasQuantities) {
           const childValues = memo.get(child);

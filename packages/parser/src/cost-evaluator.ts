@@ -2,43 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { Decimal } from 'decimal.js';
 import { appendCategoryValues, combineCategoryValues } from './cost-category-buckets.js';
 import { combineCosts, type EvaluatedCost } from './cost-evaluation-arithmetic.js';
+import { createContext, decimal, diagnostic, projectUnit,
+  type CostEvaluationContext as Context } from './cost-evaluation-context.js';
 import { costEvaluationResult, unsupportedCostEvaluation } from './cost-evaluation-result.js';
 import { itemQuantities, type QuantityValue } from './cost-quantity-evaluator.js';
-import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
 import { consumeValueEvaluationWork, valueEvaluationBudget,
   valueEvaluationSession } from './cost-value-evaluation-session.js';
-import type { CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
-  CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo } from './cost-types.js';
-interface Context {
-  DecimalValue: Decimal.Constructor;
-  extraction: CostGraphExtraction;
-  values: Map<number, CostValueInfo>;
-  quantities: Map<number, CostQuantityInfo>;
-  units: Map<number, CostUnitInfo>;
-  diagnostics: CostDiagnostic[];
-}
-function diagnostic(context: Context, Code: CostDiagnostic['Code'], Message: string,
-  expressId: number, Severity: CostDiagnostic['Severity'] = 'error'): void {
-  context.diagnostics.push({ Code, Message, Severity, expressId });
-}
-function decimal(value: string, expressId: number, context: Context): Decimal | undefined {
-  try {
-    const parsed = new context.DecimalValue(value);
-    if (parsed.isFinite() && !(parsed.isZero() && !isZeroCostNumericLexeme(value))) return parsed;
-  } catch (error) {
-    diagnostic(context, 'INVALID_NUMBER', `#${expressId} contains an invalid decimal: ${String(error)}`, expressId);
-    return undefined;
-  }
-  diagnostic(context, 'INVALID_NUMBER', `#${expressId} contains a non-finite or underflowed decimal`, expressId);
-  return undefined;
-}
-function projectUnit(dimension: CostQuantityDimension, context: Context): CostUnitInfo | undefined {
-  const id = context.extraction.ProjectUnits[dimension];
-  return id === undefined ? undefined : context.units.get(id);
-}
+import type { CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
+  CostQuantityDimension, CostValueInfo } from './cost-types.js';
 function typedValue(value: CostValueInfo, valueId: number, context: Context): EvaluatedCost {
   const operand = value.AppliedValue;
   if (!operand) return {};
@@ -48,7 +21,7 @@ function typedValue(value: CostValueInfo, valueId: number, context: Context): Ev
     return { invalid: true };
   }
   if (operand.Kind === 'Reference') {
-    const measure = context.extraction.MeasuresWithUnit.find(entry => entry.expressId === operand.expressId);
+    const measure = context.measures.get(operand.expressId);
     const unit = measure ? context.units.get(measure.UnitComponent) : undefined;
     if (!measure || !unit) {
       diagnostic(context, 'MISSING_REFERENCE', `AppliedValue reference #${operand.expressId} cannot be evaluated`, valueId);
@@ -83,7 +56,7 @@ function typedValue(value: CostValueInfo, valueId: number, context: Context): Ev
   if (!amount) return { invalid: true };
   if (operand.Type === 'IFCMONETARYMEASURE') {
     if (!context.extraction.Currency) {
-      if (context.extraction.Diagnostics.some(entry => entry.Code === 'MIXED_CURRENCY')) {
+      if (context.mixedProjectCurrency) {
         diagnostic(context, 'MIXED_CURRENCY', `IfcCostValue #${valueId} has an ambiguous project currency`, valueId);
         return { invalid: true };
       }
@@ -127,7 +100,7 @@ function normalizeUnitBasis(value: CostValueInfo, valueId: number, evaluated: Ev
     diagnostic(context, 'INCOMPATIBLE_UNIT', `UnitBasis on #${valueId} produces a compound cost rate`, valueId);
     return { invalid: true };
   }
-  const basis = context.extraction.MeasuresWithUnit.find(entry => entry.expressId === value.UnitBasis);
+  const basis = context.measures.get(value.UnitBasis);
   const unit = basis ? context.units.get(basis.UnitComponent) : undefined;
   const basisValue = basis ? decimal(basis.ValueComponent, valueId, context) : undefined;
   if (!basis || !basisValue || !unit?.Dimension || !unit.Scale || basis.ValueDimension !== unit.Dimension) {
@@ -229,8 +202,13 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
         diagnostic(context, 'INVALID_LIST', `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner);
         return { invalid: true };
       }
+      const scheduled = new Set<number>();
       for (let index = components.length - 1; index >= 0; index--) {
-        if (!memo.has(components[index])) stack.push({ id: components[index], expanded: false });
+        const component = components[index];
+        if (!memo.has(component) && !scheduled.has(component)) {
+          scheduled.add(component);
+          stack.push({ id: component, expanded: false });
+        }
       }
       continue;
     }
@@ -259,21 +237,6 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
   }
   const evaluated = memo.get(root) ?? { invalid: true };
   return implicitRoot ? extendQuantity(root, evaluated, quantities, context) : evaluated;
-}
-function createContext(extraction: CostGraphExtraction, options?: CostEvaluationOptions): Context {
-  const DecimalValue = Decimal.clone({
-    precision: options?.Precision ?? 34,
-    rounding: Decimal.ROUND_HALF_EVEN,
-    maxE: 6144,
-    minE: -6144,
-  });
-  const values = new Map<number, CostValueInfo>();
-  for (const value of extraction.CostValues) if (value.expressId !== undefined) values.set(value.expressId, value);
-  return {
-    DecimalValue, extraction, values,
-    quantities: new Map(extraction.CostQuantities.map(value => [value.expressId, value])),
-    units: new Map(extraction.Units.map(value => [value.expressId, value])), diagnostics: [],
-  };
 }
 /** Evaluate one IFC4/IFC4X3 applied-value expression using decimal arithmetic. */
 export function evaluateCostValue(extraction: CostGraphExtraction, expressId: number,
@@ -345,7 +308,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       memo.set(frame.id, { invalid: true, byCategory: new Map() });
       continue;
     }
-    const quantities = itemQuantities(item, context);
+    const quantities = itemQuantities(item, context, context.quantityCache);
     const categoryTotals = new Map<string, EvaluatedCost[]>();
     const valueSession = valueEvaluationSession(item.expressId, evaluationBudget);
     const categoryBudgetExhausted = () => diagnostic(context, 'INVALID_LIST',
