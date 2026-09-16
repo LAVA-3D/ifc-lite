@@ -43,12 +43,6 @@ export interface ChartSelection {
   partial: ChartItem[];
 }
 
-function sameSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
-  if (a.size !== b.size) return false;
-  for (const id of a) if (!b.has(id)) return false;
-  return true;
-}
-
 function isSyntheticOther(bucket: { key: string }): boolean {
   return 'isOther' in bucket && bucket.isOther === true;
 }
@@ -158,10 +152,11 @@ export function useChart3DLink(): Chart3DLink {
       const identity = chartBucketIdentity(aggregation, item);
       return identity ? [identity] : [];
     });
-    lastWrittenRef.current = new Set(ids);
     selectChartIds(ids);
+    lastWrittenRef.current = useViewerStore.getState().selectedEntityIds;
     presentChartIds(ids, focusMode);
-    useViewerStore.getState().setChartSlice(ids.length > 0 ? new Set(ids) : null, aggregation.spec.id, buckets);
+    const state = useViewerStore.getState();
+    state.setChartSlice(ids.length > 0 ? new Set(ids) : null, aggregation.spec.id, buckets, state.selectedEntityIds);
   }, [focusMode]);
 
   const clearSelection = useCallback(() => {
@@ -179,7 +174,7 @@ export function useChart3DLink(): Chart3DLink {
     // slice has run. In either case, never erase the newer selection.
     if (state.chartSliceSource !== sourceId || state.chartSlice !== slice || state.chartSliceBuckets !== buckets) return;
     lastWrittenRef.current = null;
-    if (sameSet(state.selectedEntityIds, slice)) state.clearEntitySelection();
+    if (state.chartSelectionWrite === state.selectedEntityIds) state.clearEntitySelection();
     state.setChartSlice(null);
     releaseChartVisibility();
   }, []);
@@ -198,9 +193,10 @@ export function useChart3DLink(): Chart3DLink {
   // shows the whole scope again while the charts highlight what was picked.
   useEffect(() => {
     const written = lastWrittenRef.current;
-    if (written && sameSet(written, selectedEntityIds)) return;
+    if (written === selectedEntityIds) return;
     if (written) {
       lastWrittenRef.current = null;
+      releaseChartVisibility();
       useViewerStore.getState().setChartSlice(null);
     }
   }, [selectedEntityIds]);

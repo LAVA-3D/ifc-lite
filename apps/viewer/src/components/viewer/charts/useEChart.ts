@@ -55,6 +55,12 @@ export function rawIndexResolver(chart: unknown): RawDataIndex {
   };
 }
 
+export function engineDataIndex(chart: unknown, item: ChartItem): number {
+  const engine = chart as EChartDataModel;
+  const series = engine.getModel().getSeriesByIndex(item.seriesIndex);
+  return series?.subType === 'treemap' ? item.dataIndex + 1 : item.dataIndex;
+}
+
 /**
  * Translate ECharts' cumulative selection event into the clicked bucket.
  *
@@ -159,7 +165,11 @@ export const echartsRenderer: ChartRenderer = async () => {
           // The option already carries `selected` per item; `downplay` + `highlight`
           // is the emphasis pass for partially selected buckets.
           chart.dispatchAction({ type: 'downplay' });
-          for (const item of partial) chart.dispatchAction({ type: 'highlight', seriesIndex: item.seriesIndex, dataIndex: item.dataIndex });
+          for (const item of partial) chart.dispatchAction({
+            type: 'highlight',
+            seriesIndex: item.seriesIndex,
+            dataIndex: engineDataIndex(chart, item),
+          });
           void full;
         } finally {
           suppress = false;

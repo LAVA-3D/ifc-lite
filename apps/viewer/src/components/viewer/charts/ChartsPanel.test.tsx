@@ -329,6 +329,11 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     const state = useViewerStore.getState();
     assert.deepEqual([...state.selectedEntityIds].sort(), [GID(44), GID(45), secondOffset + 44, secondOffset + 45]);
     assert.deepEqual([...state.selectedEntitiesSet].sort(), ['m1:44', 'm1:45', 'm2:44', 'm2:45']);
+    await act(async () => { useViewerStore.getState().removeModel('m1'); });
+    await settle();
+    cleanup();
+    assert.equal(useViewerStore.getState().chartVisibilityOwned, null);
+    assert.equal(useViewerStore.getState().ghostExceptEntities, null, 'federation teardown cannot strand surviving ghost IDs after Charts closes');
   });
 
   it('uses the clicked chart bucket colour rather than the headline chart colour', async () => {
@@ -379,6 +384,8 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
 
     const active = useViewerStore.getState().dashboards.find((d) => d.id === useViewerStore.getState().activeDashboardId)!;
     await act(async () => {
+      useViewerStore.getState().setSelectedEntityIds([GID(41)]);
+      useViewerStore.getState().setSelectedEntityId(GID(41));
       useViewerStore.getState().upsertDashboard({
         ...active,
         charts: active.charts.filter(({ id }) => id !== selectedSource),
@@ -391,7 +398,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.equal(state.chartSlice, null);
     assert.equal(state.chartSliceSource, null);
     assert.equal(state.chartSliceBuckets, null);
-    assert.equal(state.selectedEntityIds.size, 0);
+    assert.deepEqual([...state.selectedEntityIds], [GID(41)], 'source deletion cannot erase a newer independent pick');
     assert.equal(state.ghostExceptEntities, null);
     assert.equal(state.chartVisibilityOwned, null);
   });
@@ -598,14 +605,14 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
       summary: { ...clashResult.summary, total: 2, byRule: { 'Rule A': 2 }, bySeverity: { critical: 2, major: 0, minor: 0, info: 0 } },
     };
     await act(async () => {
-      useViewerStore.getState().setSelectedEntityIds([GID(41)]);
-      useViewerStore.getState().setSelectedEntityId(GID(41));
+      useViewerStore.getState().setSelectedEntityIds([GID(43)]);
+      useViewerStore.getState().setSelectedEntityId(GID(43));
       useViewerStore.setState({ clashResult: withoutSelectedRule, clashRunSeq: useViewerStore.getState().clashRunSeq + 1 });
     });
     await settle();
     const preserved = useViewerStore.getState();
     assert.equal(preserved.chartSlice, null, 'a removed selected category cannot retain stale slice ownership');
-    assert.deepEqual([...preserved.selectedEntityIds], [GID(41)], 'stale cleanup cannot erase a newer independent 3D pick');
+    assert.deepEqual([...preserved.selectedEntityIds], [GID(43)], 'equal IDs do not make a newer independent pick chart-owned');
     assert.equal(preserved.ghostExceptEntities, null);
 
     await act(async () => { charts[1].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 0 }] }); });
