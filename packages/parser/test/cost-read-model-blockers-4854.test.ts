@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ColumnarParser } from '../src/columnar-parser.js';
 import { evaluateCostItem, evaluateCostValue } from '../src/cost-evaluator.js';
 import { extractCostOnDemand } from '../src/cost-extractor.js';
-import type { CostValueInfo } from '../src/cost-types.js';
+import type { CostGraphExtraction, CostValueInfo } from '../src/cost-types.js';
 import type { IfcSourceBytes } from '../src/source-bytes.js';
 import { StepTokenizer } from '../src/tokenizer.js';
 
@@ -57,6 +57,15 @@ const PROJECT = [
   '#6=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);',
   '#7=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);',
 ];
+
+function valueGraph(CostValues: CostValueInfo[]): CostGraphExtraction {
+  return {
+    SchemaVersion: 'IFC4', CostSchedules: [], CostItems: [], CostValues,
+    CostQuantities: [], Units: [], MeasuresWithUnit: [], ProjectUnits: {},
+    Relationships: [], Diagnostics: [], HasCostData: true,
+    costSchedules: [], costItems: [], hasCost: true,
+  };
+}
 
 describe('#4854 cost evaluator blocker regressions', () => {
   it('reproduces the buildingSMART canonical cost-composition record', async () => {
@@ -306,6 +315,32 @@ describe('#4854 cost evaluator blocker regressions', () => {
     const dagExtraction = extractCostOnDemand(await parse(step('IFC4', dag)));
     expect(evaluateCostValue(dagExtraction, 27).Amount).toBe('67108864');
   }, 15_000);
+
+  it('memoizes shared value graphs across one cost item without losing reference multiplicity', async () => {
+    const values = ["#10=IFCCOSTVALUE('leaf',$,IFCMONETARYMEASURE(1.),$,$,$,$,$,$,$);"];
+    for (let id = 11; id <= 6009; id++) {
+      values.push(`#${id}=IFCCOSTVALUE('node',$,$,$,$,$,$,$,.ADD.,(#${id - 1}));`);
+    }
+    const repeated = Array.from({ length: 6000 }, () => '#6009').join(',');
+    values.push(`#7000=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(${repeated}),$);`);
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT, ...values])));
+    expect(evaluateCostItem(extraction, 7000)).toMatchObject({ Amount: '6000', Currency: 'CHF' });
+  }, 8_000);
+
+  it('bounds file-controlled applied-value graph work', () => {
+    const values: CostValueInfo[] = [{
+      expressId: 1, Type: 'IfcCostValue', AppliedValue: { Kind: 'Typed', Type: 'IFCNUMERICMEASURE', Value: '1' },
+    }];
+    for (let id = 2; id <= 50_001; id++) {
+      values.push({ expressId: id, Type: 'IfcCostValue', ArithmeticOperator: 'ADD', Components: [id - 1] });
+    }
+    expect(evaluateCostValue(valueGraph(values), 50_001)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([
+        expect.objectContaining({ Code: 'INVALID_LIST', expressId: 50_001 }),
+      ]),
+    });
+  });
 
   it('handles 5k complex-quantity and conversion-unit chains without recursion', async () => {
     const quantities = ["#1=IFCQUANTITYCOUNT('Leaf',$,$,2.,$);"];
@@ -1055,6 +1090,27 @@ describe('#4854 cost evaluator blocker regressions', () => {
       expect.objectContaining({ Code: 'INVALID_LIST', expressId: 33 }),
       expect.objectContaining({ Code: 'INVALID_LIST', expressId: 35 }),
     ]));
+  });
+
+  it.each(['IFC4', 'IFC4X3_ADD2'])('validates cost-relevant %s control and product endpoints', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      "#10=IFCCOSTVALUE('Value',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,(#10),$);",
+      "#30=IFCRELASSIGNSTOCONTROL('control-dangling',$,$,$,(#20),$,#999);",
+      "#31=IFCRELASSIGNSTOCONTROL('control-wrong',$,$,$,(#20),$,#3);",
+      "#32=IFCRELASSIGNSTOCONTROL('related-dangling',$,$,$,(#20,#998),$,#20);",
+      "#33=IFCRELASSIGNSTOPRODUCT('product-dangling',$,$,$,(#20),$,#999);",
+      "#34=IFCRELASSIGNSTOPRODUCT('product-wrong',$,$,$,(#20),$,#3);",
+      "#35=IFCRELASSIGNSTOPRODUCT('product-related-dangling',$,$,$,(#20,#998),$,#20);",
+    ])));
+    for (const expressId of [30, 31, 32, 33, 34, 35]) {
+      expect(extraction.Relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ expressId, InvalidReferences: true }),
+      ]));
+      expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ Code: 'INVALID_LIST', expressId }),
+      ]));
+    }
   });
 
   it('handles file-controlled applied-value component counts without argument-stack overflow', async () => {

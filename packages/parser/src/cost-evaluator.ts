@@ -4,8 +4,10 @@
 
 import { Decimal } from 'decimal.js';
 import { combineCosts, type EvaluatedCost } from './cost-evaluation-arithmetic.js';
+import { costEvaluationResult, unsupportedCostEvaluation } from './cost-evaluation-result.js';
 import { itemQuantities, type QuantityValue } from './cost-quantity-evaluator.js';
 import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
+import { valueEvaluationSession } from './cost-value-evaluation-session.js';
 import type {
   CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
   CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo,
@@ -191,12 +193,20 @@ function extendQuantity(
   }
   return { ...evaluated, amount, quantityApplied, rateDimension: undefined };
 }
+
 function evaluateValueGraph(root: number, context: Context, quantities: QuantityValue[], implicitRoot: boolean,
-  categoryTotals?: Map<string, EvaluatedCost[]>, applyUnitBasis = true): EvaluatedCost {
-  const memo = new Map<number, EvaluatedCost>();
-  const state = new Map<number, 1 | 2>();
+  categoryTotals?: Map<string, EvaluatedCost[]>, applyUnitBasis = true,
+  session = valueEvaluationSession(root)): EvaluatedCost {
+  if (session.exhausted) return { invalid: true };
+  const { memo, state } = session;
   const stack: Array<{ id: number; expanded: boolean }> = [{ id: root, expanded: false }];
   while (stack.length > 0) {
+    if (++session.work > 100_000) {
+      session.exhausted = true;
+      diagnostic(context, 'INVALID_LIST',
+        `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner);
+      return { invalid: true };
+    }
     const frame = stack.pop() as { id: number; expanded: boolean };
     if (memo.has(frame.id)) continue;
     const value = context.values.get(frame.id);
@@ -263,29 +273,13 @@ function createContext(extraction: CostGraphExtraction, options?: CostEvaluation
   };
 }
 
-function unsupported(extraction: CostGraphExtraction, expressId: number): CostEvaluationResult | undefined {
-  if (extraction.SchemaVersion !== 'IFC2X3' && extraction.SchemaVersion !== 'IFC5') return undefined;
-  return { expressId, Diagnostics: [{
-    Code: extraction.SchemaVersion === 'IFC2X3' ? 'IFC2X3_PARTIAL_READ' : 'UNSUPPORTED_SCHEMA',
-    Message: `${extraction.SchemaVersion} cost values are preserved for inspection but not evaluated`,
-    Severity: 'warning', expressId,
-  }] };
-}
-
-function result(expressId: number, value: EvaluatedCost, diagnostics: CostDiagnostic[]): CostEvaluationResult {
-  return {
-    expressId, Amount: value.invalid ? undefined : value.amount?.toString(), Currency: value.currency,
-    Dimension: value.rateDimension ?? value.dimension, QuantityApplied: value.quantityApplied?.toString(), Diagnostics: diagnostics,
-  };
-}
-
 /** Evaluate one IFC4/IFC4X3 applied-value expression using decimal arithmetic. */
 export function evaluateCostValue(extraction: CostGraphExtraction, expressId: number,
   options?: CostEvaluationOptions): CostEvaluationResult {
-  const refused = unsupported(extraction, expressId);
+  const refused = unsupportedCostEvaluation(extraction, expressId);
   if (refused) return refused;
   const context = createContext(extraction, options);
-  return result(expressId, evaluateValueGraph(expressId, context, [], false), context.diagnostics);
+  return costEvaluationResult(expressId, evaluateValueGraph(expressId, context, [], false), context.diagnostics);
 }
 
 interface ItemResult extends EvaluatedCost { byCategory: Map<string, EvaluatedCost[]> }
@@ -293,7 +287,7 @@ interface ItemResult extends EvaluatedCost { byCategory: Map<string, EvaluatedCo
 /** Evaluate a cost item, including IFC category-based totals of nested cost items. */
 export function evaluateCostItem(extraction: CostGraphExtraction, expressId: number,
   options?: CostEvaluationOptions): CostEvaluationResult {
-  const refused = unsupported(extraction, expressId);
+  const refused = unsupportedCostEvaluation(extraction, expressId);
   if (refused) return refused;
   const context = createContext(extraction, options);
   const items = new Map(extraction.CostItems.map(item => [item.expressId, item]));
@@ -363,6 +357,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
       }
     }
     const entries: Array<{ category?: string; evaluated: EvaluatedCost }> = [];
+    const valueSession = valueEvaluationSession(item.expressId);
     for (const valueId of item.CostValues ?? []) {
       const value = context.values.get(valueId);
       if (!value) {
@@ -379,7 +374,7 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
         entries.push({ category: value.Category, evaluated: quantities === undefined
           ? { invalid: true }
           : evaluateValueGraph(valueId, context, quantities, quantities.length > 0,
-              categoryTotals, quantities.length > 0) });
+              categoryTotals, quantities.length > 0, valueSession) });
       }
     }
     if (entries.length === 0) {
@@ -395,5 +390,5 @@ export function evaluateCostItem(extraction: CostGraphExtraction, expressId: num
     const quantityApplied = entries.find(entry => entry.evaluated.quantityApplied)?.evaluated.quantityApplied;
     memo.set(frame.id, { ...combined, quantityApplied, byCategory });
   }
-  return result(expressId, memo.get(expressId) ?? { invalid: true }, context.diagnostics);
+  return costEvaluationResult(expressId, memo.get(expressId) ?? { invalid: true }, context.diagnostics);
 }

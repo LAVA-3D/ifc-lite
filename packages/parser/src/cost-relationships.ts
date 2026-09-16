@@ -36,7 +36,9 @@ function targetIs(reader: CostEntityReader, expressId: number, roots: ReadonlySe
 }
 
 const OBJECT_DEFINITION_ROOT = new Set(['IFCOBJECTDEFINITION']);
+const CONTROL_ROOT = new Set(['IFCCONTROL']);
 const PROCESS_SELECT_ROOTS = new Set(['IFCPROCESS', 'IFCTYPEPROCESS']);
+const PRODUCT_SELECT_ROOTS = new Set(['IFCPRODUCT', 'IFCTYPEPRODUCT']);
 
 /** Preserve every cost-relevant edge with its original relationship identity. */
 export function extractCostRelationships(
@@ -55,7 +57,9 @@ export function extractCostRelationships(
     const candidateControl = asRef(a[6]);
     if (!itemIds.has(candidateControl ?? -1) && !scheduleIds.has(candidateControl ?? -1) &&
         !candidates.some(id => itemIds.has(id))) continue;
-    const InvalidReferences = related.invalid || control.invalid;
+    const InvalidReferences = related.invalid || control.invalid ||
+      related.value.some(id => !targetIs(reader, id, OBJECT_DEFINITION_ROOT)) ||
+      (control.value !== undefined && !targetIs(reader, control.value, CONTROL_ROOT));
     const RelatedObjects = related.value;
     const RelatingControl = control.value;
     result.push({ ...base(expressId, 'IfcRelAssignsToControl', a), RelatedObjects, RelatingControl,
@@ -69,7 +73,9 @@ export function extractCostRelationships(
     const related = references(reader, expressId, 4);
     const product = reference(reader, expressId, 6);
     if ((asRefList(a[4]) ?? []).some(id => itemIds.has(id))) {
-      const InvalidReferences = related.invalid || product.invalid;
+      const InvalidReferences = related.invalid || product.invalid ||
+        related.value.some(id => !targetIs(reader, id, OBJECT_DEFINITION_ROOT)) ||
+        (product.value !== undefined && !targetIs(reader, product.value, PRODUCT_SELECT_ROOTS));
       result.push({ ...base(expressId, 'IfcRelAssignsToProduct', a), RelatedObjects: related.value,
         RelatingProduct: product.value, InvalidReferences: InvalidReferences || undefined });
     }
