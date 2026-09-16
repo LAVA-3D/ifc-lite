@@ -412,6 +412,24 @@ describe('#4854 cost evaluator blocker regressions', () => {
     });
   });
 
+  it('charges repeated component operands in cold and warmed evaluation order', async () => {
+    const repeated = Array.from({ length: 100_000 }, () => '#10').join(',');
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [
+      "#10=IFCCOSTVALUE('leaf',$,IFCNUMERICMEASURE(1.),$,$,$,$,$,$,$);",
+      `#11=IFCCOSTVALUE('sum',$,$,$,$,$,$,$,.ADD.,(${repeated}));`,
+      "#20=IFCCOSTITEM('cold',$,'Cold',$,$,'C',$,(#11),$);",
+      "#21=IFCCOSTITEM('warmed',$,'Warmed',$,$,'W',$,(#10,#11),$);",
+    ])));
+    for (const expressId of [20, 21]) {
+      expect(evaluateCostItem(extraction, expressId)).toMatchObject({
+        Amount: undefined,
+        Diagnostics: expect.arrayContaining([
+          expect.objectContaining({ Code: 'INVALID_LIST', expressId }),
+        ]),
+      });
+    }
+  }, 10_000);
+
   it('handles 5k complex-quantity and conversion-unit chains without recursion', async () => {
     const quantities = ["#1=IFCQUANTITYCOUNT('Leaf',$,$,2.,$);"];
     for (let id = 2; id <= 5000; id++) {

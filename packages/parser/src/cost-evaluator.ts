@@ -11,7 +11,6 @@ import { isZeroCostNumericLexeme } from './cost-step-lexemes.js';
 import { consumeValueEvaluationWork, valueEvaluationSession } from './cost-value-evaluation-session.js';
 import type { CostDiagnostic, CostEvaluationOptions, CostEvaluationResult, CostGraphExtraction,
   CostQuantityDimension, CostQuantityInfo, CostUnitInfo, CostValueInfo } from './cost-types.js';
-
 interface Context {
   DecimalValue: Decimal.Constructor;
   extraction: CostGraphExtraction;
@@ -220,8 +219,13 @@ function evaluateValueGraph(root: number, context: Context, quantities: Quantity
       }
       state.set(frame.id, 1);
       stack.push({ id: frame.id, expanded: true });
-      for (const child of [...(value.Components ?? [])].reverse()) {
-        if (!memo.has(child)) stack.push({ id: child, expanded: false });
+      const components = value.Components ?? [];
+      if (!consumeValueEvaluationWork(session, components.length)) {
+        diagnostic(context, 'INVALID_LIST', `IfcAppliedValue graph on #${session.owner} exceeds the evaluation budget`, session.owner);
+        return { invalid: true };
+      }
+      for (let index = components.length - 1; index >= 0; index--) {
+        if (!memo.has(components[index])) stack.push({ id: components[index], expanded: false });
       }
       continue;
     }
