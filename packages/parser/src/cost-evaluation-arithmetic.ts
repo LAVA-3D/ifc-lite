@@ -56,7 +56,7 @@ function multipliedRateDimension(
 
 function divisionDimensions(
   operands: EvaluatedCost[], valueId: number, report: CostDiagnosticSink,
-): { monetary: boolean } | false {
+): Pick<EvaluatedCost, 'currency' | 'dimension' | 'rateDimension' | 'monetary'> | false {
   let moneyExponent = 0;
   const dimensions = new Map<CostQuantityDimension, number>();
   operands.forEach((operand, index) => {
@@ -74,18 +74,14 @@ function divisionDimensions(
   const quantity = moneyExponent === 0 && nonzero.length === 1 && nonzero[0][1] === 1;
   const money = moneyExponent === 1 && nonzero.length === 0;
   const rate = moneyExponent === 1 && nonzero.length === 1 && nonzero[0][1] === -1;
-  if (scalar || quantity || money || rate) return { monetary: money || rate };
+  if (scalar) return { dimension: 'ratio', monetary: false };
+  if (quantity) return { dimension: nonzero[0][0], monetary: false };
+  if (money) return { currency: operands[0].currency, monetary: true };
+  if (rate) return {
+    currency: operands[0].currency, rateDimension: nonzero[0][0], monetary: true,
+  };
   report('INCOMPATIBLE_UNIT', 'Division produces an unsupported inverse or compound dimension', valueId);
   return false;
-}
-
-function dividedRateDimension(operands: EvaluatedCost[]): CostQuantityDimension | undefined {
-  let dimension = operands[0].rateDimension;
-  for (const divisor of operands.slice(1)) {
-    if (divisor.rateDimension === undefined) continue;
-    if (dimension === divisor.rateDimension) dimension = undefined;
-  }
-  return dimension;
 }
 
 function multiplyIdentity(operands: EvaluatedCost[]): Pick<EvaluatedCost, 'currency' | 'dimension'> | undefined {
@@ -194,7 +190,6 @@ export function combineCosts(
       report('INCOMPATIBLE_UNIT', 'Division produces an unsupported inverse or compound unit', valueId);
       return { invalid: true };
     }
-    const rateDimension = dividedRateDimension(operands);
     let amount = amounts[0];
     for (const next of amounts.slice(1)) {
       const divided = amount.div(next);
@@ -205,7 +200,7 @@ export function combineCosts(
       amount = divided;
     }
     return finite({
-      amount, ...identity, rateDimension, monetary: dimensions.monetary,
+      amount, ...dimensions,
       quantityApplied: operands.find(entry => entry.quantityApplied)?.quantityApplied,
     }, valueId, report);
   }

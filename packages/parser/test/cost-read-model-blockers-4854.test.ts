@@ -326,6 +326,24 @@ describe('#4854 cost evaluator blocker regressions', () => {
     });
   });
 
+  it.each(['IFC4', 'IFC4X3_ADD2'])('preserves dimensions after monetary cancellation in %s', async (schema) => {
+    const extraction = extractCostOnDemand(await parse(step(schema, [...PROJECT,
+      '#10=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(1.),#3);',
+      "#20=IFCCOSTVALUE('Money',$,IFCMONETARYMEASURE(10.),$,$,$,$,$,$,$);",
+      "#21=IFCCOSTVALUE('Rate',$,IFCMONETARYMEASURE(2.),#10,$,$,$,$,$,$);",
+      "#22=IFCCOSTVALUE('Length',$,$,$,$,$,$,$,.DIVIDE.,(#20,#21));",
+      "#23=IFCCOSTVALUE('Ratio',$,IFCRATIOMEASURE(1.),$,$,$,$,$,$,$);",
+      "#24=IFCCOSTVALUE('Invalid sum',$,$,$,$,$,$,$,.ADD.,(#22,#23));",
+    ])));
+    expect(evaluateCostValue(extraction, 22)).toMatchObject({
+      Amount: '5', Currency: undefined, Dimension: 'length', Diagnostics: [],
+    });
+    expect(evaluateCostValue(extraction, 24)).toMatchObject({
+      Amount: undefined,
+      Diagnostics: expect.arrayContaining([expect.objectContaining({ Code: 'INCOMPATIBLE_UNIT' })]),
+    });
+  });
+
   it('withholds totals for dangling, negative, or overflowing quantities', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
       "#10=IFCQUANTITYAREA('Valid',$,$,2.,$);",
