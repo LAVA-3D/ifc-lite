@@ -34,7 +34,7 @@ function typedValue(value: CostValueInfo, valueId: number, context: Context): Ev
         diagnostic(context, 'INCOMPATIBLE_UNIT', `Measure #${operand.expressId} is not monetary`, valueId);
         return { invalid: true };
       }
-      return { amount, currency: unit.Currency };
+      return { amount, currency: unit.Currency, monetary: true };
     }
     if (!unit.Dimension || unit.Scale === undefined) {
       diagnostic(context, 'UNSUPPORTED_UNIT', `Unit #${unit.expressId} cannot be evaluated`, valueId);
@@ -62,7 +62,7 @@ function typedValue(value: CostValueInfo, valueId: number, context: Context): Ev
       }
       diagnostic(context, 'MISSING_CURRENCY', `IfcCostValue #${valueId} has no project currency`, valueId, 'warning');
     }
-    return { amount, currency: context.extraction.Currency };
+    return { amount, currency: context.extraction.Currency, monetary: true };
   }
   const dimensions: Record<string, CostQuantityDimension | 'ratio'> = {
     IFCLENGTHMEASURE: 'length', IFCAREAMEASURE: 'area', IFCVOLUMEMEASURE: 'volume',

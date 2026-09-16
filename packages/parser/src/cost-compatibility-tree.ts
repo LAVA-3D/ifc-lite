@@ -27,21 +27,22 @@ export function compatibilityTreeBuilder(
     const source = values.get(root);
     if (!source) return undefined;
     visiting.add(root);
-    const components = source.Components?.flatMap(id => {
-      const child = values.get(id);
-      if (!child || visiting.has(id)) return [];
+    const components: CostValueInfo[] = [];
+    for (const id of source.Components ?? []) {
       if (remaining <= 0) {
         reportBudget(root);
-        return [];
+        break;
       }
       remaining--;
+      const child = values.get(id);
+      if (!child || visiting.has(id)) continue;
       const { components: omitted, ...copy } = child;
       void omitted;
       const nested = build(id, depth + 1, visiting);
-      return [{ ...copy, ...(nested?.length ? { components: nested } : {}) }];
-    });
+      components.push({ ...copy, ...(nested?.length ? { components: nested } : {}) });
+    }
     visiting.delete(root);
-    return components?.length ? components : undefined;
+    return components.length ? components : undefined;
   };
   return build;
 }
