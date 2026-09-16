@@ -46,8 +46,8 @@ export interface ChartSlice {
   chartSliceSource: string | null;
   /** Exact buckets that produced `chartSlice`; keys survive cross-filter reordering. */
   chartSliceBuckets: ChartBucketIdentity[] | null;
-  /** Exact selection Set installed by the chart; identity is the ownership token. */
-  chartSelectionWrite: Set<number> | null;
+  /** Selection revision installed by the chart; covers both set and primary channels. */
+  chartSelectionRevision: number | null;
   /** The panel's claim on the isolate/ghost channel, released only if still owned. */
   chartVisibilityOwned: VisibilityOwnership;
 
@@ -58,7 +58,7 @@ export interface ChartSlice {
   setChartPanelVisible: (visible: boolean) => void;
   setChartFocusMode: (mode: ChartFocusMode) => void;
   setChartColorIn3D: (on: boolean) => void;
-  setChartSlice: (slice: Set<number> | null, source?: string | null, buckets?: readonly ChartBucketIdentity[] | null, selectionWrite?: Set<number> | null) => void;
+  setChartSlice: (slice: Set<number> | null, source?: string | null, buckets?: readonly ChartBucketIdentity[] | null, selectionRevision?: number | null) => void;
   setChartVisibilityOwned: (owned: VisibilityOwnership) => void;
 }
 
@@ -71,7 +71,7 @@ export const createChartSlice: StateCreator<ChartSlice, [], [], ChartSlice> = (s
   chartSlice: null,
   chartSliceSource: null,
   chartSliceBuckets: null,
-  chartSelectionWrite: null,
+  chartSelectionRevision: null,
   chartVisibilityOwned: null,
 
   setDashboards: (dashboards) => {
@@ -94,11 +94,11 @@ export const createChartSlice: StateCreator<ChartSlice, [], [], ChartSlice> = (s
   setChartPanelVisible: (chartPanelVisible) => set({ chartPanelVisible }),
   setChartFocusMode: (chartFocusMode) => set({ chartFocusMode }),
   setChartColorIn3D: (chartColorIn3D) => set({ chartColorIn3D }),
-  setChartSlice: (chartSlice, source = null, buckets = null, selectionWrite = null) => set({
+  setChartSlice: (chartSlice, source = null, buckets = null, selectionRevision = null) => set({
     chartSlice,
     chartSliceSource: chartSlice ? source : null,
     chartSliceBuckets: chartSlice && buckets ? [...buckets] : null,
-    chartSelectionWrite: chartSlice ? selectionWrite : null,
+    chartSelectionRevision: chartSlice ? selectionRevision : null,
   }),
   setChartVisibilityOwned: (chartVisibilityOwned) => set({ chartVisibilityOwned }),
 });
@@ -111,17 +111,17 @@ export const createChartSlice: StateCreator<ChartSlice, [], [], ChartSlice> = (s
  */
 export const chartTeardown = defineSliceTeardown(
   'chartSlice',
-  ['chartPanelVisible', 'chartSlice', 'chartSliceSource', 'chartSliceBuckets', 'chartSelectionWrite', 'chartVisibilityOwned'],
+  ['chartPanelVisible', 'chartSlice', 'chartSliceSource', 'chartSliceBuckets', 'chartSelectionRevision', 'chartVisibilityOwned'],
   {
-    'session-reset': () => ({ chartPanelVisible: false, chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionWrite: null, chartVisibilityOwned: null }),
+    'session-reset': () => ({ chartPanelVisible: false, chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null }),
     'model-removed': ({ isStale }, state) => {
       const slice = state.chartSlice;
       if (!slice) return {};
       const kept = new Set<number>();
       for (const id of slice) if (!isStale(id)) kept.add(id);
       if (kept.size === slice.size) return {};
-      return kept.size > 0 ? { chartSlice: kept } : { chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionWrite: null };
+      return kept.size > 0 ? { chartSlice: kept } : { chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null };
     },
-    'all-models-cleared': () => ({ chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionWrite: null, chartVisibilityOwned: null }),
+    'all-models-cleared': () => ({ chartSlice: null, chartSliceSource: null, chartSliceBuckets: null, chartSelectionRevision: null, chartVisibilityOwned: null }),
   },
 );

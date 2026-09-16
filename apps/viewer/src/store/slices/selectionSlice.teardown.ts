@@ -30,6 +30,7 @@ export const selectionTeardown = defineSliceTeardown(
   [
     'selectedEntityId',
     'selectedEntityIds',
+    'selectionRevision',
     'selectedStoreys',
     'activeStorey',
     'selectedEntity',
@@ -38,10 +39,11 @@ export const selectionTeardown = defineSliceTeardown(
     'selectedModelId',
   ],
   {
-    'session-reset': () => ({
+    'session-reset': (_scope, state) => ({
       // Selection (legacy)
       selectedEntityId: null,
       selectedEntityIds: new Set<number>(),
+      selectionRevision: (state.selectionRevision ?? 0) + 1,
       selectedStoreys: new Set<number>(),
       // Drop the shared active storey — it references the outgoing model, so
       // a new file must not inherit a stale storey for Solo / Space Sketch.
@@ -64,9 +66,10 @@ export const selectionTeardown = defineSliceTeardown(
     // halves, so this was purely a gap in `clearAllModels`'s own path
     // (`GeoreferencingPanel.tsx`'s `reloadModelsForAlignment`, which calls
     // `clearAllModels()` without `resetViewerState()`).
-    'all-models-cleared': () => ({
+    'all-models-cleared': (_scope, state) => ({
       selectedEntityId: null,
       selectedEntityIds: new Set<number>(),
+      selectionRevision: (state.selectionRevision ?? 0) + 1,
       selectedStoreys: new Set<number>(),
       activeStorey: null,
       selectedEntity: null,
@@ -118,6 +121,9 @@ export const selectionTeardown = defineSliceTeardown(
         (priorSelectedEntityId != null && isStale(priorSelectedEntityId));
 
       return {
+        ...(refsTouched || idsTouched
+          ? { selectionRevision: (state.selectionRevision ?? 0) + 1 }
+          : {}),
         ...(refsTouched
           ? {
               selectedEntity:

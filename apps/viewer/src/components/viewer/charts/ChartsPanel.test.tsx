@@ -12,7 +12,7 @@
 import '@/test/setup-dom.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { act, useRef } from 'react';
+import { act, useEffect, useRef } from 'react';
 import { IfcParser, type IfcDataStore } from '@ifc-lite/parser';
 import type { Clash, ClashResult } from '@ifc-lite/clash';
 import type { Renderer } from '@ifc-lite/renderer';
@@ -22,6 +22,7 @@ import type { ReportPdfSeams } from '@/lib/export/report/generate-report-pdf.js'
 import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-selection.js';
 import { useOverlayCompositor } from '@/components/viewer/schedule/useOverlayCompositor.js';
 import { useColorOverlaySync } from '@/components/viewer/useColorOverlaySync.js';
+import { useIDS, type UseIDSResult } from '@/hooks/useIDS.js';
 import { modelOverviewDashboard } from '@/lib/charts/presets.js';
 import { useViewerStore } from '@/store/index.js';
 import type { FederatedModel } from '@/store/types.js';
@@ -126,6 +127,12 @@ function ColorSceneProbe({ applied }: { applied: number[][] }) {
   return null;
 }
 
+function IDSFocusProbe({ ready }: { ready: (focus: UseIDSResult['focusEntity']) => void }) {
+  const { focusEntity } = useIDS();
+  useEffect(() => ready(focusEntity), [focusEntity, ready]);
+  return null;
+}
+
 function barData(option: EChartsOptionObject): Array<[string, number, boolean]> {
   const series = option.series as Array<{ data: Array<{ name: string; value: number; selected: boolean }> }>;
   return series[0].data.map((d) => [d.name, d.value, d.selected]);
@@ -149,6 +156,8 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
       chartSlice: null,
       chartSliceSource: null,
       chartSliceBuckets: null,
+      chartSelectionRevision: null,
+      selectionRevision: 0,
       chartVisibilityOwned: null,
       clashResult: null,
       clashGroups: null,
@@ -271,7 +280,7 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
 
     // A pick in the viewport: two of the three walls.
     await act(async () => {
-      useViewerStore.setState({ selectedEntityIds: new Set([GID(41), GID(42)]) });
+      useViewerStore.getState().setSelectedEntityIds([GID(41), GID(42)]);
     });
     await settle();
     assert.equal(useViewerStore.getState().chartSlice, null, 'a foreign pick drops the chart slice');
@@ -401,6 +410,67 @@ describe('ChartsPanel over a parsed model (#3944)', () => {
     assert.deepEqual([...state.selectedEntityIds], [GID(41)], 'source deletion cannot erase a newer independent pick');
     assert.equal(state.ghostExceptEntities, null);
     assert.equal(state.chartVisibilityOwned, null);
+  });
+
+  it('preserves a newer primary-only IDS focus when its source card is deleted (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    let focusEntity: UseIDSResult['focusEntity'] | null = null;
+    const ready = (focus: UseIDSResult['focusEntity']): void => { focusEntity = focus; };
+    render(<><IDSFocusProbe ready={ready} /><ChartsPanel renderer={renderer} /></>);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const selectedSource = useViewerStore.getState().chartSliceSource;
+    const active = useViewerStore.getState().dashboards.find((d) => d.id === useViewerStore.getState().activeDashboardId)!;
+    assert.ok(selectedSource);
+    assert.ok(focusEntity);
+
+    await act(async () => {
+      focusEntity!('m1', 41, 'highlight', false);
+      useViewerStore.getState().upsertDashboard({
+        ...active,
+        charts: active.charts.filter(({ id }) => id !== selectedSource),
+        layout: active.layout.filter(({ chartId }) => chartId !== selectedSource),
+      });
+    });
+    await settle();
+
+    const state = useViewerStore.getState();
+    assert.equal(state.selectedEntityId, 41, 'stale chart cleanup cannot erase the newer IDS primary');
+    assert.deepEqual([...state.selectedEntityIds].sort(), [GID(44), GID(45)], 'primary-only focus leaves the existing set intact');
+    assert.equal(state.chartSlice, null);
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.ghostExceptEntities, null);
+  });
+
+  it('reconciles same-ID independent selection after Charts closes and reopens (#4832)', async () => {
+    const { renderer, charts } = recordingRenderer();
+    render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => { charts[0].events.onSelect({ items: [{ seriesIndex: 0, dataIndex: 1 }] }); });
+    await settle();
+    const doorIds = [...useViewerStore.getState().selectedEntityIds];
+    assert.deepEqual(doorIds.sort(), [GID(44), GID(45)]);
+
+    cleanup();
+    const reopened = render(<ChartsPanel renderer={renderer} />);
+    await settle();
+    await act(async () => {
+      // A genuinely new ordinary selection may contain the exact same IDs.
+      useViewerStore.getState().setSelectedEntityIds(doorIds);
+      useViewerStore.getState().setSelectedEntityId(GID(45));
+    });
+    await settle();
+
+    const state = useViewerStore.getState();
+    assert.equal(state.chartSlice, null, 'store provenance, not a mount-local ref, releases the stale chart slice');
+    assert.equal(state.chartSliceSource, null);
+    assert.deepEqual([...state.selectedEntityIds].sort(), [GID(44), GID(45)]);
+    assert.equal(state.selectedEntityId, GID(45));
+    assert.equal(state.chartVisibilityOwned, null);
+    assert.equal(state.ghostExceptEntities, null);
+    const subtitles = [...reopened.querySelectorAll('[data-chart-subtitle]')].map((el) => el.textContent);
+    assert.ok(subtitles.every((text) => /5 elements$/.test(text ?? '')), subtitles.join(' | '));
   });
 
   it('does not restore cached chart paint after every model is cleared (#4832)', async () => {

@@ -10,20 +10,20 @@
  * `selectExact` contract, `apps/viewer/AGENTS.md`), then presents them by the
  * panel's focus mode: `ghost` translucents everything else, `isolate` hides
  * it, `highlight` only outlines. Ghost / isolate are the shared channels, so
- * the panel records a value-matched ownership claim (`chartVisibilityOwned`)
+ * the panel records an identity-matched ownership claim (`chartVisibilityOwned`)
  * and releases only what it installed, like clash and the basket. Ids go
  * through `resolvePresentationIds` so a geometry-less assembly in a bucket
  * still lights up its parts.
  *
  * 3D → chart: the renderer highlight set (`selectedEntityIds`) is the channel
- * every 3D pick writes, so that is what the panel reads back; a write this
- * hook made itself is recognised by value and not echoed into a second pass.
+ * every 3D pick writes, so that is what the panel reads back. A store-level
+ * revision records chart ownership across both selection channels and mounts.
  *
  * Colour in 3D: the active chart's buckets become an overlay layer between
  * the lens (50) and a running 4D playback (100), so a chart is a deliberate,
  * temporary colouring that an animation still wins over.
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { idsForItems, itemsForIds, type Aggregation, type ChartItem } from '@ifc-lite/charts';
 import { hexToRgba } from '@ifc-lite/lens';
 import { useViewerStore } from '@/store';
@@ -143,8 +143,9 @@ export interface Chart3DLink {
 export function useChart3DLink(): Chart3DLink {
   const focusMode = useViewerStore((s) => s.chartFocusMode);
   const selectedEntityIds = useViewerStore((s) => s.selectedEntityIds);
-  // The selection this hook last wrote; a matching store value is our own echo.
-  const lastWrittenRef = useRef<Set<number> | null>(null);
+  const selectionRevision = useViewerStore((s) => s.selectionRevision);
+  const chartSelectionRevision = useViewerStore((s) => s.chartSelectionRevision);
+  const chartSlice = useViewerStore((s) => s.chartSlice);
 
   const selectItems = useCallback((aggregation: Aggregation, items: readonly ChartItem[]) => {
     const ids = [...idsForItems(aggregation, items)];
@@ -153,14 +154,12 @@ export function useChart3DLink(): Chart3DLink {
       return identity ? [identity] : [];
     });
     selectChartIds(ids);
-    lastWrittenRef.current = useViewerStore.getState().selectedEntityIds;
     presentChartIds(ids, focusMode);
     const state = useViewerStore.getState();
-    state.setChartSlice(ids.length > 0 ? new Set(ids) : null, aggregation.spec.id, buckets, state.selectedEntityIds);
+    state.setChartSlice(ids.length > 0 ? new Set(ids) : null, aggregation.spec.id, buckets, state.selectionRevision);
   }, [focusMode]);
 
   const clearSelection = useCallback(() => {
-    lastWrittenRef.current = null;
     const state = useViewerStore.getState();
     state.clearEntitySelection();
     state.setChartSlice(null);
@@ -173,8 +172,7 @@ export function useChart3DLink(): Chart3DLink {
     // pick may have replaced selectedEntityIds before the hook that drops the
     // slice has run. In either case, never erase the newer selection.
     if (state.chartSliceSource !== sourceId || state.chartSlice !== slice || state.chartSliceBuckets !== buckets) return;
-    lastWrittenRef.current = null;
-    if (state.chartSelectionWrite === state.selectedEntityIds) state.clearEntitySelection();
+    if (state.chartSelectionRevision === state.selectionRevision) state.clearEntitySelection();
     state.setChartSlice(null);
     releaseChartVisibility();
   }, []);
@@ -189,23 +187,22 @@ export function useChart3DLink(): Chart3DLink {
     return itemsForIds(aggregation, selectedEntityIds);
   }, [selectedEntityIds]);
 
-  // A 3D pick that is NOT our own write drops the slice: the dashboard then
-  // shows the whole scope again while the charts highlight what was picked.
+  // A 3D pick that is NOT our own complete selection write drops the slice.
+  // Store-level revisions survive closing/reopening Charts and cover primary-
+  // only writes (for example IDS focus), unlike Set identity or a hook ref.
   useEffect(() => {
-    const written = lastWrittenRef.current;
-    if (written === selectedEntityIds) return;
-    if (written) {
-      lastWrittenRef.current = null;
+    if (chartSlice && chartSelectionRevision !== selectionRevision) {
       releaseChartVisibility();
       useViewerStore.getState().setChartSlice(null);
     }
-  }, [selectedEntityIds]);
+  }, [chartSlice, chartSelectionRevision, selectionRevision]);
 
   // When the focus mode changes while a chart selection is on screen, re-present it.
   useEffect(() => {
-    const written = lastWrittenRef.current;
-    if (written && written.size > 0) presentChartIds([...written], focusMode);
-  }, [focusMode]);
+    if (chartSlice && chartSelectionRevision === selectionRevision && chartSlice.size > 0) {
+      presentChartIds([...chartSlice], focusMode);
+    }
+  }, [chartSlice, chartSelectionRevision, focusMode, selectionRevision]);
 
   // Release the presentation when the panel goes away.
   useEffect(() => () => releaseChartVisibility(), []);

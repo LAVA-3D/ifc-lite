@@ -39,14 +39,15 @@ function snapshotSelectionState(): SelectionSnapshot {
 }
 
 function restoreSelectionState(snapshot: SelectionSnapshot): void {
-  useViewerStore.setState({
+  useViewerStore.setState((state) => ({
     selectedEntityId: snapshot.selectedEntityId,
     selectedEntityIds: new Set(snapshot.selectedEntityIds),
     selectedEntity: snapshot.selectedEntity ? { ...snapshot.selectedEntity } : null,
     selectedEntitiesSet: new Set(snapshot.selectedEntitiesSet),
     selectedEntities: snapshot.selectedEntities.map((ref) => ({ ...ref })),
     selectedModelId: snapshot.selectedModelId,
-  });
+    selectionRevision: state.selectionRevision + 1,
+  }));
 }
 
 async function captureCanvasThumbnail(): Promise<string | null> {

@@ -110,6 +110,7 @@ export function restoreUiSnapshot(
         selectedModelId: null,
         selectedStoreys: new Set<number>(),
         activeStorey: null,
+        selectionRevision: store.getState().selectionRevision + 1,
       });
     } else {
       store.setState({
@@ -121,6 +122,7 @@ export function restoreUiSnapshot(
         selectedModelId: snapshot.selection.selectedModelId,
         selectedStoreys: new Set(snapshot.selectedStoreys),
         activeStorey: snapshot.activeStorey,
+        selectionRevision: store.getState().selectionRevision + 1,
       });
     }
   }
