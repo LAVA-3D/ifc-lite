@@ -81,6 +81,11 @@ export interface ResolvedMeasureWithUnit {
   ValueDimension?: CostQuantityDimension;
 }
 
+export interface CompatibilityMeasureWithUnit {
+  Value?: string;
+  Unit?: CostUnitInfo;
+}
+
 function dimensionForMeasure(type: string | undefined): CostQuantityDimension | undefined {
   switch (type) {
     case 'IFCLENGTHMEASURE': return 'length';
@@ -246,6 +251,25 @@ export class CostUnitResolver {
     if (!measure) return undefined;
     this.resolve(measure.unitId);
     return this.readMeasure(expressId);
+  }
+
+  /** Preserve the former best-effort rate marker without weakening canonical validation. */
+  compatibilityMeasureWithUnit(
+    expressId: number | undefined,
+    canonical: ResolvedMeasureWithUnit | undefined,
+  ): CompatibilityMeasureWithUnit | undefined {
+    if (expressId === undefined) return undefined;
+    const entity = this.reader.get(expressId);
+    if (!entity || entity.type.toUpperCase() !== 'IFCMEASUREWITHUNIT') return undefined;
+    const value = entity.attributes?.[0];
+    const type = Array.isArray(value) && typeof value[0] === 'string' ? value[0].toUpperCase() : undefined;
+    const unitId = this.reader.referenceLexeme(expressId, 1);
+    // Canonical resolution already attempted supported measures. Unsupported legacy
+    // wrappers still get a best-effort unit so existing consumers retain display data.
+    const shouldAttemptUnit = dimensionForMeasure(type) === undefined && type !== 'IFCMONETARYMEASURE';
+    const Unit = canonical?.Unit ?? (unitId === undefined ? undefined
+      : this.Units.get(unitId) ?? (shouldAttemptUnit ? this.resolve(unitId) : undefined));
+    return { Value: this.reader.decimalLexeme(expressId, 0), Unit };
   }
 
   private readMeasureHeader(expressId: number | undefined): {

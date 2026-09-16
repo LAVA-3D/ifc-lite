@@ -39,6 +39,7 @@ const OBJECT_DEFINITION_ROOT = new Set(['IFCOBJECTDEFINITION']);
 const CONTROL_ROOT = new Set(['IFCCONTROL']);
 const CONTEXT_ROOT = new Set(['IFCCONTEXT']);
 const DEFINITION_SELECT_ROOTS = new Set(['IFCOBJECTDEFINITION', 'IFCPROPERTYDEFINITION']);
+const PROCESS_ROOT = new Set(['IFCPROCESS']);
 const PROCESS_SELECT_ROOTS = new Set(['IFCPROCESS', 'IFCTYPEPROCESS']);
 const PRODUCT_ROOT = new Set(['IFCPRODUCT']);
 const PRODUCT_SELECT_ROOTS = new Set([...PRODUCT_ROOT, 'IFCTYPEPRODUCT']);
@@ -126,7 +127,8 @@ export function extractCostRelationships(
         (asRefList(a[4]) ?? []).some(id => itemIds.has(id))) {
       const InvalidReferences = related.invalid || process.invalid ||
         related.value.some(id => !targetIs(reader, id, OBJECT_DEFINITION_ROOT)) ||
-        (process.value !== undefined && !targetIs(reader, process.value, PROCESS_SELECT_ROOTS));
+        (process.value !== undefined && !targetIs(reader, process.value,
+          reader.schemaVersion === 'IFC2X3' ? PROCESS_ROOT : PROCESS_SELECT_ROOTS));
       result.push({ ...base(expressId, 'IfcRelAssignsToProcess', a), RelatedObjects: related.value,
         RelatingProcess: process.value, InvalidReferences: InvalidReferences || undefined });
     }

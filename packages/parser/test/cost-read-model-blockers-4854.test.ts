@@ -1221,6 +1221,45 @@ describe('#4854 cost evaluator blocker regressions', () => {
     ]));
   });
 
+  it('uses the schema-specific IfcRelAssignsToProcess select', async () => {
+    const relationship = "#30=IFCRELASSIGNSTOPROCESS('process-type',$,$,$,(#20),$,#21,$);";
+    const type = "#21=IFCTASKTYPE('type',$,'Type',$,$,$,$,$,$,$,$,.NOTDEFINED.);";
+    const legacy = extractCostOnDemand(await parse(step('IFC2X3', [
+      "#20=IFCCOSTITEM('item',$,'Item',$,$);", type, relationship,
+    ])));
+    const modern = extractCostOnDemand(await parse(step('IFC4', [
+      "#20=IFCCOSTITEM('item',$,'Item',$,$,'I',$,$,$);", type, relationship,
+    ])));
+    expect(legacy.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 30, RelatingProcess: 21, InvalidReferences: true }),
+    ]));
+    expect(legacy.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INVALID_LIST', expressId: 30 }),
+    ]));
+    expect(modern.Relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ expressId: 30, RelatingProcess: 21, InvalidReferences: undefined }),
+    ]));
+  });
+
+  it('preserves legacy UnitBasis fields independently from canonical validation', async () => {
+    const extraction = extractCostOnDemand(await parse(step('IFC4', [...PROJECT,
+      '#10=IFCMEASUREWITHUNIT(IFCPOSITIVELENGTHMEASURE(2.),#3);',
+      '#11=IFCMEASUREWITHUNIT(IFCLENGTHMEASURE(2.),#999);',
+      "#20=IFCCOSTVALUE('Legacy typed rate',$,IFCMONETARYMEASURE(10.),#10,$,$,$,$,$,$);",
+      "#21=IFCCOSTVALUE('Dangling-unit rate',$,IFCMONETARYMEASURE(10.),#11,$,$,$,$,$,$);",
+    ])));
+    expect(extraction.CostValues.find(value => value.expressId === 20)?.unitBasis).toEqual({
+      valueComponent: 2, unitSymbol: 'm', unitSiScale: 1,
+    });
+    expect(extraction.CostValues.find(value => value.expressId === 21)?.unitBasis).toEqual({
+      valueComponent: 2, unitSymbol: undefined, unitSiScale: undefined,
+    });
+    expect(extraction.Diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Code: 'INCOMPATIBLE_UNIT', expressId: 10 }),
+      expect.objectContaining({ Code: 'MISSING_REFERENCE', expressId: 999 }),
+    ]));
+  });
+
   it('validates all IFC2X3 cost relationship endpoints while retaining the edges', async () => {
     const extraction = extractCostOnDemand(await parse(step('IFC2X3', [
       "#10=IFCCOSTITEM('item',$,'Item',$,$);",

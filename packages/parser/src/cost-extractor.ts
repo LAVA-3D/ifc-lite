@@ -278,11 +278,12 @@ export function extractCostOnDemand(store: IfcDataStore): CostGraphExtraction {
   for (const value of CostValues) {
     if (value.UnitBasis !== undefined) {
       const basis = unitResolver.resolveMeasureWithUnit(value.UnitBasis);
-      const valueComponent = finiteCompatibilityNumber(basis?.Value);
-      const unitSiScale = finiteCompatibilityNumber(basis?.Unit.Scale);
-      value.unitBasis = basis ? {
+      const compatibility = unitResolver.compatibilityMeasureWithUnit(value.UnitBasis, basis);
+      const valueComponent = finiteCompatibilityNumber(compatibility?.Value);
+      const unitSiScale = finiteCompatibilityNumber(compatibility?.Unit?.Scale);
+      value.unitBasis = compatibility ? {
         valueComponent,
-        unitSymbol: basis.Unit.Scale === undefined ? undefined : basis.Unit.Symbol,
+        unitSymbol: compatibility.Unit?.Scale === undefined ? undefined : compatibility.Unit.Symbol,
         unitSiScale,
       } : undefined;
     }
