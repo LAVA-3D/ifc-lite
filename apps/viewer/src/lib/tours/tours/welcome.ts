@@ -18,7 +18,8 @@ export const WELCOME_TOUR: TourDefinition = {
   title: 'Get started',
   description: 'Load a model, look around, and read BIM data. The core loop in about two minutes.',
   minutes: 2,
-  version: 1,
+  // 2: right-drag became fly navigation (#4864); completed users see the new orbit step.
+  version: 2,
   steps: [
     {
       id: 'load',
