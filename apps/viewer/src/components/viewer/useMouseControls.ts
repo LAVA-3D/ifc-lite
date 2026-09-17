@@ -626,7 +626,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
 
       // Handle measure tool live preview while dragging
       // IMPORTANT: Check tool first, not activeMeasurement, to prevent orbit conflict
-      if (tool === 'measure' && mouseState.isDragging && activeMeasurementRef.current) {
+      if (tool === 'measure' && mouseState.isDragging && activeMeasurementRef.current && !fly.isActive()) {
         if (handleMeasureDrag(ctx, e, x, y)) return;
       }
 
@@ -662,7 +662,8 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       }
 
       // Handle orbit/pan for other tools (or measure tool with shift+drag or no active measurement)
-      if (mouseState.isDragging && (tool !== 'measure' || !activeMeasurementRef.current)) {
+      // A right-button flight looks around in every tool, an active measurement included.
+      if (mouseState.isDragging && (fly.isActive() || tool !== 'measure' || !activeMeasurementRef.current)) {
         const dx = e.clientX - mouseState.lastX;
         const dy = e.clientY - mouseState.lastY;
 
@@ -727,6 +728,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       }
 
       const tool = activeToolRef.current;
+      const wasFlying = e.button === 2 && fly.isActive();
       const flyEnd = e.button === 2 ? fly.end() : 'none';
       if (flyEnd === 'flew') mouseState.didDrag = true; else if (flyEnd === 'menu' && !mouseState.didDrag) void handleContextMenuSelection(ctx, e);
 
@@ -764,7 +766,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       }
 
       // Handle measure tool completion
-      if (tool === 'measure' && activeMeasurementRef.current) {
+      if (tool === 'measure' && activeMeasurementRef.current && !wasFlying) {
         if (handleMeasureUp(ctx, e)) return;
       }
 

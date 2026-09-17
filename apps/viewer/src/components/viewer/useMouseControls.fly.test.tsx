@@ -190,4 +190,21 @@ describe('useMouseControls right-button fly mode', () => {
     assert.ok(cleared > 0, 'the tooltip would otherwise ride along with the flight');
     canvas.dispatchEvent(pointer('pointerup', 2, 400, 300));
   });
+
+  /** #4868 review: an active measurement routed right-button moves to the measure drag instead of the look. */
+  it('the right button flies in the measure tool, even with a measurement active (#4868)', () => {
+    const point = { x: 0, y: 0, z: 0, screenX: 0, screenY: 0 };
+    let updates = 0;
+    const { canvas, camera } = mount({
+      activeToolRef: { current: 'measure' },
+      activeMeasurementRef: { current: { start: point, current: point, distance: 0 } },
+      updateMeasurement: () => { updates++; },
+    });
+    const target0 = camera.getTarget();
+    canvas.dispatchEvent(pointer('pointerdown', 2, 400, 300));
+    canvas.dispatchEvent(pointer('pointermove', 2, 460, 300));
+    assert.ok(camera.getTarget().x > target0.x + 0.1, 'the right-drag looks around');
+    assert.equal(updates, 0, 'and does not drag the measurement');
+    canvas.dispatchEvent(pointer('pointerup', 2, 460, 300));
+  });
 });
