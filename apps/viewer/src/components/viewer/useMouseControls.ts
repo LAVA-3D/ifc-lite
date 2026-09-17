@@ -462,8 +462,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       mouseState.startY = e.clientY;
       mouseState.didDrag = false;
       mouseState.isRectSelecting = false;
-      // Right button held = fly (look + WASD/QE + wheel speed) in every tool; the middle button still pans.
-      // A frozen view (`?controls=` other than 'all') refuses to fly and falls through to the camera-gated pan.
+      // Right button held = fly (look + WASD/QE + wheel speed) in every tool; the middle button still pans. A frozen view refuses and falls through.
       if (e.button === 2 && fly.begin(canvas)) { clearHover(); canvas.style.cursor = 'crosshair'; return; }
 
       // Determine action based on active tool and mouse button
@@ -661,8 +660,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
         return;
       }
 
-      // Handle orbit/pan for other tools (or measure tool with shift+drag or no active measurement)
-      // A right-button flight looks around in every tool, an active measurement included.
+      // Handle fly, then orbit/pan for other tools (or measure tool with shift+drag or no active measurement)
       if (mouseState.isDragging && (fly.isActive() || tool !== 'measure' || !activeMeasurementRef.current)) {
         const dx = e.clientX - mouseState.lastX;
         const dy = e.clientY - mouseState.lastY;
@@ -728,7 +726,6 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       }
 
       const tool = activeToolRef.current;
-      const wasFlying = e.button === 2 && fly.isActive();
       const flyEnd = e.button === 2 ? fly.end() : 'none';
       if (flyEnd === 'flew') mouseState.didDrag = true; else if (flyEnd === 'menu' && !mouseState.didDrag) void handleContextMenuSelection(ctx, e);
 
@@ -766,7 +763,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       }
 
       // Handle measure tool completion
-      if (tool === 'measure' && activeMeasurementRef.current && !wasFlying) {
+      if (tool === 'measure' && activeMeasurementRef.current && e.button !== 2) {
         if (handleMeasureUp(ctx, e)) return;
       }
 
@@ -779,12 +776,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
 
       mouseState.isDragging = false;
       mouseState.isPanning = false;
-      canvas.style.cursor = idleCursor();
-    };
-
-    const idleCursor = (): string => {
-      const tool = activeToolRef.current;
-      return tool === 'pan' ? 'grab' : (tool === 'walk' || tool === 'measure' || tool === 'appearance-face' ? 'crosshair' : 'default');
+      canvas.style.cursor = tool === 'pan' ? 'grab' : (tool === 'walk' || tool === 'measure' || tool === 'appearance-face' ? 'crosshair' : 'default');
     };
 
     const handleMouseLeave = () => {
@@ -803,16 +795,8 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       sectionLastFaceKeyRef.current = null;
       sectionLastCastPosRef.current = null;
       setSectionPickPreview(null);
-      // Restore cursor based on active tool
-      if (tool === 'measure' || tool === 'appearance-face') {
-        canvas.style.cursor = 'crosshair';
-      } else if (tool === 'pan') {
-        canvas.style.cursor = 'grab';
-      } else if (tool === 'walk') {
-        canvas.style.cursor = 'crosshair';
-      } else {
-        canvas.style.cursor = 'default';
-      }
+      // Restore cursor based on active tool (same mapping as pointerup)
+      canvas.style.cursor = tool === 'pan' ? 'grab' : (tool === 'walk' || tool === 'measure' || tool === 'appearance-face' ? 'crosshair' : 'default');
       clearHover();
     };
 
@@ -832,19 +816,14 @@ export function useMouseControls(params: UseMouseControlsParams): void {
     const fineZoomModifier = createFineZoomModifierTracker();
     const fly = createFlyController({
       camera,
-      // Fly drives the camera through its programmatic setters, which the embed freeze does not gate (#4868 review).
+      // Fly moves the camera through setters the embed `?controls=` freeze does not gate, so gate it here (#4868).
       canFly: () => useViewerStore.getState().interactionMode === 'all',
       onChange: () => {
         isInteractingRef.current = true; renderer.requestRender(); updateCameraRotationRealtime(camera.getRotation()); calculateScale();
         clearHover(); // a keys-only flight never reaches the mousemove path that clears it
       },
-      // Focus or pointer lock lost mid-flight: no pointerup is coming, so drop the drag here.
-      onCancel: () => {
-        mouseState.isDragging = false;
-        mouseState.isPanning = false;
-        if (isInteractingRef.current) { isInteractingRef.current = false; renderer.requestRender(); }
-        canvas.style.cursor = idleCursor();
-      },
+      // Focus or pointer lock lost mid-flight: no pointerup is coming, so end the drag as leaving the canvas does.
+      onCancel: () => { handleMouseLeave(); isInteractingRef.current = false; renderer.requestRender(); },
     });
 
     const handleWheel = (e: WheelEvent) => {
