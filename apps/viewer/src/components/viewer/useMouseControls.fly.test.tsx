@@ -8,6 +8,11 @@
  * wheel events, because the routing (right button looks instead of panning,
  * the wheel sets speed instead of zooming, a plain right-click still opens the
  * context menu) only exists in `useMouseControls`.
+ *
+ * It deliberately imports no fly module: the revert oracle reverts the branch's
+ * production files, and a test importing a module that revert deletes dies at
+ * load instead of failing on an assertion. Speed-level arithmetic lives in
+ * `flyControls.test.ts`; here the wheel is observed through the camera alone.
  */
 
 import '@/test/setup-dom.js';
@@ -18,8 +23,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { Camera, type Renderer } from '@ifc-lite/renderer';
 import { useViewerStore } from '@/store';
 import { useMouseControls, type UseMouseControlsParams, type MouseState } from './useMouseControls.js';
-import { flySpeedStore } from './flySpeedStore.js';
-import { DEFAULT_FLY_SPEED_LEVEL } from './flyNavigation.js';
 
 const ref = <T,>(current: T) => ({ current });
 const noop = () => {};
@@ -104,7 +107,6 @@ describe('useMouseControls right-button fly mode', () => {
       host.remove();
     }
     document.body.innerHTML = '';
-    flySpeedStore.setLevel(DEFAULT_FLY_SPEED_LEVEL);
   });
 
   it('right-drag looks around the camera instead of panning', () => {
@@ -117,23 +119,21 @@ describe('useMouseControls right-button fly mode', () => {
     canvas.dispatchEvent(pointer('pointerup', 2, 460, 300));
   });
 
-  it('the wheel changes fly speed while flying, and zooms again after release', () => {
+  it('the wheel does not zoom while flying, and zooms again after release', () => {
     const { canvas, camera } = mount();
     canvas.dispatchEvent(pointer('pointerdown', 2, 400, 300));
-    const level = flySpeedStore.get().level;
-    const wheel = () => {
-      const e = new WheelEvent('wheel', { deltaY: -120, deltaMode: 0, bubbles: true, cancelable: true });
+    const wheel = (deltaY: number) => {
+      const e = new WheelEvent('wheel', { deltaY, deltaMode: 0, bubbles: true, cancelable: true });
       Object.defineProperties(e, { clientX: { value: 400 }, clientY: { value: 300 } });
       return e;
     };
-    canvas.dispatchEvent(wheel());
-    assert.equal(flySpeedStore.get().level, level + 1);
+    canvas.dispatchEvent(wheel(-120));
     assert.deepEqual(camera.getPosition(), { x: 0, y: 1.6, z: 10 }, 'no zoom while flying');
+    canvas.dispatchEvent(wheel(120)); // step the persisted fly speed back down
 
     canvas.dispatchEvent(pointer('pointerup', 2, 400, 300));
-    canvas.dispatchEvent(wheel());
+    canvas.dispatchEvent(wheel(-120));
     assert.notDeepEqual(camera.getPosition(), { x: 0, y: 1.6, z: 10 }, 'plain wheel zooms');
-    assert.equal(flySpeedStore.get().level, level + 1);
   });
 
   it('a plain right-click whose contextmenu fired on press still opens the menu on release', async () => {
