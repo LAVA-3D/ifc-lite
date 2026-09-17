@@ -181,4 +181,13 @@ describe('useMouseControls right-button fly mode', () => {
     canvas.dispatchEvent(pointer('pointermove', 0, 460, 300));
     assert.deepEqual({ position: camera.getPosition(), target: camera.getTarget() }, pose, 'a buttonless move after the lost release must not move the camera');
   });
+
+  /** #4868 review: a keys-only flight moved the camera under a stale hover tooltip. */
+  it('pressing the right button clears the hover tooltip (#4868)', () => {
+    let cleared = 0;
+    const { canvas } = mount({ clearHover: () => { cleared++; } });
+    canvas.dispatchEvent(pointer('pointerdown', 2, 400, 300));
+    assert.ok(cleared > 0, 'the tooltip would otherwise ride along with the flight');
+    canvas.dispatchEvent(pointer('pointerup', 2, 400, 300));
+  });
 });

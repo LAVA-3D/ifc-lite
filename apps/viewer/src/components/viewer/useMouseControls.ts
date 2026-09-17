@@ -464,7 +464,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       mouseState.isRectSelecting = false;
       // Right button held = fly (look + WASD/QE + wheel speed) in every tool; the middle button still pans.
       // A frozen view (`?controls=` other than 'all') refuses to fly and falls through to the camera-gated pan.
-      if (e.button === 2 && fly.begin(canvas)) { canvas.style.cursor = 'crosshair'; return; }
+      if (e.button === 2 && fly.begin(canvas)) { clearHover(); canvas.style.cursor = 'crosshair'; return; }
 
       // Determine action based on active tool and mouse button
       const tool = activeToolRef.current;
@@ -834,6 +834,7 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       canFly: () => useViewerStore.getState().interactionMode === 'all',
       onChange: () => {
         isInteractingRef.current = true; renderer.requestRender(); updateCameraRotationRealtime(camera.getRotation()); calculateScale();
+        clearHover(); // a keys-only flight never reaches the mousemove path that clears it
       },
       // Focus or pointer lock lost mid-flight: no pointerup is coming, so drop the drag here.
       onCancel: () => {
