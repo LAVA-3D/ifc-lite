@@ -59,6 +59,12 @@ export interface FlyControllerOptions {
   camera: FlyCamera;
   /** Called after every camera change (render, rotation readouts, scale bar). */
   onChange: () => void;
+  /**
+   * The session ended without a button release: the window lost focus, the
+   * tab was hidden, or the pointer lock was taken away (Esc). The caller drops
+   * its own drag state here, since no pointerup is coming.
+   */
+  onCancel?: () => void;
   keyTarget?: KeyTarget;
   requestFrame?: (cb: () => void) => number;
   cancelFrame?: (id: number) => void;
@@ -158,7 +164,8 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
   const now = opts.now ?? (() => performance.now());
 
   const held = new Set<string>();
-  const lock = createFlyPointerLock();
+  // Esc (or the browser) taking the lock away mid-flight ends the session.
+  const lock = createFlyPointerLock(() => cancel());
   const wheelStep = createWheelStepper();
   let shift = false;
   let alt = false;
@@ -245,22 +252,43 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
     alt = ke.altKey;
     held.delete(ke.code);
   };
+  const stopLoop = (): void => {
+    if (frameId !== null) cancelFrame(frameId);
+    frameId = null;
+  };
+  const stop = (): void => {
+    active = false;
+    stopLoop();
+    lock.release();
+    velocity = { x: 0, y: 0, z: 0 };
+    setFlySpeedState({ active: false });
+  };
+  /** End a session no pointerup will end (#4868 review: flight survived focus loss). */
+  function cancel(): void {
+    if (!active) return;
+    stop();
+    opts.onCancel?.();
+  }
+
   // Alt+Tab away and the key-up never arrives, which would strand the
-  // modifier on; the blur that comes with it clears everything.
-  const onBlur = (): void => {
+  // modifier on; the blur that comes with it clears everything. The button's
+  // release is lost the same way, so the window's own blur also ends the
+  // flight (an element blur inside the page, caught by this capture listener,
+  // does not).
+  const onBlur = (e: Event): void => {
     held.clear();
     shift = false;
     alt = false;
+    if (!(e.target instanceof Node)) cancel();
+  };
+  const onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') cancel();
   };
 
   keyTarget.addEventListener('keydown', onKeyDown, true);
   keyTarget.addEventListener('keyup', onKeyUp, true);
   keyTarget.addEventListener('blur', onBlur, true);
-
-  const stopLoop = (): void => {
-    if (frameId !== null) cancelFrame(frameId);
-    frameId = null;
-  };
+  document.addEventListener('visibilitychange', onVisibility);
 
   return {
     isActive: () => active,
@@ -315,11 +343,7 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
 
     end() {
       if (!active) return 'none';
-      active = false;
-      stopLoop();
-      lock.release();
-      velocity = { x: 0, y: 0, z: 0 };
-      setFlySpeedState({ active: false });
+      stop();
       const wasHeld = now() - pressedAt >= HOLD_TO_FLY_MS;
       if (flew || wasHeld || lookTravel > LOOK_CLICK_SLOP_PX) {
         suppressMenuUntil = now() + MENU_SUPPRESSION_MS;
@@ -335,6 +359,7 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
       keyTarget.removeEventListener('keydown', onKeyDown, true);
       keyTarget.removeEventListener('keyup', onKeyUp, true);
       keyTarget.removeEventListener('blur', onBlur, true);
+      document.removeEventListener('visibilitychange', onVisibility);
       if (flySpeedStore.get().active) setFlySpeedState({ active: false });
     },
   };

@@ -776,7 +776,12 @@ export function useMouseControls(params: UseMouseControlsParams): void {
 
       mouseState.isDragging = false;
       mouseState.isPanning = false;
-      canvas.style.cursor = tool === 'pan' ? 'grab' : (tool === 'walk' || tool === 'measure' || tool === 'appearance-face' ? 'crosshair' : 'default');
+      canvas.style.cursor = idleCursor();
+    };
+
+    const idleCursor = (): string => {
+      const tool = activeToolRef.current;
+      return tool === 'pan' ? 'grab' : (tool === 'walk' || tool === 'measure' || tool === 'appearance-face' ? 'crosshair' : 'default');
     };
 
     const handleMouseLeave = () => {
@@ -822,9 +827,19 @@ export function useMouseControls(params: UseMouseControlsParams): void {
     // as a wheel event with `ctrlKey: true` and no key ever pressed - see
     // wheelZoom.ts.
     const fineZoomModifier = createFineZoomModifierTracker();
-    const fly = createFlyController({ camera, onChange: () => {
-      isInteractingRef.current = true; renderer.requestRender(); updateCameraRotationRealtime(camera.getRotation()); calculateScale();
-    } });
+    const fly = createFlyController({
+      camera,
+      onChange: () => {
+        isInteractingRef.current = true; renderer.requestRender(); updateCameraRotationRealtime(camera.getRotation()); calculateScale();
+      },
+      // Focus or pointer lock lost mid-flight: no pointerup is coming, so drop the drag here.
+      onCancel: () => {
+        mouseState.isDragging = false;
+        mouseState.isPanning = false;
+        if (isInteractingRef.current) { isInteractingRef.current = false; renderer.requestRender(); }
+        canvas.style.cursor = idleCursor();
+      },
+    });
 
     const handleWheel = (e: WheelEvent) => {
       if (fly.isActive()) return fly.wheel(e); // while flying the wheel sets fly speed, not zoom

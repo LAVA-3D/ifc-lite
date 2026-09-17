@@ -38,7 +38,7 @@ function pointer(type: string, button: number, x: number, y: number): PointerEve
 
 const mounted: { root: Root; host: HTMLElement }[] = [];
 
-function mount(): { canvas: HTMLCanvasElement; camera: Camera; menus: number[] } {
+function mount(overrides: Partial<UseMouseControlsParams> = {}): { canvas: HTMLCanvasElement; camera: Camera; menus: number[] } {
   const canvas = document.createElement('canvas');
   canvas.width = 800;
   canvas.height = 600;
@@ -86,6 +86,7 @@ function mount(): { canvas: HTMLCanvasElement; camera: Camera; menus: number[] }
     RENDER_THROTTLE_MS_SMALL: 16, RENDER_THROTTLE_MS_LARGE: 33, RENDER_THROTTLE_MS_HUGE: 66,
     fastZoomRef: ref(false),
   } satisfies UseMouseControlsParams;
+  Object.assign(params, overrides);
 
   function Probe() {
     useMouseControls(params);
@@ -144,5 +145,23 @@ describe('useMouseControls right-button fly mode', () => {
     canvas.dispatchEvent(pointer('pointerup', 2, 400, 300));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(menus.length, 1);
+  });
+
+  /**
+   * #4868 review: Alt-Tab with the button held and the pointerup never comes.
+   * The flight has to end with the focus, and so does the hook's drag, or the
+   * wheel keeps setting fly speed and the next move keeps looking.
+   */
+  it('losing window focus mid-flight hands the wheel back to zoom (#4868)', () => {
+    const { canvas, camera } = mount();
+    canvas.dispatchEvent(pointer('pointerdown', 2, 400, 300));
+    window.dispatchEvent(new Event('blur'));
+    const e = new WheelEvent('wheel', { deltaY: -120, deltaMode: 0, bubbles: true, cancelable: true });
+    Object.defineProperties(e, { clientX: { value: 400 }, clientY: { value: 300 } });
+    canvas.dispatchEvent(e);
+    assert.notDeepEqual(camera.getPosition(), { x: 0, y: 1.6, z: 10 }, 'the wheel zooms again');
+    const pose = { position: camera.getPosition(), target: camera.getTarget() };
+    canvas.dispatchEvent(pointer('pointermove', 0, 460, 300));
+    assert.deepEqual({ position: camera.getPosition(), target: camera.getTarget() }, pose, 'a buttonless move after the lost release must not move the camera');
   });
 });

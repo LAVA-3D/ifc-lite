@@ -40,9 +40,31 @@ const warn = (error: unknown): void => {
   console.warn('[flyPointerLock] Pointer lock refused; looking with cursor deltas:', error);
 };
 
-export function createFlyPointerLock(): FlyPointerLock {
+/**
+ * @param onLost called when a lock this session asked for goes away while the
+ * session is still armed — Esc, or the browser revoking it. `release()` never
+ * reports its own exit.
+ */
+export function createFlyPointerLock(onLost?: () => void): FlyPointerLock {
   let target: LockableElement | null = null;
   let requested = false;
+  let heldLock = false;
+  let listening: Document | null = null;
+
+  const onLockChange = (): void => {
+    const el = target;
+    if (!el) return;
+    if (el.ownerDocument.pointerLockElement === el) {
+      heldLock = true;
+    } else if (heldLock) {
+      heldLock = false;
+      onLost?.();
+    }
+  };
+  const unlisten = (): void => {
+    listening?.removeEventListener('pointerlockchange', onLockChange);
+    listening = null;
+  };
   /**
    * Bumped by every `arm()` and `release()`. A request settles asynchronously
    * and a quick gesture can end first, so each continuation checks that its
@@ -59,8 +81,15 @@ export function createFlyPointerLock(): FlyPointerLock {
   return {
     arm(element) {
       session++;
+      unlisten();
       target = element ? (element as unknown as LockableElement) : null;
       requested = false;
+      heldLock = false;
+      const doc = target?.ownerDocument;
+      if (onLost && typeof doc?.addEventListener === 'function') {
+        doc.addEventListener('pointerlockchange', onLockChange);
+        listening = doc;
+      }
     },
 
     request() {
@@ -95,9 +124,11 @@ export function createFlyPointerLock(): FlyPointerLock {
 
     release() {
       session++;
+      unlisten();
       const doc = target?.ownerDocument;
       target = null;
       requested = false;
+      heldLock = false;
       if (doc?.pointerLockElement) doc.exitPointerLock();
     },
   };

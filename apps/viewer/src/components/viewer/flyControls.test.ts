@@ -11,7 +11,7 @@ import '@/test/setup-dom.js';
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Camera } from '@ifc-lite/renderer';
-import { createFlyController, type FlyController } from './flyControls.js';
+import { createFlyController, type FlyController, type FlyControllerOptions } from './flyControls.js';
 import { flySpeedStore } from './flySpeedStore.js';
 import { DEFAULT_FLY_SPEED_LEVEL } from './flyNavigation.js';
 
@@ -24,7 +24,7 @@ interface Rig {
 
 const rigs: FlyController[] = [];
 
-function rig(): Rig {
+function rig(extra: Pick<FlyControllerOptions, 'onCancel'> = {}): Rig {
   const camera = new Camera();
   camera.setPosition(0, 1.6, 10);
   camera.setTarget(0, 1.6, 0);
@@ -37,6 +37,7 @@ function rig(): Rig {
     requestFrame: (cb) => { pending = cb; return 1; },
     cancelFrame: () => { pending = null; },
     now: () => t,
+    ...extra,
   });
   rigs.push(fly);
   return {
@@ -160,6 +161,7 @@ describe('createFlyController', () => {
         canvas.requested++;
         assert.equal(options?.unadjustedMovement, true, 'ask for raw deltas, without OS acceleration');
         doc.pointerLockElement = canvas;
+        doc.dispatchEvent(new Event('pointerlockchange'));
         return Promise.resolve();
       },
     };
@@ -292,6 +294,75 @@ describe('createFlyController', () => {
     const plain = travel(3);
     const withCtrl = travel(3, { ctrlKey: true });
     assert.ok(Math.abs(withCtrl - plain) < plain * 0.01, `ctrl ${withCtrl} should match plain ${plain}`);
+  });
+
+  /**
+   * #4868 review: Alt-Tab away with the button held and the release lands in
+   * another window, so no pointerup ever reaches the canvas. The session has to
+   * end on its own, or WASD keeps flying (and swallowing shortcuts) back in the
+   * viewer with no button held.
+   */
+  for (const [name, loseFocus] of [
+    ['window blur', () => window.dispatchEvent(new Event('blur'))],
+    ['the tab going hidden', () => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      try {
+        document.dispatchEvent(new Event('visibilitychange'));
+      } finally {
+        Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      }
+    }],
+  ] as const) {
+    it(`${name} ends the flight, not just the held keys (#4868)`, () => {
+      let cancelled = 0;
+      const { fly, camera, frames } = rig({ onCancel: () => { cancelled++; } });
+      fly.begin();
+      loseFocus();
+      assert.equal(fly.isActive(), false, 'the session must not outlive focus');
+      assert.equal(cancelled, 1, 'the caller is told, so it can drop its drag state');
+      assert.equal(flySpeedStore.get().active, false);
+      key('keydown', 'KeyW');
+      frames(30);
+      assert.equal(camera.getPosition().z, 10, 'W without the button held must not fly');
+      key('keyup', 'KeyW');
+      assert.equal(fly.end(), 'none', 'the late pointerup finds nothing to end');
+    });
+  }
+
+  it('losing the pointer lock mid-flight (Esc) ends the flight (#4868)', () => {
+    let cancelled = 0;
+    const { fly } = rig({ onCancel: () => { cancelled++; } });
+    const { doc, el } = lockable();
+    fly.begin(el);
+    fly.look(20, 0);
+    assert.notEqual(doc.pointerLockElement, null, 'precondition: the look took the lock');
+    doc.exitPointerLock(); // what the browser does on Esc
+    assert.equal(fly.isActive(), false);
+    assert.equal(cancelled, 1);
+  });
+
+  it('focus moving between elements inside the page does not end the flight', () => {
+    const { fly } = rig();
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    try {
+      input.focus();
+      fly.begin();
+      input.blur(); // reaches the window's capture listener, but the window kept focus
+      assert.equal(fly.isActive(), true);
+    } finally {
+      input.remove();
+    }
+  });
+
+  it('a normal release does not report a cancel', () => {
+    let cancelled = 0;
+    const { fly } = rig({ onCancel: () => { cancelled++; } });
+    const { el } = lockable();
+    fly.begin(el);
+    fly.look(20, 0);
+    assert.equal(fly.end(), 'flew');
+    assert.equal(cancelled, 0);
   });
 
   /**
