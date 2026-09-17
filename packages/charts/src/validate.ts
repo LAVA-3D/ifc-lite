@@ -38,6 +38,9 @@ function num(errors: DashboardValidationError[], obj: Record<string, unknown>, k
   if (typeof v !== 'number' || !Number.isFinite(v)) errors.push({ path: `${path}.${key}`, message: 'expected a finite number' });
 }
 
+const SPATIAL_LEVELS = new Set(['Container', 'Building', 'Site', 'Project']);
+const RELATION_KINDS = new Set(['material', 'classification', 'type', 'spatial']);
+
 function validateChart(chart: unknown, path: string, errors: DashboardValidationError[]): void {
   if (!isRecord(chart)) {
     errors.push({ path, message: 'expected a chart object' });
@@ -45,8 +48,8 @@ function validateChart(chart: unknown, path: string, errors: DashboardValidation
   }
   str(errors, chart, 'id', path);
   str(errors, chart, 'title', path);
-  if (!SOURCES.has(String(chart.source))) errors.push({ path: `${path}.source`, message: `expected one of ${[...SOURCES].join(', ')}` });
-  if (!TYPES.has(String(chart.type))) errors.push({ path: `${path}.type`, message: `expected one of ${[...TYPES].join(', ')}` });
+  if (typeof chart.source !== 'string' || !SOURCES.has(chart.source)) errors.push({ path: `${path}.source`, message: `expected one of ${[...SOURCES].join(', ')}` });
+  if (typeof chart.type !== 'string' || !TYPES.has(chart.type)) errors.push({ path: `${path}.type`, message: `expected one of ${[...TYPES].join(', ')}` });
   if (chart.elementField !== undefined) {
     const fieldPath = `${path}.elementField`;
     if (!isRecord(chart.elementField)) {
@@ -67,7 +70,21 @@ function validateChart(chart: unknown, path: string, errors: DashboardValidation
       else if (field.kind === 'property') {
         str(errors, field, 'psetName', fieldPath);
         str(errors, field, 'propertyName', fieldPath);
-      } else errors.push({ path: `${fieldPath}.kind`, message: 'expected attribute or property' });
+      } else if (field.kind === 'quantity') {
+        str(errors, field, 'qsetName', fieldPath);
+        str(errors, field, 'quantityName', fieldPath);
+      } else if (field.kind === 'classification') str(errors, field, 'system', fieldPath, true);
+      else if (field.kind === 'spatial') {
+        if (typeof field.level !== 'string' || !SPATIAL_LEVELS.has(field.level)) errors.push({ path: `${fieldPath}.level`, message: `expected one of ${[...SPATIAL_LEVELS].join(', ')}` });
+      } else if (field.kind !== 'material' && field.kind !== 'type') {
+        errors.push({ path: `${fieldPath}.kind`, message: 'expected attribute, property, quantity, material, classification, type or spatial' });
+      }
+      if (typeof field.kind === 'string' && RELATION_KINDS.has(field.kind) && (field.valueKind === 'number' || field.valueKind === 'boolean')) {
+        errors.push({ path: `${fieldPath}.valueKind`, message: 'a material, classification, type or spatial field is always a category' });
+      }
+      if (field.kind === 'quantity' && field.valueKind === 'boolean') {
+        errors.push({ path: `${fieldPath}.valueKind`, message: 'a quantity is a number or a category, never a boolean' });
+      }
     }
   }
   str(errors, chart, 'dimension', path);
@@ -93,7 +110,7 @@ export function validateDashboardSpec(spec: unknown): DashboardValidationError[]
   str(errors, spec, 'id', '');
   str(errors, spec, 'name', '');
   const scope = spec.scope;
-  if (!isRecord(scope) || !SCOPES.has(String(scope.kind))) {
+  if (!isRecord(scope) || typeof scope.kind !== 'string' || !SCOPES.has(scope.kind)) {
     errors.push({ path: '.scope', message: `expected { kind: ${[...SCOPES].join(' | ')} }` });
   } else if (scope.kind === 'list') {
     str(errors, scope, 'listId', '.scope');

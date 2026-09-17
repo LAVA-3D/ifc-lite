@@ -5,13 +5,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { IfcParser, extractPropertiesOnDemand, extractTypeEntityOwnProperties, type IfcDataStore } from '@ifc-lite/parser';
+import { IfcParser, extractPropertiesOnDemand, extractQuantitiesOnDemand, extractTypeEntityOwnProperties, type IfcDataStore } from '@ifc-lite/parser';
 import { MutablePropertyView } from '@ifc-lite/mutations';
+import { QuantityType } from '@ifc-lite/data';
 import type { ElementFieldBinding } from '@ifc-lite/charts';
 import { createElementFieldReader } from './element-field-reader.js';
 
 const FIRE: ElementFieldBinding = { kind: 'property', psetName: 'Pset_SlabCommon', propertyName: 'FireRating', valueKind: 'category' };
 const SPREAD: ElementFieldBinding = { kind: 'property', psetName: 'Pset_SlabCommon', propertyName: 'SurfaceSpreadOfFlame', valueKind: 'category' };
+/** A binding as read back from an unvalidated saved dashboard, where the type's guarantees do not hold. */
+const persisted = (json: string): ElementFieldBinding => JSON.parse(json) as ElementFieldBinding;
 const SAMPLE = new URL('../../../public/samples/building-architecture.ifc', import.meta.url);
 /** The committed sample may be checked out with CRLF line endings. */
 const FILE_END = /ENDSEC;\r?\nEND-ISO-10303-21;/;
@@ -148,6 +151,57 @@ describe('chart IFC field reader (#4833)', () => {
     assert.equal(speed.unitSiScale, undefined);
   });
 
+  it('reads the relation-borne families of the committed sample: material, quantity, defining type and spatial container', async () => {
+    const bytes = await readFile(SAMPLE);
+    const store = await new IfcParser().parseColumnar(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const reader = createElementFieldReader(store);
+    assert.deepEqual(reader.readResolved(52, { kind: 'material', valueKind: 'category' }), { value: 'concrete_reinforced_in-situ', status: 'value' });
+    assert.deepEqual(reader.readResolved(52, { kind: 'type', valueKind: 'category' }), { value: 'house - groundfloor', status: 'value' });
+    assert.deepEqual(
+      reader.readResolved(52, { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'NetArea', valueKind: 'number', dataType: 'IFCAREAMEASURE' }),
+      { value: 25.749999999991743, status: 'value', dataType: 'IFCAREAMEASURE' },
+    );
+    assert.equal(reader.readResolved(52, { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'Depth', valueKind: 'number' }).dataType, 'IFCLENGTHMEASURE');
+    assert.equal(reader.readResolved(52, { kind: 'spatial', level: 'Building', valueKind: 'category' }).status, 'value');
+    assert.equal(reader.readResolved(52, { kind: 'classification', valueKind: 'category' }).status, 'missing', 'the sample classifies the project, not the slab');
+
+    const catalog = reader.discover([52]);
+    const netArea = catalog.quantities.get('Qto_SlabBaseQuantities')?.find(({ binding }) => binding.kind === 'quantity' && binding.quantityName === 'NetArea')?.binding;
+    assert.deepEqual(netArea, { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'NetArea', valueKind: 'number', dataType: 'IFCAREAMEASURE' });
+    const relation = (kind: string) => catalog.relations.find(({ binding }) => binding.kind === kind);
+    assert.equal(relation('material')?.observedValue, true);
+    assert.equal(relation('type')?.observedValue, true);
+    assert.equal(relation('classification')?.observedValue, false);
+  });
+
+  it('quantities honour the overlay: a deleted occurrence quantity stays missing, type-owned quantities survive an overlay (#4833 review)', async () => {
+    const bytes = await readFile(SAMPLE);
+    const store = await new IfcParser().parseColumnar(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const netArea: ElementFieldBinding = { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'NetArea', valueKind: 'number', dataType: 'IFCAREAMEASURE' };
+    // A view with no quantity extractor (the server-hydrated shape) and no edits must not hide the provider's quantities.
+    const idle = new MutablePropertyView(store.properties, 'fixture');
+    assert.equal(createElementFieldReader(store, idle).readResolved(52, netArea).value, 25.749999999991743);
+    // Deleting the occurrence quantity keeps it missing even though the same set could be found by falling back.
+    const edited = new MutablePropertyView(store.properties, 'fixture');
+    edited.setQuantityExtractor((id) => extractQuantitiesOnDemand(store, id));
+    edited.deleteQuantity(52, 'Qto_SlabBaseQuantities', 'NetArea');
+    assert.equal(createElementFieldReader(store, edited).readResolved(52, netArea).status, 'missing');
+    assert.equal(createElementFieldReader(store, edited).readResolved(52, { ...netArea, quantityName: 'Depth' }).value, 250.00000000009484, 'sibling quantities are untouched');
+    // A quantity edited without naming a unit keeps its explicit scale; a category read carries it too.
+    const scaled = await parseSampleWith(`
+#60040=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);
+#60041=IFCQUANTITYLENGTH('Girth',$,#60040,12.,$);
+#60042=IFCELEMENTQUANTITY('g-qto',#1,'Qto_Probe',$,$,(#60041));
+#60043=IFCRELDEFINESBYPROPERTIES('g-qto-rel',#1,$,$,(#52),#60042);`);
+    const girth: ElementFieldBinding = { kind: 'quantity', qsetName: 'Qto_Probe', quantityName: 'Girth', valueKind: 'number', dataType: 'IFCLENGTHMEASURE' };
+    assert.equal(createElementFieldReader(scaled).readResolved(52, girth).unitSiScale, 0.01);
+    assert.equal(createElementFieldReader(scaled).readResolved(52, { ...girth, valueKind: 'category' }).unitSiScale, 0.01, 'a category read keeps the scale so it can be unit-qualified');
+    const editedScale = new MutablePropertyView(scaled.properties, 'fixture');
+    editedScale.setQuantityExtractor((id) => extractQuantitiesOnDemand(scaled, id));
+    editedScale.setQuantity(52, 'Qto_Probe', 'Girth', 15, QuantityType.Length);
+    assert.deepEqual(createElementFieldReader(scaled, editedScale).readResolved(52, girth), { value: 15, status: 'value', dataType: 'IFCLENGTHMEASURE', unitSiScale: 0.01 });
+  });
+
   it('a type property every occurrence overrides does not shape the field: a label on the type under numbers on the occurrences is a number (#4833 review)', async () => {
     // The slab type #50 gains Probe.Load as a LABEL; its only occurrence #52 carries Probe.Load as a REAL.
     const store = await parseSampleWith(`
@@ -167,6 +221,34 @@ describe('chart IFC field reader (#4833)', () => {
     assert.equal(reader.discover([52]).properties.get('Pset_SlabCommon')?.some(({ binding }) => binding.kind === 'property' && binding.propertyName === 'SurfaceSpreadOfFlame'), true);
   });
 
+  it('a property deleted on the occurrence does not let the type shape the field it no longer reads (#4833 review)', async () => {
+    const store = await parseSampleWith(`
+#60060=IFCPROPERTYSINGLEVALUE('Load',$,IFCLABEL('heavy'),$);
+#60061=IFCPROPERTYSET('g-type-probe',#1,'Probe',$,(#60060));
+#60062=IFCPROPERTYSINGLEVALUE('Load',$,IFCREAL(12.5),$);
+#60063=IFCPROPERTYSET('g-occ-probe',#1,'Probe',$,(#60062));
+#60064=IFCRELDEFINESBYPROPERTIES('g-occ-rel',#1,$,$,(#52),#60063);`, (source) => source.replace('(#963)', '(#963,#60061)'));
+    const view = new MutablePropertyView(store.properties, 'fixture');
+    view.setOnDemandExtractor((id) => extractPropertiesOnDemand(store, id));
+    assert.ok(view.deleteProperty(52, 'Probe', 'Load'), 'the occurrence property exists in the base and can be deleted');
+    const reader = createElementFieldReader(store, view);
+    const load = reader.discover([52]).properties.get('Probe')?.find(({ binding }) => binding.kind === 'property' && binding.propertyName === 'Load')?.binding;
+    assert.notEqual(load?.valueKind, 'category', 'the suppressed type label must not make the deleted field categorical');
+    assert.equal(reader.read(52, { kind: 'property', psetName: 'Probe', propertyName: 'Load', valueKind: 'category' }), null);
+  });
+
+  it('a classification association whose reference has neither code nor name is not an observed value (#4833 review)', async () => {
+    const store = await parseSampleWith(`
+#60080=IFCCLASSIFICATION('X',$,$,'Sys',$,$,$);
+#60081=IFCCLASSIFICATIONREFERENCE($,$,$,#60080,$,$);
+#60082=IFCRELASSOCIATESCLASSIFICATION('g-cls',#1,$,$,(#52),#60081);`);
+    const reader = createElementFieldReader(store);
+    const relations = reader.discover([52]).relations;
+    assert.equal(relations.find(({ binding }) => binding.kind === 'classification' && !binding.system)?.observedValue, false);
+    assert.equal(relations.some(({ binding }) => binding.kind === 'classification' && binding.system === 'Sys'), false, 'a system with nothing displayable is not offered');
+    assert.equal(reader.readResolved(52, { kind: 'classification', valueKind: 'category' }).status, 'missing');
+  });
+
   it('never offers an entity-reference attribute as a value, even though its STEP slot holds a number', async () => {
     const store = await parseSampleWith(`
 #60020=IFCDIRECTION((0.,0.,1.));
@@ -181,5 +263,57 @@ describe('chart IFC field reader (#4833)', () => {
       { value: null, status: 'unsupported' },
       'a persisted binding to a reference attribute reads unsupported rather than as the referenced id',
     );
+  });
+
+  it('family bindings honour their persisted kind, and an overlay edit keeps sibling quantities (#4833 review)', async () => {
+    const bytes = await readFile(SAMPLE);
+    const store = await new IfcParser().parseColumnar(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const reader = createElementFieldReader(store);
+    assert.deepEqual(reader.readResolved(52, persisted('{"kind":"material","valueKind":"number"}')), { value: null, status: 'unsupported' });
+    assert.deepEqual(reader.readResolved(52, persisted('{"kind":"type","valueKind":"boolean"}')), { value: null, status: 'unsupported' });
+    assert.deepEqual(reader.readResolved(52, persisted('{"kind":"quantity","qsetName":"Qto_SlabBaseQuantities","quantityName":"NetArea","valueKind":"boolean"}')), { value: null, status: 'unsupported' });
+    assert.equal(reader.readResolved(52, { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'NetArea', valueKind: 'category' }).value, '25.749999999991743');
+    // A view without a quantity extractor that edits one quantity keeps the untouched siblings and sets.
+    const view = new MutablePropertyView(store.properties, 'fixture');
+    view.setQuantity(52, 'Qto_SlabBaseQuantities', 'NetArea', 30, QuantityType.Area);
+    const edited = createElementFieldReader(store, view);
+    assert.equal(edited.readResolved(52, { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'NetArea', valueKind: 'number' }).value, 30);
+    assert.equal(edited.readResolved(52, { kind: 'quantity', qsetName: 'Qto_SlabBaseQuantities', quantityName: 'Depth', valueKind: 'number' }).value, 250.00000000009484, 'the untouched sibling survives the overlay');
+  });
+
+  it('a type quantity the occurrence overrides does not shape the field, a type-derived edit keeps the type scale, and two same-named base sets both contribute (#4833 review)', async () => {
+    // Slab type #50 gains Qto_Probe.Size as a LENGTH in centimetres and Qto_Probe.Extra; occurrence #52 carries Qto_Probe.Size as an AREA.
+    const store = await parseSampleWith(`
+#60070=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);
+#60071=IFCQUANTITYLENGTH('Size',$,#60070,40.,$);
+#60072=IFCQUANTITYLENGTH('Extra',$,$,7.,$);
+#60073=IFCELEMENTQUANTITY('g-type-qto',#1,'Qto_Probe',$,$,(#60071,#60072));
+#60074=IFCQUANTITYAREA('Size',$,$,9.,$);
+#60075=IFCELEMENTQUANTITY('g-occ-qto',#1,'Qto_Probe',$,$,(#60074));
+#60076=IFCRELDEFINESBYPROPERTIES('g-occ-qto-rel',#1,$,$,(#52),#60075);`, (source) => {
+      assert.ok(source.includes('(#963)'));
+      return source.replace('(#963)', '(#963,#60073)');
+    });
+    const reader = createElementFieldReader(store);
+    const size = reader.discover([52]).quantities.get('Qto_Probe')?.find(({ binding }) => binding.kind === 'quantity' && binding.quantityName === 'Size')?.binding;
+    assert.equal(size?.valueKind, 'number', 'the overridden type length must not make the area categorical');
+    assert.equal(size?.dataType, 'IFCAREAMEASURE');
+    // A type-derived quantity edited on the type object keeps the type's explicit centimetre scale.
+    const view = new MutablePropertyView(store.properties, 'fixture');
+    view.setQuantity(50, 'Qto_Probe', 'Extra', 8, QuantityType.Length);
+    const extra = createElementFieldReader(store, view).readResolved(52, { kind: 'quantity', qsetName: 'Qto_Probe', quantityName: 'Extra', valueKind: 'number', dataType: 'IFCLENGTHMEASURE' });
+    assert.equal(extra.value, 8);
+    const sizeOnType = createElementFieldReader(store, view).readResolved(52, { kind: 'quantity', qsetName: 'Qto_Probe', quantityName: 'Size', valueKind: 'number', dataType: 'IFCAREAMEASURE' });
+    assert.equal(sizeOnType.value, 9, 'the occurrence area still wins');
+    const typeView = new MutablePropertyView(store.properties, 'fixture');
+    typeView.setQuantity(50, 'Qto_Probe', 'Size', 41, QuantityType.Length);
+    // Occurrence #52 overrides Size, so the type edit is only visible on an element without its own Size: read the type quantity via a fresh store where the occurrence set is absent.
+    const typeOnly = await parseSampleWith(`
+#60070=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);
+#60071=IFCQUANTITYLENGTH('Size',$,#60070,40.,$);
+#60073=IFCELEMENTQUANTITY('g-type-qto',#1,'Qto_Probe',$,$,(#60071));`, (source) => source.replace('(#963)', '(#963,#60073)'));
+    const typeOnlyView = new MutablePropertyView(typeOnly.properties, 'fixture');
+    typeOnlyView.setQuantity(50, 'Qto_Probe', 'Size', 41, QuantityType.Length);
+    assert.deepEqual(createElementFieldReader(typeOnly, typeOnlyView).readResolved(52, { kind: 'quantity', qsetName: 'Qto_Probe', quantityName: 'Size', valueKind: 'number', dataType: 'IFCLENGTHMEASURE' }), { value: 41, status: 'value', dataType: 'IFCLENGTHMEASURE', unitSiScale: 0.01 }, 'an edit on the type keeps the type quantity\'s explicit centimetre scale');
   });
 });

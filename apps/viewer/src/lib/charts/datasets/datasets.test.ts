@@ -392,6 +392,67 @@ END-ISO-10303-21;`);
     assert.equal(cellOf(buildElementsDataset({ kind: 'all' }, [ratio], useViewerStore.getState()), ratio, GID(41)).status, 'unsupported');
   });
 
+  it('elements: a quantity sums in one unit across a millimetre and a metre model, and honours its own explicit Unit (#4833)', async () => {
+    const qtoModel = async (id: string, offset: number, prefix: string, depth: string, unitRef = '$', extra = '') => {
+      const source = MINI_IFC
+        .replace("#1=IFCPROJECT('0Project0000000000000a',$,'P',$,$,$,$,$,$);", "#1=IFCPROJECT('0Project0000000000000a',$,'P',$,$,$,$,$,#202);")
+        .replace('ENDSEC;\nEND-ISO-10303-21;', `#200=IFCSIUNIT(*,.LENGTHUNIT.,${prefix},.METRE.);
+#202=IFCUNITASSIGNMENT((#200));
+${extra}
+#203=IFCQUANTITYLENGTH('Depth',$,${unitRef},${depth},$);
+#204=IFCELEMENTQUANTITY('0Qto000000000000000204',$,'Qto_WallBaseQuantities',$,'BaseQuantities',(#203));
+#205=IFCRELDEFINESBYPROPERTIES('0Rel00000000000000205',$,$,$,(#41),#204);
+ENDSEC;
+END-ISO-10303-21;`);
+      return { ...fixtureModel(id, { idOffset: offset }), ifcDataStore: await new IfcParser().parseColumnar(new TextEncoder().encode(source).buffer), maxExpressId: 210 };
+    };
+    const mm = await qtoModel('mm', 0, '.MILLI.', '250.');
+    const metre = await qtoModel('metre', OFFSET, '$', '0.25');
+    // A metre-project quantity that declares its own centimetre unit.
+    const explicit = await qtoModel('explicit', 2 * OFFSET, '$', '25.', '#206', '#206=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);');
+    const field: ElementFieldBinding = { kind: 'quantity', qsetName: 'Qto_WallBaseQuantities', quantityName: 'Depth', valueKind: 'number', dataType: 'IFCLENGTHMEASURE' };
+    assert.deepEqual(createElementFieldReader(mm.ifcDataStore).discover([41]).quantities.get('Qto_WallBaseQuantities')?.[0]?.binding, field);
+    useViewerStore.setState({ models: new Map([[mm.id, mm], [metre.id, metre], [explicit.id, explicit]]), activeModelId: mm.id, mutationViews: new Map(), mutationVersion: 0, unitDisplayOverrides: {} });
+    const dataset = buildElementsDataset({ kind: 'all' }, [field], useViewerStore.getState());
+    const near = (cell: { value: unknown }, expected: number) => typeof cell.value === 'number' && Math.abs(cell.value - expected) < 1e-9;
+    assert.equal(cellOf(dataset, field, 41).unit, 'mm');
+    assert.ok(near(cellOf(dataset, field, 41), 250));
+    assert.ok(near(cellOf(dataset, field, GID(41)), 250), `0.25 m is 250 mm, got ${String(cellOf(dataset, field, GID(41)).value)}`);
+    assert.ok(near(cellOf(dataset, field, 2 * OFFSET + 41), 250), `25 cm is 250 mm, got ${String(cellOf(dataset, field, 2 * OFFSET + 41).value)}`);
+    const agg = aggregate({ id: 'q', title: 'q', source: 'elements', type: 'bar', dimension: 'Model', measure: { agg: 'sum', column: elementFieldColumnId(field) } }, dataset);
+    assert.ok(Math.abs(agg.total - 750) < 1e-9);
+    assert.equal(agg.unit, 'mm');
+  });
+
+  it('elements: one quantity name observed as a Length in one model and an Area in another is a category, not a mis-typed sum (#4833 review)', async () => {
+    const qsetOf = (klass: string, value: string) => `#200=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);
+#202=IFCUNITASSIGNMENT((#200));
+#203=${klass}('Size',$,$,${value},$);
+#204=IFCELEMENTQUANTITY('0Qto000000000000000204',$,'Qto_Probe',$,$,(#203));
+#205=IFCRELDEFINESBYPROPERTIES('0Rel00000000000000205',$,$,$,(#41),#204);
+ENDSEC;
+END-ISO-10303-21;`;
+    const parsedQto = async (id: string, offset: number, klass: string, value: string) => ({
+      ...fixtureModel(id, { idOffset: offset }),
+      ifcDataStore: await new IfcParser().parseColumnar(new TextEncoder().encode(MINI_IFC
+        .replace("#1=IFCPROJECT('0Project0000000000000a',$,'P',$,$,$,$,$,$);", "#1=IFCPROJECT('0Project0000000000000a',$,'P',$,$,$,$,$,#202);")
+        .replace('ENDSEC;\nEND-ISO-10303-21;', qsetOf(klass, value))).buffer),
+      maxExpressId: 205,
+    });
+    const asLength = await parsedQto('len', 0, 'IFCQUANTITYLENGTH', '2.');
+    const asArea = await parsedQto('area', OFFSET, 'IFCQUANTITYAREA', '3.');
+    const { mergeObservations, catalogFromObservations, emptyObservations } = await import('../element-field-discovery.js');
+    const merged = emptyObservations();
+    mergeObservations(merged, createElementFieldReader(asLength.ifcDataStore).observe([41]));
+    mergeObservations(merged, createElementFieldReader(asArea.ifcDataStore).observe([41]));
+    const size = catalogFromObservations(merged).quantities.get('Qto_Probe')?.[0]?.binding;
+    assert.equal(size?.kind, 'quantity');
+    assert.equal(size?.valueKind, 'category', 'a length and an area cannot share one sum');
+    useViewerStore.setState({ models: new Map([[asLength.id, asLength], [asArea.id, asArea]]), activeModelId: asLength.id, mutationViews: new Map(), mutationVersion: 0, unitDisplayOverrides: {} });
+    const dataset = buildElementsDataset({ kind: 'all' }, [size!], useViewerStore.getState());
+    assert.deepEqual([cellOf(dataset, size!, 41).value, cellOf(dataset, size!, GID(41)).value], ['2 m', '3 m²'], 'both rows chart as unit-qualified categories');
+  });
+
   it('clash: the fingerprint follows a regroup and a review status edit, so a selected Other bucket cannot stay live on moved rows (#4833)', async () => {
     const engine = createClashEngine({ backend: 'ts' });
     const result = await engine.run(
