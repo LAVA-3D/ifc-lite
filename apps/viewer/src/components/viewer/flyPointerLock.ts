@@ -43,9 +43,22 @@ const warn = (error: unknown): void => {
 export function createFlyPointerLock(): FlyPointerLock {
   let target: LockableElement | null = null;
   let requested = false;
+  /**
+   * Bumped by every `arm()` and `release()`. A request settles asynchronously
+   * and a quick gesture can end first, so each continuation checks that its
+   * session is still the live one before retrying, and gives back a lock the
+   * browser granted to a session that no longer exists (#4868 review).
+   */
+  let session = 0;
+
+  /** A grant for a dead session: exit it, unless a live session on the same element now owns it. */
+  const settleStale = (el: LockableElement): void => {
+    if (target !== el && el.ownerDocument.pointerLockElement === el) el.ownerDocument.exitPointerLock();
+  };
 
   return {
     arm(element) {
+      session++;
       target = element ? (element as unknown as LockableElement) : null;
       requested = false;
     },
@@ -55,15 +68,20 @@ export function createFlyPointerLock(): FlyPointerLock {
       if (!el || requested || typeof el.requestPointerLock !== 'function') return;
       requested = true;
       if (el.ownerDocument.pointerLockElement === el) return;
+      const token = session;
+      const onGranted = (): void => {
+        if (token !== session) settleStale(el);
+      };
       try {
         // `unadjustedMovement` asks for raw device deltas, i.e. without the OS
         // mouse acceleration curve, so a slow sweep and a fast one turn the
         // same amount per centimetre of desk. Engines that do not know the
         // option reject the promise, so retry plainly; engines that do not
         // return a promise have nothing to retry.
-        void Promise.resolve(el.requestPointerLock({ unadjustedMovement: true })).catch(() => {
+        void Promise.resolve(el.requestPointerLock({ unadjustedMovement: true })).then(onGranted, () => {
+          if (token !== session) return; // the gesture is over; do not start a new request
           try {
-            void Promise.resolve(el.requestPointerLock?.()).catch(warn);
+            void Promise.resolve(el.requestPointerLock?.()).then(onGranted, warn);
           } catch (error) {
             warn(error);
           }
@@ -76,6 +94,7 @@ export function createFlyPointerLock(): FlyPointerLock {
     isLocked: () => target !== null && target.ownerDocument.pointerLockElement === target,
 
     release() {
+      session++;
       const doc = target?.ownerDocument;
       target = null;
       requested = false;
