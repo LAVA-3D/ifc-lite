@@ -116,15 +116,19 @@ const VELOCITY_SMOOTHING_S = 0.06;
 /** Frame gaps longer than this (tab hidden, GC pause) are not integrated as one giant step. */
 const MAX_FRAME_S = 0.1;
 /**
- * Look travel, in pixels, below which a right-press is still a click.
+ * Look travel, in pixels, past which a right-press is a gesture rather than a
+ * click: it takes the pointer lock straight away, ahead of the hold timer, and
+ * its release shows no context menu.
  *
- * Under pointer lock the cursor does not move, so the caller's own
- * client-coordinate drag threshold measures nothing and every look would read
- * as a plain right-click that pops the context menu on release.
+ * ONE threshold for both on purpose (#4868 review). A lock taken below the
+ * click verdict made the browser withhold `contextmenu` for a press that was
+ * still classified as a click, so the menu was simply lost. It equals the
+ * caller's own 5px client-coordinate drag threshold, and the summed travel is
+ * never less than the displacement, so anything that caller counts as a drag
+ * is a gesture here too. Under pointer lock the cursor does not move, which is
+ * why the controller has to measure this itself.
  */
-const LOOK_CLICK_SLOP_PX = 6;
-/** Look travel that promotes the press to a gesture straight away, ahead of the hold timer. */
-const LOCK_LOOK_PX = 3;
+const LOOK_CLICK_SLOP_PX = 5;
 /**
  * How long the right button must be held before the press is a fly gesture
  * rather than a click.
@@ -266,6 +270,9 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
       active = true;
       flew = false;
       menuDeferred = false;
+      // A previous flight whose trailing `contextmenu` never came must not
+      // swallow the menu of this press (#4868 review).
+      suppressMenuUntil = -Infinity;
       lookTravel = 0;
       pressedAt = now();
       velocity = { x: 0, y: 0, z: 0 };
@@ -286,7 +293,7 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
       const lookY = locked && movementY !== undefined ? movementY : dy;
       if (lookX === 0 && lookY === 0) return;
       lookTravel += Math.abs(lookX) + Math.abs(lookY);
-      if (lookTravel > LOCK_LOOK_PX) lock.request();
+      if (lookTravel > LOOK_CLICK_SLOP_PX) lock.request();
       apply(flyLook(pose(), lookX, lookY));
     },
 

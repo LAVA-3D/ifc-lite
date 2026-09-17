@@ -146,7 +146,13 @@ describe('createFlyController', () => {
 
   /** A stub canvas that records pointer-lock requests. */
   function lockable() {
-    const doc = { pointerLockElement: null as unknown, exitPointerLock: () => { doc.pointerLockElement = null; } };
+    const doc = Object.assign(new EventTarget(), {
+      pointerLockElement: null as unknown,
+      exitPointerLock: () => {
+        doc.pointerLockElement = null;
+        doc.dispatchEvent(new Event('pointerlockchange'));
+      },
+    });
     const canvas = {
       ownerDocument: doc,
       requested: 0,
@@ -286,5 +292,39 @@ describe('createFlyController', () => {
     const plain = travel(3);
     const withCtrl = travel(3, { ctrlKey: true });
     assert.ok(Math.abs(withCtrl - plain) < plain * 0.01, `ctrl ${withCtrl} should match plain ${plain}`);
+  });
+
+  /**
+   * #4868 review: a flight whose trailing `contextmenu` never arrived left the
+   * suppression armed, and it swallowed the genuine menu of a quick right-click
+   * made inside that window.
+   */
+  it('a new press clears the previous flight\'s menu suppression (#4868)', () => {
+    const { fly } = rig();
+    const { el } = lockable();
+    fly.begin(el);
+    fly.look(20, 0);
+    assert.equal(fly.end(), 'flew');
+    fly.begin(el); // a quick right-click right after, with no menu event in between
+    assert.equal(fly.end(), 'none');
+    assert.equal(fly.consumeMenuSuppression(), false, 'the click\'s own menu must reach the viewer');
+  });
+
+  /**
+   * #4868 review: 4px of travel took the pointer lock (which makes the browser
+   * withhold `contextmenu`) yet still ended as a plain click, so the menu was
+   * lost. Whatever takes the lock must classify as a gesture, and vice versa.
+   */
+  it('one threshold decides both the lock and the click/gesture verdict (#4868)', () => {
+    for (let px = 1; px <= 12; px++) {
+      const { fly } = rig();
+      const { canvas, el } = lockable();
+      fly.begin(el);
+      fly.look(px, 0);
+      const locked = canvas.requested > 0;
+      const verdict = fly.end();
+      assert.equal(locked, verdict === 'flew', `${px}px: locked=${locked} but end()=${verdict}`);
+      fly.dispose();
+    }
   });
 });
