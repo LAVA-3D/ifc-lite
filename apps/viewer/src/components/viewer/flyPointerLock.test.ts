@@ -17,11 +17,16 @@ interface Deferred { resolve(): void; reject(error: Error): void }
 
 /** An element whose lock requests stay pending until the test settles them. */
 function slowLockable() {
-  const doc = {
+  // Fires `pointerlockchange` on grant and exit, as browsers do.
+  const doc = Object.assign(new EventTarget(), {
     pointerLockElement: null as unknown,
     exits: 0,
-    exitPointerLock() { doc.pointerLockElement = null; doc.exits++; },
-  };
+    exitPointerLock() {
+      doc.pointerLockElement = null;
+      doc.exits++;
+      doc.dispatchEvent(new Event('pointerlockchange'));
+    },
+  });
   const requests: { options?: { unadjustedMovement?: boolean }; settle: Deferred }[] = [];
   const el = {
     ownerDocument: doc,
@@ -31,7 +36,7 @@ function slowLockable() {
           options,
           settle: {
             // A grant is the browser making this element the lock holder.
-            resolve: () => { doc.pointerLockElement = el; resolve(); },
+            resolve: () => { doc.pointerLockElement = el; doc.dispatchEvent(new Event('pointerlockchange')); resolve(); },
             reject,
           },
         });
@@ -106,5 +111,29 @@ describe('createFlyPointerLock session lifetime (#4868)', () => {
     await flush();
     assert.equal(doc.pointerLockElement, element, 'the newer session still holds its lock');
     assert.equal(doc.exits, 0);
+  });
+
+  /**
+   * #4868 review: the stale grant lands after the next press armed the same
+   * element but BEFORE that press asked for a lock. Nobody requested it, and a
+   * held lock makes the browser withhold `contextmenu`, so a quick right-click
+   * would lose its menu.
+   */
+  it('exits a stale grant that lands before the new session requests a lock', async () => {
+    let lost = 0;
+    const lock = createFlyPointerLock(() => { lost++; });
+    const { doc, element, requests } = slowLockable();
+    lock.arm(element);
+    lock.request();
+    lock.release();
+    lock.arm(element); // next press, not yet a gesture
+    requests[0].settle.resolve();
+    await flush();
+    assert.equal(doc.pointerLockElement, null, 'the unrequested lock must be given back');
+    assert.equal(lock.isLocked(), false);
+    assert.equal(lost, 0, 'giving back a lock the new session never held is not a lost lock; the flight goes on');
+
+    lock.request(); // the new press becomes a gesture and asks for its own lock
+    assert.equal(requests.length, 2, 'and can still take one');
   });
 });

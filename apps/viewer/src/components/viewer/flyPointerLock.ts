@@ -55,7 +55,8 @@ export function createFlyPointerLock(onLost?: () => void): FlyPointerLock {
     const el = target;
     if (!el) return;
     if (el.ownerDocument.pointerLockElement === el) {
-      heldLock = true;
+      // Only a lock this session asked for is its own; a stale grant is given back.
+      if (requested) heldLock = true;
     } else if (heldLock) {
       heldLock = false;
       onLost?.();
@@ -73,9 +74,14 @@ export function createFlyPointerLock(onLost?: () => void): FlyPointerLock {
    */
   let session = 0;
 
-  /** A grant for a dead session: exit it, unless a live session on the same element now owns it. */
+  /**
+   * A grant for a dead session: exit it, unless a live session on the same
+   * element has requested the lock itself. A newer press that has not asked
+   * yet is still a click, and a held lock would make the browser withhold its
+   * `contextmenu` (#4868 review).
+   */
   const settleStale = (el: LockableElement): void => {
-    if (target !== el && el.ownerDocument.pointerLockElement === el) el.ownerDocument.exitPointerLock();
+    if ((target !== el || !requested) && el.ownerDocument.pointerLockElement === el) el.ownerDocument.exitPointerLock();
   };
 
   return {
