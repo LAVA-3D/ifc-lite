@@ -60,6 +60,13 @@ export interface FlyControllerOptions {
   /** Called after every camera change (render, rotation readouts, scale bar). */
   onChange: () => void;
   /**
+   * The camera interaction policy. Fly neither starts nor moves the camera
+   * while this is false: it drives the camera through its programmatic
+   * setters, which the embed's `?controls=` freeze does not gate, so the
+   * caller has to (#4868 review). Defaults to always allowed.
+   */
+  canFly?: () => boolean;
+  /**
    * The session ended without a button release: the window lost focus, the
    * tab was hidden, or the pointer lock was taken away (Esc). The caller drops
    * its own drag state here, since no pointerup is coming.
@@ -87,9 +94,10 @@ export interface FlyController {
   /**
    * Start flying. The element, when given, is the one pointer-locked once the
    * press becomes a gesture, so the cursor stops at the screen edge instead of
-   * running off it mid-look.
+   * running off it mid-look. Returns false, without starting, when the
+   * interaction policy forbids flying.
    */
-  begin(element?: Element | null): void;
+  begin(element?: Element | null): boolean;
   /**
    * Look around. `movementX/Y` are the deltas to prefer while pointer lock is
    * held (they keep arriving past the screen edge); the client-coordinate
@@ -163,6 +171,8 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
   const cancelFrame = opts.cancelFrame ?? ((id) => cancelAnimationFrame(id));
   const now = opts.now ?? (() => performance.now());
 
+  const canFly = opts.canFly ?? (() => true);
+
   const held = new Set<string>();
   // Esc (or the browser) taking the lock away mid-flight ends the session.
   const lock = createFlyPointerLock(() => cancel());
@@ -201,6 +211,12 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
     const t = now();
     const dt = Math.min(MAX_FRAME_S, Math.max(0, (t - lastFrame) / 1000));
     lastFrame = t;
+    if (!canFly()) {
+      // Frozen mid-flight (a live config update): hold still, keep the session.
+      velocity = { x: 0, y: 0, z: 0 };
+      frameId = requestFrame(tick);
+      return;
+    }
 
     // The hold itself is what promotes a press to a gesture; the loop already
     // runs every frame, so it doubles as that timer.
@@ -294,7 +310,8 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
     isActive: () => active,
 
     begin(element) {
-      if (active) return;
+      if (active) return true;
+      if (!canFly()) return false;
       active = true;
       flew = false;
       menuDeferred = false;
@@ -310,10 +327,11 @@ export function createFlyController(opts: FlyControllerOptions): FlyController {
       lastFrame = pressedAt;
       frameId = requestFrame(tick);
       setFlySpeedState({ active: true });
+      return true;
     },
 
     look(dx, dy, movementX, movementY) {
-      if (!active) return;
+      if (!active || !canFly()) return;
       // Under pointer lock the client coordinates stop moving (the cursor is
       // pinned), so the movement deltas are the only live signal.
       const locked = lock.isLocked();

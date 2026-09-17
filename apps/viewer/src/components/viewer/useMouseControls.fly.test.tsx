@@ -147,6 +147,23 @@ describe('useMouseControls right-button fly mode', () => {
     assert.equal(menus.length, 1);
   });
 
+  /** #4868 review: `?controls=none` freezes the embed, and fly must not be a way around it. */
+  it('a frozen view (controls=none) does not fly on the right button (#4868)', () => {
+    const { canvas, camera } = mount();
+    camera.setInteractionMode('none'); // what Viewport's setInteractionMode callback does
+    const initial = useViewerStore.getState().interactionMode;
+    useViewerStore.setState({ interactionMode: 'none' });
+    try {
+      canvas.dispatchEvent(pointer('pointerdown', 2, 400, 300));
+      canvas.dispatchEvent(pointer('pointermove', 2, 460, 330));
+      canvas.dispatchEvent(pointer('pointerup', 2, 460, 330));
+      assert.deepEqual(camera.getPosition(), { x: 0, y: 1.6, z: 10 });
+      assert.deepEqual(camera.getTarget(), { x: 0, y: 1.6, z: 0 }, 'a frozen view must not turn');
+    } finally {
+      useViewerStore.setState({ interactionMode: initial });
+    }
+  });
+
   /**
    * #4868 review: Alt-Tab with the button held and the pointerup never comes.
    * The flight has to end with the focus, and so does the hook's drag, or the

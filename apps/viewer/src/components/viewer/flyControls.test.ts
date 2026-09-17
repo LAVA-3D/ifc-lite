@@ -24,7 +24,7 @@ interface Rig {
 
 const rigs: FlyController[] = [];
 
-function rig(extra: Pick<FlyControllerOptions, 'onCancel'> = {}): Rig {
+function rig(extra: Pick<FlyControllerOptions, 'canFly' | 'onCancel'> = {}): Rig {
   const camera = new Camera();
   camera.setPosition(0, 1.6, 10);
   camera.setTarget(0, 1.6, 0);
@@ -363,6 +363,25 @@ describe('createFlyController', () => {
     fly.look(20, 0);
     assert.equal(fly.end(), 'flew');
     assert.equal(cancelled, 0);
+  });
+
+  /** #4868 review: `?controls=none` freezes the embed; fly must not be a way around it. */
+  it('does not start, look or move while the interaction policy forbids it (#4868)', () => {
+    let allowed = false;
+    const { fly, camera, frames } = rig({ canFly: () => allowed });
+    assert.equal(fly.begin(), false, 'a frozen view refuses the session');
+    assert.equal(fly.isActive(), false);
+
+    allowed = true;
+    assert.equal(fly.begin(), true);
+    allowed = false; // e.g. a live SET_CONFIG froze the view mid-flight
+    const target = camera.getTarget();
+    fly.look(40, 0);
+    key('keydown', 'KeyW');
+    frames(30);
+    key('keyup', 'KeyW');
+    assert.deepEqual(camera.getTarget(), target, 'no look under a frozen policy');
+    assert.equal(camera.getPosition().z, 10, 'no travel under a frozen policy');
   });
 
   /**

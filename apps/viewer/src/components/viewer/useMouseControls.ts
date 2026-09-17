@@ -463,7 +463,8 @@ export function useMouseControls(params: UseMouseControlsParams): void {
       mouseState.didDrag = false;
       mouseState.isRectSelecting = false;
       // Right button held = fly (look + WASD/QE + wheel speed) in every tool; the middle button still pans.
-      if (e.button === 2) { fly.begin(canvas); canvas.style.cursor = 'crosshair'; return; }
+      // A frozen view (`?controls=` other than 'all') refuses to fly and falls through to the camera-gated pan.
+      if (e.button === 2 && fly.begin(canvas)) { canvas.style.cursor = 'crosshair'; return; }
 
       // Determine action based on active tool and mouse button
       const tool = activeToolRef.current;
@@ -829,6 +830,8 @@ export function useMouseControls(params: UseMouseControlsParams): void {
     const fineZoomModifier = createFineZoomModifierTracker();
     const fly = createFlyController({
       camera,
+      // Fly drives the camera through its programmatic setters, which the embed freeze does not gate (#4868 review).
+      canFly: () => useViewerStore.getState().interactionMode === 'all',
       onChange: () => {
         isInteractingRef.current = true; renderer.requestRender(); updateCameraRotationRealtime(camera.getRotation()); calculateScale();
       },
