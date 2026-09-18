@@ -54,6 +54,8 @@ export { DEFAULT_CAP_STYLE, HATCH_PATTERN_IDS } from './section-cap-style.js';
 export type { SectionCapStyle, HatchPatternId } from './section-cap-style.js';
 export { planeBasis, nearestCardinalAxis } from './section-plane-basis.js';
 export { MAX_CLIP_PLANES, resolveClipPlanes, clipBoxToPlanes, pointClippedByPlanes } from './clip-planes.js';
+export { resolveSectionSliderRange, sliderPositionInRange } from './section-slider-range.js';
+export type { SliderRange } from './section-slider-range.js';
 export type { PlaneBasis, Vec3Tuple } from './section-plane-basis.js';
 export type { Section2DOverlayOptions, Section2DOverlayCapStyle, CutPolygon2D, DrawingLine2D, LineOverlayChannel } from './section-2d-overlay.js';
 export { LINE_OVERLAY_CHANNELS } from './section-2d-overlay.js';

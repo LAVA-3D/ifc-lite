@@ -41,6 +41,7 @@
  */
 
 import type { Vec3, WorldBounds3D } from '@ifc-lite/drawing-2d';
+import { resolveSectionSliderRange, sliderPositionInRange } from '@ifc-lite/renderer';
 
 /** Semantic cut direction, as `SectionPlane.axis` stores it. */
 export type ViewSectionAxis = 'down' | 'front' | 'side';
@@ -159,27 +160,15 @@ function resolveCardinalPlane(input: ViewSectionResolveInput): ShaderPlane {
     }
   }
 
-  const projected = projectedBoundsRange(input.sceneBounds, normal);
-  let minVal = projected.min;
-  let maxVal = projected.max;
-
-  const uiMin = input.uiRange?.min;
-  const uiMax = input.uiRange?.max;
-  if (
-    overrideUnitsMatch(normal, axisComponent) &&
-    uiMin !== undefined &&
-    uiMax !== undefined &&
-    Number.isFinite(uiMin) &&
-    Number.isFinite(uiMax) &&
-    uiMax - uiMin > 1e-6 &&
-    uiMin >= minVal - 1e-3 &&
-    uiMax <= maxVal + 1e-3
-  ) {
-    minVal = uiMin;
-    maxVal = uiMax;
-  }
-
-  return { normal, distance: minVal + (input.plane.position / 100) * (maxVal - minVal) };
+  // The override policy is the renderer's own (`resolveSectionSliderRange`),
+  // imported rather than restated: the on-screen clip, the 3D cap and this
+  // export must agree on where a slider percentage lands.
+  const range = resolveSectionSliderRange(
+    projectedBoundsRange(input.sceneBounds, normal),
+    input.uiRange,
+    overrideUnitsMatch(normal, axisComponent),
+  );
+  return { normal, distance: sliderPositionInRange(range, input.plane.position) };
 }
 
 /** `side` -> X, `down` -> Y, `front` -> Z, exactly as the shader preset maps them. */

@@ -149,11 +149,14 @@ describe('resolveKeptHalfSpace (#2042)', () => {
     // At 25% they separate: 2 + 0.25 * 4 = 3 against 0 + 0.25 * 8 = 2.
     const honoured = resolveKeptHalfSpace(input({ axis: 'down', position: 25, uiRange: { min: 2, max: 6 } }));
     assert.equal(honoured.offset, 3, '25% of the UI range [2, 6], not of the scene range [0, 8]');
-    // A range wider than the scene bounds cannot be a storey scope; ignored.
-    const ignored = resolveKeptHalfSpace(input({ axis: 'down', position: 50, uiRange: { min: -100, max: 100 } }));
-    assert.equal(ignored.offset, 4, 'falls back to 50% of the scene Y extent, which is also 4');
-    const ignoredLow = resolveKeptHalfSpace(input({ axis: 'down', position: 25, uiRange: { min: -100, max: 100 } }));
-    assert.equal(ignoredLow.offset, 2, '25% of [0,8], not of [-100,100]');
+    // A range WIDER than the scene bounds is the whole model the viewer sees
+    // (the GPU only holds the visible types); the screen clip honours it, so
+    // the export must too or it prints a different storey than the screen cuts.
+    const wider = resolveKeptHalfSpace(input({ axis: 'down', position: 25, uiRange: { min: -8, max: 8 } }));
+    assert.equal(wider.offset, -4, '25% of the UI range [-8, 8], not of the scene range [0, 8]');
+    // A range that does not overlap the scene at all is in another frame; ignored.
+    const ignored = resolveKeptHalfSpace(input({ axis: 'down', position: 25, uiRange: { min: 100, max: 120 } }));
+    assert.equal(ignored.offset, 2, '25% of [0,8], not of [100,120]');
   });
 
   it('uses a face-picked plane verbatim, renormalised', () => {

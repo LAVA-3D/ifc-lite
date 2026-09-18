@@ -117,6 +117,23 @@ describe('the 2D section cap keeps axis-aligned units (#2447)', () => {
         assert.strictEqual(h.uploads[0].planePosition, 5);
     });
 
+    it('lands on the same plane as the clip when the viewer range is wider than the meshes', () => {
+        // The floating-cap bug: the viewer's range covers geometry the GPU does
+        // not hold (a hidden type), so it pokes outside MODEL_BOUNDS. Both the
+        // clip and the cap now honour it (section-slider-range.ts): 25% of
+        // [-2, 14] is 2, where the old clip fell back to 25% of [0, 10] = 2.5
+        // while the cap stayed at 2.
+        const h = makeHarness();
+        h.overlays.uploadSection2DOverlay([], [], 'down', 25, { min: -2, max: 14 });
+        assert.strictEqual(h.uploads[0].planePosition, 2);
+    });
+
+    it('ignores a range in another frame and falls back to the model bounds', () => {
+        const h = makeHarness();
+        h.overlays.uploadSection2DOverlay([], [], 'down', 50, { min: 100, max: 120 });
+        assert.strictEqual(h.uploads[0].planePosition, 5);
+    });
+
     it('uploads nothing when there is neither a range nor model bounds', () => {
         const h = makeHarness(null);
         h.overlays.uploadSection2DOverlay([], [], 'side', 50);

@@ -18,6 +18,7 @@
  */
 
 import type { BatchedMesh, Mesh, RenderOptions } from './types.js';
+import { resolveSectionSliderRange, sliderPositionInRange } from './section-slider-range.js';
 
 /** World-space AABB in the renderer's Y-up frame. */
 interface SectionFrameBounds {
@@ -321,10 +322,12 @@ export function resolveSectionPlaneFrame(input: SectionPlaneFrameInput): Section
             // — using those directly was the cause of the "slider moves
             // 1% and the whole model disappears" bug.
             //
-            // Policy: always use the renderer's own bounds for the Y-up
-            // range. Only honour the UI override when it is a valid,
-            // non-degenerate range that lies INSIDE the actual mesh
-            // bounds (e.g. storey filtering from the level picker).
+            // Policy (section-slider-range.ts): honour the UI override when
+            // it is a valid, non-degenerate range that OVERLAPS the mesh
+            // bounds; a degenerate or other-frame range falls back to the
+            // renderer's own. It may be wider than the meshes: the cap and
+            // the 2D drawing use it unconditionally, and a clip on a
+            // different range put the hatched cut a storey off the geometry.
             //
             // The range must be measured along the normal the plane actually
             // cuts with, not along the cardinal axis it was derived from: the
@@ -350,23 +353,18 @@ export function resolveSectionPlaneFrame(input: SectionPlaneFrameInput): Section
                 Math.abs(normal[axisComponent] - 1) <= 1e-6 &&
                 Math.abs(normal[(axisComponent + 1) % 3]) <= 1e-6 &&
                 Math.abs(normal[(axisComponent + 2) % 3]) <= 1e-6;
-            const uiMin = options.sectionPlane.min;
-            const uiMax = options.sectionPlane.max;
-            if (
-                overrideUnitsMatch &&
-                Number.isFinite(uiMin) &&
-                Number.isFinite(uiMax) &&
-                (uiMax as number) - (uiMin as number) > 1e-6 &&
-                (uiMin as number) >= minVal - 1e-3 &&
-                (uiMax as number) <= maxVal + 1e-3
-            ) {
-                minVal = uiMin as number;
-                maxVal = uiMax as number;
-            }
-
-            // Calculate plane distance from position percentage
-            const range = maxVal - minVal;
-            distance = minVal + (options.sectionPlane.position / 100) * range;
+            // One policy shared with the 2D cap upload and the PDF export
+            // (section-slider-range.ts): the override wins whenever it is a
+            // usable range that overlaps the mesh range, so the clip, the cap
+            // and the drawing agree on where 47% is.
+            const range = resolveSectionSliderRange(
+                { min: minVal, max: maxVal },
+                options.sectionPlane,
+                overrideUnitsMatch,
+            );
+            minVal = range.min;
+            maxVal = range.max;
+            distance = sliderPositionInRange(range, options.sectionPlane.position);
         }
 
         sectionPlaneData = { normal, distance, enabled: true };

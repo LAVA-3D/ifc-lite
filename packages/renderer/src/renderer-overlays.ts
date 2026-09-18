@@ -55,6 +55,7 @@ import type { SymbolicFillInput, SymbolicTextInput } from './symbolic-overlay-pi
 import { ClashSolidPipeline, type ClashSolidInput } from './clash-solid-pipeline.js';
 import { aabbEdgeLineList } from './aabb-edges.js';
 import { projectedBoundsRange } from './render-section-plane.js';
+import { resolveSectionSliderRange, sliderPositionInRange } from './section-slider-range.js';
 import { drawSectionOverlays, type ModelBounds } from './render-section-draw.js';
 import type { RenderOptions } from './types.js';
 
@@ -254,10 +255,14 @@ export class RendererOverlays {
         const hasFullRange = sectionRange?.min !== undefined && sectionRange?.max !== undefined;
         if (!hasFullRange && !modelBounds) return;
 
-        const axisRange = modelBounds ? projectedBoundsRange(modelBounds.min, modelBounds.max, axisNormal) : null;
-        const minVal = sectionRange?.min ?? axisRange!.min;
-        const maxVal = sectionRange?.max ?? axisRange!.max;
-        const planePosition = minVal + (position / 100) * (maxVal - minVal);
+        // Same override policy as the clip plane (section-slider-range.ts), so
+        // the cap lands on the plane the shader clips at even when the
+        // viewer's range is wider than the meshes on the GPU. Without model
+        // bounds the override is all there is.
+        const axisRange = modelBounds
+            ? projectedBoundsRange(modelBounds.min, modelBounds.max, axisNormal)
+            : { min: sectionRange!.min!, max: sectionRange!.max! };
+        const planePosition = sliderPositionInRange(resolveSectionSliderRange(axisRange, sectionRange), position);
 
         this.section2DOverlayRenderer.uploadDrawing(polygons, lines, axis, planePosition, flipped);
         this.host.requestRender();
