@@ -37,7 +37,8 @@ import { captureVisibility, describeVisibilityNotice } from './bcf/visibility-ca
 import { capturedSectionPlaneInput, type CapturedSectionPlane } from './bcf/section-plane-position';
 import { bcfWorldOffset, renderFrameBounds, topicToRenderFrame } from './bcf/viewpoint-world-frame';
 import { focusedClashComponents } from './bcf/focused-clash-components';
-import { activeSectionPlane, clearSectionCut, showSectionCut } from '@/store/section-active';
+import { activeSectionPlane, clearSectionCut } from '@/store/section-active';
+import { exportedClippingPlanes, importedClippingPlanes } from './bcf/clip-planes-viewpoint';
 
 // ============================================================================
 // Types
@@ -377,8 +378,10 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
       const capturedSection = capturedSectionPlane ? capturedSectionPlaneInput(capturedSectionPlane, bounds) : null;
       // Only the cut on screen: `enabled` outlives the Section tool (#4806).
       const shown = activeSectionPlane(useViewerStore.getState());
+      // A face-picked cut is written exactly via `clippingPlanes`, not as its cardinal approximation.
       const viewerSectionPlane = capturedSection?.sectionPlane
-        ?? (shown ? { axis: shown.axis, position: shown.position, enabled: true, flipped: shown.flipped } : undefined);
+        ?? (shown && !shown.custom ? { axis: shown.axis, position: shown.position, enabled: true, flipped: shown.flipped } : undefined);
+      const clippingPlanes = exportedClippingPlanes(shown, useViewerStore.getState());
       const viewpointBounds = capturedSection?.bounds ?? bounds;
 
       // Get selected GUIDs - convert expressIds to IFC GlobalId strings.
@@ -444,6 +447,7 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
       return translateViewpoint(createViewpoint({
         camera: cameraState,
         sectionPlane: viewerSectionPlane,
+        clippingPlanes,
         bounds: viewpointBounds,
         snapshot,
         selectedGuids,
@@ -556,20 +560,19 @@ export function useBCF(options: UseBCFOptions = {}): UseBCFResult {
         bounds,
         renderer.getCamera().getDistance() // Use current distance as reference
       );
-      const { camera, sectionPlane: viewpointSectionPlane } = state;
+      const { camera } = state;
 
       if (camera) {
         applyCameraState(renderer, camera, animate);
       }
 
-      // A viewpoint with clipping planes shows its cut (opening the Section
-      // tool — the renderer draws a cut nowhere else); one without clears any
-      // cut, parked ones included, so the view matches the topic (#4910).
-      if (viewpointSectionPlane?.enabled) {
-        showSectionCut(useViewerStore.getState, viewpointSectionPlane);
-      } else {
-        clearSectionCut(useViewerStore.getState);
-      }
+      // The viewpoint's clipping planes become the viewer's clipping planes,
+      // exactly and all of them (docs/architecture/clipping-planes.md); one
+      // without any clears the list. The Section tool's own cut is cleared
+      // either way, parked ones included, so the view matches the topic (#4910).
+      clearSectionCut(useViewerStore.getState);
+      const { dropped } = useViewerStore.getState().replaceClipPlanes(importedClippingPlanes(state.clippingPlanes), bounds);
+      if (dropped > 0) toast.info(`${dropped} clipping planes from the viewpoint could not be applied.`);
 
       // Apply selection from BCF components. A federated viewpoint can select
       // elements across several models, so drive BOTH selection channels:

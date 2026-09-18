@@ -5,10 +5,12 @@
 /**
  * Applying a BCF viewpoint shows exactly its clipping (#4910).
  *
- * The renderer draws a cut only while the Section tool is active. Applying a
- * viewpoint with `<ClippingPlanes>` stored the cut but never opened the tool,
- * so the topic opened uncut; a viewpoint without planes left whatever cut the
- * user had, visible or remembered for the next Section-tool open.
+ * A viewpoint's `<ClippingPlanes>` become the viewer's clipping planes, taken
+ * exactly and never routed into the Section tool
+ * (docs/architecture/clipping-planes.md); the Section tool's own cut is
+ * cleared so the view matches the topic. A viewpoint without planes clears
+ * both: the on-screen cut and the one remembered for the next Section-tool
+ * open.
  */
 
 import '@/test/setup-dom.js';
@@ -121,14 +123,36 @@ describe('useBCF applyViewpoint — section cut (#4910)', () => {
     assert.equal(activeSectionPlane(s()), null);
 
     await act(async () => api!.applyViewpoint(viewpoint, false));
-    const shown = activeSectionPlane(s());
-    assert.ok(shown, 'BUG: the viewpoint cut was stored but is not on screen');
-    assert.equal(s().activeTool, 'section');
-    assert.equal(shown.axis, 'front');
-    assert.ok(Math.abs(shown.position - 30) < 1e-6, `position restored, got ${shown.position}`);
+    // The cut comes back as an exact clipping plane, not as a Section-tool cut:
+    // 'front' at 30% of z in [-8, 8] is the plane z = -3.2 removing +z.
+    assert.equal(activeSectionPlane(s()), null, 'the Section tool is not opened for a viewpoint');
+    assert.equal(s().activeTool, 'select');
+    const planes = s().clipPlanes;
+    assert.equal(planes.length, 1, 'BUG: the viewpoint cut was stored but is not on screen');
+    assert.ok(Math.abs(planes[0].normal[2] + 1) < 1e-9 && Math.abs(planes[0].normal[0]) < 1e-9 && Math.abs(planes[0].normal[1]) < 1e-9,
+      `removes the +z half, got ${planes[0].normal.join(',')}`);
+    assert.ok(Math.abs(planes[0].distance - 3.2) < 1e-6, `plane at z = -3.2, got distance ${planes[0].distance}`);
 
     const again = await capture();
     assert.equal(again.clippingPlanes?.length, 1, 'capturing the applied view keeps its cut');
+    assert.ok(Math.abs(again.clippingPlanes![0].location.y - 3.2) < 1e-6, 'and writes the same plane (BCF y = -viewer z)');
+  });
+
+  it('a viewpoint with several planes keeps all of them; one without clears the list', async () => {
+    const boxed: BCFViewpoint = {
+      guid: '66666666-6666-4666-8666-666666666666',
+      clippingPlanes: [
+        { location: { x: 0, y: 0, z: 9 }, direction: { x: 0, y: 0, z: 1 } },   // remove above z(BCF)=9 → viewer y > 9
+        { location: { x: 0, y: 0, z: 2 }, direction: { x: 0, y: 0, z: -1 } },  // remove below viewer y = 2
+        { location: { x: 5, y: 0, z: 0 }, direction: { x: 1, y: 0, z: 0 } },   // remove x > 5
+      ],
+    };
+    await act(async () => api!.applyViewpoint(boxed, false));
+    assert.equal(s().clipPlanes.length, 3, 'every plane is applied, in file order');
+    assert.deepEqual(s().clipPlanes.map((p) => p.normal.map((v) => Math.round(v) || 0)), [[0, 1, 0], [0, -1, 0], [1, 0, 0]]);
+
+    await act(async () => api!.applyViewpoint({ guid: '77777777-7777-4777-8777-777777777777' }, false));
+    assert.equal(s().clipPlanes.length, 0, 'a viewpoint without planes clears the list');
   });
 
   it('a viewpoint without clipping planes clears an on-screen cut', async () => {

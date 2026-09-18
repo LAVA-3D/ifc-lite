@@ -48,11 +48,11 @@ export const shadowShaderSource = `
         struct Clip {
           // xyz = plane normal, w = plane distance (world space).
           sectionPlane: vec4<f32>,
-          clipBoxMin: vec4<f32>,
-          clipBoxMax: vec4<f32>,
           // x packs: bit 0 = section enabled, bit 1 = section flipped,
-          //          bit 2 = clip box enabled. Mirrors main.wgsl's flags.y.
+          //          bit 2 = clip planes, bits 8..15 = plane count. Mirrors main.wgsl's flags.y.
           flags: vec4<u32>,
+          // Up to 8 half-spaces (xyz = normal into the removed side, w = distance).
+          clipPlanes: array<vec4<f32>, 8>,
         }
         @binding(2) @group(0) var<uniform> clip: Clip;
 
@@ -122,7 +122,7 @@ export const shadowShaderSource = `
 
         // Clipped variant: discard before the depth write, so a clipped-away
         // occluder leaves the shadow map untouched. Kept byte-for-byte in step
-        // with the fs_main section/clip-box branches.
+        // with the fs_main section/clip-plane branches.
         @fragment
         fn fs_shadow_clip(@location(0) worldPos: vec3<f32>) {
           if ((clip.flags.x & 1u) == 1u) {
@@ -132,8 +132,10 @@ export const shadowShaderSource = `
               discard;
             }
           }
-          if ((clip.flags.x & 4u) != 0u) {
-            if (any(worldPos < clip.clipBoxMin.xyz) || any(worldPos > clip.clipBoxMax.xyz)) {
+          let clipPlaneCount = (clip.flags.x >> 8u) & 0xffu;
+          for (var ci = 0u; ci < clipPlaneCount; ci = ci + 1u) {
+            let cp = clip.clipPlanes[ci];
+            if (dot(worldPos, cp.xyz) - cp.w > 0.0) {
               discard;
             }
           }

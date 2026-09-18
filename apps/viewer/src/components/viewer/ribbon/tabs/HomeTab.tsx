@@ -13,6 +13,7 @@ import { useViewerStore } from '@/store';
 import { goHomeFromStore } from '@/store/homeView';
 import { tourAnchor, toolAnchor } from '@/lib/tours/anchors';
 import { useTranslation } from '@/i18n';
+import { ClipPlanesRibbonButton } from '../ClipPlanesRibbonButton';
 import {
   RibbonGroup,
   RibbonGroupDivider,
@@ -65,6 +66,7 @@ export function HomeTab() {
           onClick={() => setActiveTool('section')}
           {...tourAnchor(toolAnchor('section'))}
         />
+        <ClipPlanesRibbonButton />
         <RibbonLargeButton
           icon={Annotate}
           label={t('ribbon.home.annotate')}

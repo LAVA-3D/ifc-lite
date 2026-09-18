@@ -9,7 +9,7 @@
 import { WebGPUDevice } from './device.js';
 import { mainShaderSource } from './shaders/main.wgsl.js';
 import { texturedShaderSource } from './shaders/textured.wgsl.js';
-import { packClipBox } from './clip-box.js';
+import { packClipPlanes, type ClipPlane } from './clip-planes.js';
 import {
     ENVIRONMENT_UNIFORM_SIZE,
     packEnvironmentUniforms,
@@ -124,10 +124,10 @@ export class RenderPipeline {
             this.multisampleTextureView = this.multisampleTexture.createView();
         }
 
-        // Create uniform buffer for camera matrices, PBR material, section plane + clip box
+        // Create uniform buffer for camera matrices, PBR material, section plane + clip planes
         // Layout: viewProj (64 bytes) + model (64 bytes) + baseColor (16 bytes) + metallicRoughness (8 bytes) +
         //         sectionPlane (16 bytes: vec3 normal + float distance) + flags (16 bytes) +
-        //         clipBoxMin (16 bytes) + clipBoxMax (16 bytes) = 224 bytes
+        //         clipPlanes (8 x 16 bytes) + quantParams (16 bytes) = 336 bytes
         // WebGPU requires uniform buffers to be aligned to 16 bytes
         this.uniformBuffer = this.device.createBuffer({
             size: this.getUniformBufferSize(), // keep in lockstep with the WGSL Uniforms struct
@@ -586,12 +586,12 @@ export class RenderPipeline {
         material?: { metallic?: number; roughness?: number },
         sectionPlane?: { normal: [number, number, number]; distance: number; enabled: boolean; flipped?: boolean },
         isSelected?: boolean,
-        clipBox?: { min: [number, number, number]; max: [number, number, number]; enabled: boolean }
+        clipPlanes?: readonly ClipPlane[] | null
     ): void {
         // Create buffer with proper alignment:
         // viewProj (16) + model (16) + baseColor (4) + metallicRoughness (2) + padding (2)
-        // + sectionPlane (4) + flags (4 u32) + clipBoxMin (4) + clipBoxMax (4) = 56 floats = 224 bytes
-        const buffer = new Float32Array(56);
+        // + sectionPlane (4) + flags (4 u32) + clipPlanes (8 x 4) + quantParams (4) = 84 floats = 336 bytes
+        const buffer = new Float32Array(84);
         const flagBuffer = new Uint32Array(buffer.buffer, 176, 4); // flags at byte 176
 
         // viewProj: mat4x4<f32> at offset 0 (16 floats)
@@ -624,12 +624,12 @@ export class RenderPipeline {
             buffer[43] = sectionPlane.distance;
         }
 
-        // clipBoxMin / clipBoxMax: vec4<f32> at float offsets 48 / 52 (xyz + pad);
-        // returns the flags.y clip-enabled bit (or 0).
-        const clipBit = packClipBox(clipBox, buffer, 48);
+        // clipPlanes: array<vec4<f32>, 8> at float offset 48 (normal.xyz + distance);
+        // returns the flags.y clip-enabled bit + plane count (or 0).
+        const clipBit = packClipPlanes(clipPlanes, buffer, 48);
 
         // flags: vec4<u32> at offset 44 (4 u32 - using flagBuffer view)
-        // flags.y packs: bit 0 = sectionEnabled, bit 1 = sectionFlipped, bit 2 = clipBoxEnabled.
+        // flags.y packs: bit 0 = sectionEnabled, bit 1 = sectionFlipped, bit 2 = clipPlanes, bits 8..15 = plane count.
         flagBuffer[0] = isSelected ? 1 : 0;
         flagBuffer[1] =
             (sectionPlane?.enabled ? 1 : 0) |
@@ -923,10 +923,10 @@ export class RenderPipeline {
     }
 
     getUniformBufferSize(): number {
-        // 60 floats * 4 bytes: section plane + clip box + quantParams
+        // 84 floats * 4 bytes: section plane + 8 clip planes + quantParams
         // (issue #1682 phase 6). Must match the WGSL Uniforms struct and the
         // renderer's uniformScratch length.
-        return 240;
+        return 336;
     }
 
     private destroyed = false;

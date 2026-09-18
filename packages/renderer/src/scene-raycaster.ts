@@ -13,6 +13,7 @@ import type { MeshData } from '@ifc-lite/geometry';
 import type { Vec3, PickClipState } from './types.js';
 import { MathUtils } from './math.js';
 import { reportableItemId } from './pick-resolve.js';
+import { pointClippedByPlanes } from './clip-planes.js';
 
 export interface BoundingBox {
   min: Vec3;
@@ -24,16 +25,17 @@ export interface BoundingBox {
  *  was invisible here in the first place (#2985), after two hand-widenings. */
 export type RaycastPiece = Pick<MeshData, 'positions' | 'indices' | 'entityIds' | 'modelIndex' | 'origin' | 'geometryItemId'>;
 
-/** True when `clip` actually clips anything (a section plane or an enabled box). */
+/** True when `clip` actually clips anything (a section plane or at least one clip plane). */
 export function clipIsActive(clip?: PickClipState | null): boolean {
-  return !!(clip && (clip.sectionPlane || clip.clipBox?.enabled));
+  return !!(clip && (clip.sectionPlane || (clip.clipPlanes && clip.clipPlanes.length > 0)));
 }
 
 /**
- * Is world point (x,y,z) clipped away (invisible) by the section plane or crop
- * box? Mirrors the renderer's fragment discard EXACTLY so a CPU pick can't select
- * geometry the GPU cropped/sectioned off. Section: discard where
- * (dot(p,n) - distance) * side > 0; box: discard outside the AABB.
+ * Is world point (x,y,z) clipped away (invisible) by the section plane or any
+ * clip plane? Mirrors the renderer's fragment discard EXACTLY so a CPU pick
+ * can't select geometry the GPU clipped off: discard where
+ * (dot(p,n) - distance) * side > 0 for the section, and where
+ * dot(p,n) - distance > 0 for any clip plane.
  */
 export function pointClipped(clip: PickClipState | null | undefined, x: number, y: number, z: number): boolean {
   const sp = clip?.sectionPlane;
@@ -41,37 +43,29 @@ export function pointClipped(clip: PickClipState | null | undefined, x: number, 
     const side = sp.flipped ? -1 : 1;
     if ((x * sp.normal[0] + y * sp.normal[1] + z * sp.normal[2] - sp.distance) * side > 0) return true;
   }
-  const b = clip?.clipBox;
-  if (b?.enabled) {
-    if (x < b.min[0] || y < b.min[1] || z < b.min[2] || x > b.max[0] || y > b.max[1] || z > b.max[2]) return true;
-  }
-  return false;
+  return pointClippedByPlanes(clip?.clipPlanes, x, y, z);
+}
+
+/** Every corner of `box` lies where `(dot(p,n) - d) * side > 0`, i.e. wholly removed. */
+function boxBehindPlane(box: BoundingBox, nx: number, ny: number, nz: number, d: number, side: number): boolean {
+  // Corner that minimises (dot(p,n) - d)*side: per axis pick min/max by sign.
+  const px = nx * side >= 0 ? box.min.x : box.max.x;
+  const py = ny * side >= 0 ? box.min.y : box.max.y;
+  const pz = nz * side >= 0 ? box.min.z : box.max.z;
+  return (px * nx + py * ny + pz * nz - d) * side > 0;
 }
 
 /**
- * Is the whole AABB clipped away: every corner cut by the section plane, or no
- * overlap with the crop box? Used to skip fully-hidden entities/boxes before the
- * triangle test (perf) and to clip the bounding-box-only raycast (released geom).
+ * Is the whole AABB clipped away: every corner cut by the section plane or by
+ * one clip plane? Used to skip fully-hidden entities/boxes before the triangle
+ * test (perf) and to clip the bounding-box-only raycast (released geom).
  * Conservative: only skips when NOTHING of the box could be visible.
  */
 export function boxFullyClipped(clip: PickClipState | null | undefined, box: BoundingBox): boolean {
   const sp = clip?.sectionPlane;
-  if (sp) {
-    const side = sp.flipped ? -1 : 1;
-    const [nx, ny, nz] = sp.normal;
-    // Corner that minimises (dot(p,n) - dist)*side: per axis pick min/max by sign.
-    const px = nx * side >= 0 ? box.min.x : box.max.x;
-    const py = ny * side >= 0 ? box.min.y : box.max.y;
-    const pz = nz * side >= 0 ? box.min.z : box.max.z;
-    if ((px * nx + py * ny + pz * nz - sp.distance) * side > 0) return true; // every corner cut
-  }
-  const b = clip?.clipBox;
-  if (b?.enabled) {
-    if (
-      box.max.x < b.min[0] || box.min.x > b.max[0] ||
-      box.max.y < b.min[1] || box.min.y > b.max[1] ||
-      box.max.z < b.min[2] || box.min.z > b.max[2]
-    ) return true; // no overlap with crop box
+  if (sp && boxBehindPlane(box, sp.normal[0], sp.normal[1], sp.normal[2], sp.distance, sp.flipped ? -1 : 1)) return true;
+  for (const cp of clip?.clipPlanes ?? []) {
+    if (boxBehindPlane(box, cp.normal[0], cp.normal[1], cp.normal[2], cp.distance, 1)) return true;
   }
   return false;
 }
@@ -205,11 +199,10 @@ function rayBoxInterval(
 }
 
 /**
- * Entry distance into the VISIBLE part of `box` under the section plane / crop
- * box, or null if the box is wholly clipped along the ray. Unlike a plain box
- * entry, this clips the crop box exactly (AABB intersection) and the section
- * plane as a half-space, so the released-geometry bbox raycast can't return a box
- * whose only ray overlap is in the cropped/sectioned-away region.
+ * Entry distance into the VISIBLE part of `box` under the section plane / clip
+ * planes, or null if the box is wholly clipped along the ray. Every half-space
+ * narrows the ray's box interval to where it is kept, so the released-geometry
+ * bbox raycast can't return a box whose only ray overlap is in a removed region.
  */
 export function clippedBoxEntryDistance(
   rayOrigin: Vec3,
@@ -219,39 +212,29 @@ export function clippedBoxEntryDistance(
   box: BoundingBox,
   clip: PickClipState | null | undefined,
 ): number | null {
-  // Crop box: the visible region inside `box` is exactly box intersect cropBox (both AABB).
-  let testBox = box;
-  const cb = clip?.clipBox;
-  if (cb?.enabled) {
-    const min: Vec3 = { x: Math.max(box.min.x, cb.min[0]), y: Math.max(box.min.y, cb.min[1]), z: Math.max(box.min.z, cb.min[2]) };
-    const max: Vec3 = { x: Math.min(box.max.x, cb.max[0]), y: Math.min(box.max.y, cb.max[1]), z: Math.min(box.max.z, cb.max[2]) };
-    if (min.x > max.x || min.y > max.y || min.z > max.z) return null;
-    testBox = { min, max };
-  }
-  const iv = rayBoxInterval(rayOrigin, rayDirInv, rayDirSign, testBox);
+  const iv = rayBoxInterval(rayOrigin, rayDirInv, rayDirSign, box);
   if (!iv) return null;
   let { tmin, tmax } = iv;
 
-  // Section plane: visible where f(t) = (dot(P(t),n) - dist) * side <= 0.
-  const sp = clip?.sectionPlane;
-  if (sp) {
-    const side = sp.flipped ? -1 : 1;
-    const [nx, ny, nz] = sp.normal;
-    const f0 = (rayOrigin.x * nx + rayOrigin.y * ny + rayOrigin.z * nz - sp.distance) * side;
+  // Keep only where f(t) = (dot(P(t),n) - dist) * side <= 0; false = nothing left.
+  const narrow = (nx: number, ny: number, nz: number, dist: number, side: number): boolean => {
+    const f0 = (rayOrigin.x * nx + rayOrigin.y * ny + rayOrigin.z * nz - dist) * side;
     const slope = (rayDir.x * nx + rayDir.y * ny + rayDir.z * nz) * side;
-    if (Math.abs(slope) < 1e-12) {
-      if (f0 > 0) return null; // ray runs parallel on the cut-away side
+    if (Math.abs(slope) < 1e-12) return f0 <= 0; // parallel: kept iff on the visible side
+    const tCross = -f0 / slope;
+    if (slope > 0) {
+      if (tmin > tCross) return false;       // whole interval cut away
+      if (tmax > tCross) tmax = tCross;      // visible only up to the plane
     } else {
-      const tCross = -f0 / slope;
-      if (slope > 0) {
-        if (tmin > tCross) return null;       // whole interval cut away
-        if (tmax > tCross) tmax = tCross;      // visible only up to the plane
-      } else {
-        if (tmax < tCross) return null;
-        if (tmin < tCross) tmin = tCross;      // visible only beyond the plane
-      }
+      if (tmax < tCross) return false;
+      if (tmin < tCross) tmin = tCross;      // visible only beyond the plane
     }
-    if (tmax < tmin) return null;
+    return tmax >= tmin;
+  };
+  const sp = clip?.sectionPlane;
+  if (sp && !narrow(sp.normal[0], sp.normal[1], sp.normal[2], sp.distance, sp.flipped ? -1 : 1)) return null;
+  for (const cp of clip?.clipPlanes ?? []) {
+    if (!narrow(cp.normal[0], cp.normal[1], cp.normal[2], cp.distance, 1)) return null;
   }
   return tmin < 0 ? 0 : tmin;
 }

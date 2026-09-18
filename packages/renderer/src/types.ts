@@ -169,13 +169,13 @@ export interface SectionPlane {
   distance?: number;
 }
 
+// A world-space half-space (normal into the removed side). See clip-planes.ts.
+export type { ClipPlane } from './clip-planes.js';
+
 /**
- * Axis-aligned clip box (section / crop box): geometry is kept only where it
- * lies INSIDE all six box planes; fragments outside the box are discarded by the
- * shader (real geometry cut, unlike bounding-box element isolation). Coordinates
- * are in the same world space the shader sees as `input.worldPos` — i.e. the
- * viewer space the camera/section planes use. Independent of `sectionPlane`; both
- * can be active at once.
+ * Axis-aligned clip box (section / crop box): a convenience over `clipPlanes`,
+ * expanded into six planes at the renderer boundary. Coordinates are in the
+ * same world space the shader sees as `input.worldPos`.
  */
 export interface ClipBox {
   /** Box min corner [x, y, z] in world space. */
@@ -297,10 +297,11 @@ export interface RenderOptions {
   selectedModelIndex?: number;    // Model index for multi-model selection (must match mesh.modelIndex)
   // Section plane clipping
   sectionPlane?: SectionPlane;
-  // Section / crop box: clip geometry to an axis-aligned world-space box (all six
-  // sides). Independent of `sectionPlane`. The GPU picker mirrors the active
-  // section plane + clip box from the last render, so cropped/sectioned-away
-  // geometry is unpickable too with no extra wiring.
+  // Clipping planes: keep only the intersection of these half-spaces (up to
+  // MAX_CLIP_PLANES, box planes included). Independent of `sectionPlane`. The
+  // GPU picker mirrors the last render's clip state, so removed geometry is
+  // unpickable too with no extra wiring.
+  clipPlanes?: readonly import('./clip-planes.js').ClipPlane[];
   clipBox?: ClipBox;
   // Terrain clipping: discard fragments below this Y value in viewer space.
   // Used by Cesium overlay to prevent model from showing below terrain.
@@ -385,14 +386,13 @@ export interface PickOptions {
  * Resolved clip state the GPU picker mirrors from the most recent render so that
  * section/crop-clipped geometry is unpickable, not just invisible. The renderer
  * stashes this each `render()` and feeds it to the picker; consumers don't build
- * it. Point clouds are clipped by the section plane only (matching the point
- * render); the crop box clips triangle meshes only, on render and on pick.
+ * it.
  */
 export interface PickClipState {
   // Resolved section plane (world space, already enabled), or null when off.
   sectionPlane?: { normal: [number, number, number]; distance: number; flipped: boolean } | null;
-  // Active axis-aligned crop box, or null when off.
-  clipBox?: ClipBox | null;
+  // Resolved clipping planes (explicit planes + expanded box), or null/empty when off.
+  clipPlanes?: readonly import('./clip-planes.js').ClipPlane[] | null;
 }
 
 // `PickResult` lives with the code that builds it (pick-resolve.ts) and is

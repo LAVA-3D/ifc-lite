@@ -21,6 +21,7 @@ import {
   Trash2,
   CopyPlus,
   ShieldQuestion,
+  Scissors,
 } from 'lucide-react';
 import { useViewerStore, resolveEntityRef, resolveGlobalId, toGlobalIdFromModels } from '@/store';
 import type { DuplicateDirection } from '@/store/slices/mutationSlice';
@@ -33,6 +34,8 @@ import {
 } from '@/store/basket/basketCommands';
 import { useIfc } from '@/hooks/useIfc';
 import { toast } from '@/components/ui/toast';
+import { useTranslation } from '@/i18n';
+import { addClipPlaneAtScreenPoint } from '@/lib/clip-planes/add-from-screen';
 import { useSlotContributions } from '@/hooks/useSlotContributions';
 import { useOptionalExtensionHost } from '@/sdk/ExtensionHostProvider';
 import { evaluateWhen, parseWhen, type CommandContribution, type ResolvedContextMenuContribution } from '@ifc-lite/extensions';
@@ -42,6 +45,7 @@ import { describeRunCommandError } from '@/services/extensions/runtime-errors';
 export function EntityContextMenu() {
   const contextMenu = useViewerStore((s) => s.contextMenu);
   const closeContextMenu = useViewerStore((s) => s.closeContextMenu);
+  const { t } = useTranslation();
   const hideEntity = useViewerStore((s) => s.hideEntity);
   const setSelectedEntityId = useViewerStore((s) => s.setSelectedEntityId);
   const setSelectedEntityIds = useViewerStore((s) => s.setSelectedEntityIds);
@@ -166,6 +170,13 @@ export function EntityContextMenu() {
     resetVisibilityForHomeFromStore();
     closeContextMenu();
   }, [closeContextMenu]);
+
+  // Clipping plane through the face under the menu's anchor (docs/architecture/clipping-planes.md).
+  const handleAddClipPlane = useCallback(() => {
+    const { screenX, screenY } = contextMenu;
+    closeContextMenu();
+    addClipPlaneAtScreenPoint(screenX, screenY, t);
+  }, [contextMenu, closeContextMenu, t]);
 
   const handleSelectSimilar = useCallback(() => {
     // Use resolvedExpressId (original ID) for IfcDataStore lookups
@@ -372,6 +383,7 @@ export function EntityContextMenu() {
 
           <MenuItem icon={Maximize2} label="Zoom to" onClick={handleZoomTo} />
           <MenuItem icon={EyeOff} label="Hide" onClick={handleHide} />
+          <MenuItem icon={Scissors} label={t('clipPlanes.context.add')} onClick={handleAddClipPlane} />
 
           <div className="h-px bg-border my-1" />
 

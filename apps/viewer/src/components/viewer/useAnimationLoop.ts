@@ -16,7 +16,7 @@ import { flushPlacementGeometry } from '@/lib/model-placement/bounds-revision';
  *   4. Sync ViewCube, scale bar, measurements.
  */
 import { useEffect, type MutableRefObject, type RefObject } from 'react';
-import type { Renderer, VisualEnhancementOptions, LightingEnvironment } from '@ifc-lite/renderer';
+import type { Renderer, VisualEnhancementOptions, LightingEnvironment, ClipPlane } from '@ifc-lite/renderer';
 import type { CoordinateInfo } from '@ifc-lite/geometry';
 import type { SectionPlane } from '@/store';
 import { chartAwareRendererSelectionFromStore } from '@/lib/charts/renderer-selection';
@@ -55,6 +55,8 @@ export interface UseAnimationLoopParams {
   sunShadowsRef: MutableRefObject<SunShadowSettings | null>;
   sectionPlaneRef: MutableRefObject<SectionPlane>;
   sectionRangeRef: MutableRefObject<{ min: number; max: number } | null>;
+  /** Active clipping planes (docs/architecture/clipping-planes.md); intersected with the section cut. */
+  clipPlanesRef?: MutableRefObject<readonly ClipPlane[]>;
   /**
    * Mirror of the renderer's model bounds, written each frame after
    * render. Read by the section face-pick handler so the cardinal-
@@ -100,6 +102,7 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
     sunShadowsRef,
     sectionPlaneRef,
     sectionRangeRef,
+    clipPlanesRef,
     modelBoundsRef,
     selectedEntityIdsRef,
     clashHighlightColorsRef,
@@ -295,6 +298,7 @@ export function useAnimationLoop(params: UseAnimationLoopParams): void {
               distance: sectionPlaneRef.current.custom?.distance,
             } : undefined,
             terrainClipY: terrainClipYRef.current ?? undefined,
+            clipPlanes: clipPlanesRef?.current,
           });
         } catch (err) {
           if (!renderErrorLogged) {

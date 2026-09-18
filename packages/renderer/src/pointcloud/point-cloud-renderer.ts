@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import type { ClipPlane } from '../clip-planes.js';
 import { assertModelTranslation } from '../model-translation.js';
 
 /**
@@ -62,6 +63,8 @@ export interface PointCloudDrawState {
   viewProj: Float32Array;
   /** Section plane already resolved by the main render path. */
   sectionPlane?: ResolvedSectionPlane | null;
+  /** Clip planes already resolved by the main render path (see clip-planes.ts). */
+  clipPlanes?: readonly ClipPlane[] | null;
   /** Viewport size in pixels — needed by the splat shader to convert
    *  pixel sizes into clip-space offsets. */
   viewport?: { width: number; height: number };
@@ -354,24 +357,14 @@ export class PointCloudRenderer {
 
     pass.setPipeline(this.pipeline.getPipeline());
 
+    // A flipped section keeps the other half: negate both sides of the equation.
     const sp = state.sectionPlane ?? null;
-    let normal: [number, number, number];
-    let distance: number;
-    let enabled: boolean;
-    if (sp && sp.enabled) {
-      enabled = true;
-      if (sp.flipped) {
-        normal = [-sp.normal[0], -sp.normal[1], -sp.normal[2]];
-        distance = -sp.distance;
-      } else {
-        normal = sp.normal;
-        distance = sp.distance;
-      }
-    } else {
-      enabled = false;
-      normal = [0, 1, 0];
-      distance = 0;
-    }
+    const enabled = !!sp?.enabled;
+    const side = enabled && sp!.flipped ? -1 : 1;
+    const normal: [number, number, number] = enabled
+      ? [sp!.normal[0] * side, sp!.normal[1] * side, sp!.normal[2] * side]
+      : [0, 1, 0];
+    const distance = enabled ? sp!.distance * side : 0;
 
     const bounds = this.getBounds();
     const heightMin = bounds ? bounds.min[1] : 0;
@@ -399,6 +392,7 @@ export class PointCloudRenderer {
           sectionNormal: normal,
           sectionDist: distance,
           sectionEnabled: enabled,
+          clipPlanes: state.clipPlanes,
           heightMin,
           heightMax,
           viewportW,

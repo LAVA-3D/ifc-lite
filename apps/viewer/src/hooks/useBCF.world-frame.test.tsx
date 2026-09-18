@@ -196,9 +196,13 @@ describe('useBCF — viewpoints are in IFC world coordinates (#4806)', () => {
     await act(async () => api!.applyViewpoint(viewpoint, false));
     assertNear(applied?.position, LOCAL_POSITION, 'camera position restored in the render frame');
     assertNear(applied?.target, LOCAL_TARGET, 'camera target restored in the render frame');
-    const plane = useViewerStore.getState().sectionPlane;
-    assert.equal(plane.axis, 'down');
-    assert.ok(Math.abs(plane.position - 25) < 1e-6, `section plane position restored, got ${plane.position}`);
+    // The cut returns as an exact clipping plane in the render frame
+    // (docs/architecture/clipping-planes.md): 'down' at 25% of y in [0, 12]
+    // is y = 3, removing +y — so the world offset round-trips for planes too.
+    const [plane] = useViewerStore.getState().clipPlanes;
+    assert.ok(plane, 'the exported cut is applied as a clipping plane');
+    assert.ok(Math.abs(plane.normal[1] + 1) < 1e-9, `removes the -y half, got ${plane.normal.join(',')}`);
+    assert.ok(Math.abs(plane.distance + 3) < 1e-6, `plane at y = 3 in the render frame, got distance ${plane.distance}`);
   });
 
   it('imports another tool’s world-coordinate .bcfv onto the local model', async () => {

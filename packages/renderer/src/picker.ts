@@ -112,11 +112,10 @@ export class Picker {
   /** Set by `destroy()`; makes it idempotent and turns `pick`/`pickRect` into no-ops. */
   private destroyed = false;
   private pointPicker: PointPicker | null = null;
-  // Reused scratch for the 32-float (128-byte) uniform block: viewProj +
-  // clipBoxMin/Max + sectionPlane + clipFlags. `clipFlags` is a u32 view aliasing
-  // floats 28-31 (byte 112): bit 0 = sectionEnabled, bit 1 = flipped, bit 2 = clipBox.
-  private readonly uniformScratch = new Float32Array(32);
-  private readonly clipFlags = new Uint32Array(this.uniformScratch.buffer, 112, 4);
+  // Reused scratch for the 56-float (224-byte) uniform block (layout in
+  // pick-uniforms.ts). `clipFlags` is a u32 view aliasing floats 20-23 (byte 80).
+  private readonly uniformScratch = new Float32Array(56);
+  private readonly clipFlags = new Uint32Array(this.uniformScratch.buffer, 80, 4);
 
   constructor(device: WebGPUDevice, width: number = 1, height: number = 1) {
     this.webgpuDevice = device;
@@ -138,12 +137,11 @@ export class Picker {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
-    // Uniform buffer: viewProj (16 floats) + clipBoxMin (vec4) + clipBoxMax (vec4)
-    // + sectionPlane (vec4) + clipFlags (vec4<u32>) = 32 floats = 128 bytes. The
-    // picker mirrors the main render's section plane + crop box so clipped-away
-    // geometry is unpickable, not just invisible.
+    // Uniform buffer: viewProj + sectionPlane + clipFlags + 8 clip planes = 56
+    // floats = 224 bytes; mirrors the main render's clip so removed geometry is
+    // unpickable, not just invisible (layout in pick-uniforms.ts).
     this.uniformBuffer = this.device.createBuffer({
-      size: 128,
+      size: 224,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -159,10 +157,9 @@ export class Picker {
       code: `
         struct Uniforms {
           viewProj: mat4x4<f32>,
-          clipBoxMin: vec4<f32>,   // xyz = min corner (world), w = pad
-          clipBoxMax: vec4<f32>,   // xyz = max corner (world), w = pad
           sectionPlane: vec4<f32>, // xyz = plane normal, w = plane distance
-          clipFlags: vec4<u32>,    // x: bit0 sectionEnabled, bit1 flipped, bit2 clipBox
+          clipFlags: vec4<u32>,    // x: bit0 sectionEnabled, bit1 flipped, bit2 clipPlanes, bits 8..15 count
+          clipPlanes: array<vec4<f32>, 8>, // xyz = normal into the removed side, w = distance
         }
         @binding(0) @group(0) var<uniform> uniforms: Uniforms;
         @binding(1) @group(0) var<storage, read> expressIds: array<u32>;
@@ -201,9 +198,10 @@ export class Picker {
               discard;
             }
           }
-          if ((uniforms.clipFlags.x & 4u) != 0u) {  // clip box enabled
-            let p = input.worldPos;
-            if (any(p < uniforms.clipBoxMin.xyz) || any(p > uniforms.clipBoxMax.xyz)) {
+          let clipPlaneCount = (uniforms.clipFlags.x >> 8u) & 0xffu;
+          for (var ci = 0u; ci < clipPlaneCount; ci = ci + 1u) {
+            let cp = uniforms.clipPlanes[ci];
+            if (dot(input.worldPos, cp.xyz) - cp.w > 0.0) {
               discard;
             }
           }
@@ -272,10 +270,9 @@ export class Picker {
       code: `
         struct Uniforms {
           viewProj: mat4x4<f32>,
-          clipBoxMin: vec4<f32>,   // xyz = min corner (world), w = pad
-          clipBoxMax: vec4<f32>,   // xyz = max corner (world), w = pad
           sectionPlane: vec4<f32>, // xyz = plane normal, w = plane distance
-          clipFlags: vec4<u32>,    // x: bit0 sectionEnabled, bit1 flipped, bit2 clipBox
+          clipFlags: vec4<u32>,    // x: bit0 sectionEnabled, bit1 flipped, bit2 clipPlanes, bits 8..15 count
+          clipPlanes: array<vec4<f32>, 8>, // xyz = normal into the removed side, w = distance
         }
         @binding(0) @group(0) var<uniform> uniforms: Uniforms;
         struct VertexInput { @location(0) position: vec3<f32> }
@@ -321,9 +318,10 @@ export class Picker {
               discard;
             }
           }
-          if ((uniforms.clipFlags.x & 4u) != 0u) {  // clip box enabled
-            let p = input.worldPos;
-            if (any(p < uniforms.clipBoxMin.xyz) || any(p > uniforms.clipBoxMax.xyz)) {
+          let clipPlaneCount = (uniforms.clipFlags.x >> 8u) & 0xffu;
+          for (var ci = 0u; ci < clipPlaneCount; ci = ci + 1u) {
+            let cp = uniforms.clipPlanes[ci];
+            if (dot(input.worldPos, cp.xyz) - cp.w > 0.0) {
               discard;
             }
           }

@@ -18,6 +18,7 @@ import {
   type ShadowOccluderSources,
 } from './shadow-occluders.js';
 import { ShadowPass } from './shadow-pass.js';
+import { clipBoxToPlanes } from './clip-planes.js';
 import type { BatchedMesh, Mesh } from './types.js';
 import type { InstancedTemplateGPU, TexturedMesh } from './scene.js';
 
@@ -377,7 +378,7 @@ describe('ShadowPass.render', () => {
 describe('ShadowPass clipping', () => {
   const draws = () => collectShadowOccluders(allFourPaths());
   const section = { normal: [0, 0, 1] as const, distance: 12.5 };
-  const box = { min: [-1, -2, -3] as const, max: [4, 5, 6] as const };
+  const planes = clipBoxToPlanes({ min: [-1, -2, -3], max: [4, 5, 6], enabled: true });
 
   it('stays fragment-less (depth-only) when nothing is clipped', () => {
     const dev: DeviceRecord = { pipelines: [], clipWrite: null };
@@ -416,23 +417,23 @@ describe('ShadowPass clipping', () => {
 
     const w = dev.clipWrite!;
     assert.deepEqual(Array.from(w.slice(0, 4)), [0, 0, 1, 12.5]);
-    assert.equal(new Uint32Array(w.buffer)[12], 1, 'bit 0 = section enabled');
+    assert.equal(new Uint32Array(w.buffer)[4], 1, 'bit 0 = section enabled');
 
     pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), {
       section: { ...section, flipped: true },
     });
-    assert.equal(new Uint32Array(dev.clipWrite!.buffer)[12], 1 | 2, 'bit 1 = flipped');
+    assert.equal(new Uint32Array(dev.clipWrite!.buffer)[4], 1 | 2, 'bit 1 = flipped');
   });
 
-  it('packs the clip box bounds and enable bit', () => {
+  it('packs the clip planes from lane 8 with the enable bit and count', () => {
     const dev: DeviceRecord = { pipelines: [], clipWrite: null };
     const pass = new ShadowPass(mockShadowDevice(dev), 1024);
-    pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), { box });
+    pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), { planes });
 
     const w = dev.clipWrite!;
-    assert.deepEqual(Array.from(w.slice(4, 7)), [-1, -2, -3]);
-    assert.deepEqual(Array.from(w.slice(8, 11)), [4, 5, 6]);
-    assert.equal(new Uint32Array(w.buffer)[12], 4, 'bit 2 = clip box enabled');
+    assert.deepEqual(Array.from(w.slice(8, 12)), [-1, 0, 0, 1], 'first plane: -x face, normal (-1,0,0), distance -min.x');
+    assert.deepEqual(Array.from(w.slice(20, 24)), [1, 0, 0, 4], 'fourth plane: +x face');
+    assert.equal(new Uint32Array(w.buffer)[4], 4 | (6 << 8), 'bit 2 = clip planes, count 6 at bit 8');
   });
 
   it('builds the clipping pipelines once, on the first clipped frame', () => {
@@ -440,9 +441,9 @@ describe('ShadowPass clipping', () => {
     const pass = new ShadowPass(mockShadowDevice(dev), 1024);
     assert.equal(dev.pipelines.length, 4, 'construction builds only the depth-only set');
 
-    pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), { box });
+    pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), { planes });
     assert.equal(dev.pipelines.length, 8, 'first clipped frame adds the clipping set');
-    pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), { box });
+    pass.render(mockEncoder(emptyRecord()), { m: new Float32Array(16) }, draws(), { planes });
     assert.equal(dev.pipelines.length, 8, 'later frames reuse them');
   });
 });

@@ -33,8 +33,7 @@ export const pointShaderSource = `
       sizing: vec4<f32>,
       sectionPlane: vec4<f32>,
       // x = assetExpressId (federation-aware globalId), y = sectionEnabled,
-      // z = roundShape, w = reserved (was the 32-bit class mask before
-      // classMask below took over the full 0..255 LAS range, #1783)
+      // z = roundShape, w = clip plane count (0..8)
       flags: vec4<u32>,
       // x = previewStride (1 = render every point, N = render every
       // Nth instance — used by the section-plane drag preview path).
@@ -46,6 +45,9 @@ export const pointShaderSource = `
       // 256-bit LAS class-visibility bitmask packed as 8 u32 words
       // (two vec4s). Bit (i % 32) of word (i / 32) set → class i shown.
       classMask: array<vec4<u32>, 2>,
+      // Up to 8 half-spaces (xyz = normal into the removed side, w = distance);
+      // a point on the + side of ANY of them is discarded. Mirrors main.wgsl.
+      clipPlanes: array<vec4<f32>, 8>,
     }
     @binding(0) @group(0) var<uniform> uniforms: PointUniforms;
 
@@ -268,6 +270,13 @@ export const pointShaderSource = `
       if (uniforms.flags.y == 1u) {
         let d = dot(uniforms.sectionPlane.xyz, input.worldPos) - uniforms.sectionPlane.w;
         if (d > 0.0) {
+          discard;
+        }
+      }
+      // Clip planes (intersection of half-spaces)
+      for (var ci = 0u; ci < uniforms.flags.w; ci = ci + 1u) {
+        let cp = uniforms.clipPlanes[ci];
+        if (dot(cp.xyz, input.worldPos) - cp.w > 0.0) {
           discard;
         }
       }

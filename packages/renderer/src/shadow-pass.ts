@@ -22,6 +22,7 @@
  * holes in the shadow.
  */
 
+import { packClipPlanes, type ClipPlane } from './clip-planes.js';
 import type { Mat4 } from './types.js';
 import { shadowShaderSource } from './shaders/shadow.wgsl.js';
 
@@ -84,18 +85,15 @@ export interface ShadowClip {
     distance: number;
     flipped?: boolean;
   } | null;
-  /** World-space crop box; fragments outside it are cut. */
-  box?: {
-    min: readonly [number, number, number];
-    max: readonly [number, number, number];
-  } | null;
+  /** World-space clip planes (normal into the removed side); fragments on the + side of any are cut. */
+  planes?: readonly ClipPlane[] | null;
 }
 
 /** Bytes of the per-draw uniform: mat4 model (64) + vec4 quantParams (16). */
 const PER_DRAW_BYTES = 80;
 
-/** Bytes of the clip uniform: sectionPlane + boxMin + boxMax + flags (4 vec4). */
-const CLIP_BYTES = 64;
+/** Bytes of the clip uniform: sectionPlane + flags + 8 clip planes (10 vec4). */
+const CLIP_BYTES = 160;
 
 /** Depth format for the shadow map — sampleable and comparison-filterable. */
 const SHADOW_DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
@@ -121,7 +119,7 @@ export class ShadowPass {
   private lightBuffer: GPUBuffer;
   private lightScratch = new Float32Array(16);
 
-  /** Clip uniform (floats 0..11) with the flag word aliased as u32 (word 12). */
+  /** Clip uniform: sectionPlane (0..3), flags (u32 word 4), clipPlanes (8..39). */
   private clipBuffer: GPUBuffer;
   private clipScratch = new Float32Array(CLIP_BYTES / 4);
   private clipFlags = new Uint32Array(this.clipScratch.buffer);
@@ -323,8 +321,8 @@ export class ShadowPass {
    */
   private writeClipUniform(clip: ShadowClip | null | undefined): boolean {
     const section = clip?.section;
-    const box = clip?.box;
-    if (!section && !box) return false;
+    const planes = clip?.planes && clip.planes.length > 0 ? clip.planes : null;
+    if (!section && !planes) return false;
 
     const s = this.clipScratch;
     s.fill(0);
@@ -334,16 +332,8 @@ export class ShadowPass {
       s[2] = section.normal[2];
       s[3] = section.distance;
     }
-    if (box) {
-      s[4] = box.min[0];
-      s[5] = box.min[1];
-      s[6] = box.min[2];
-      s[8] = box.max[0];
-      s[9] = box.max[1];
-      s[10] = box.max[2];
-    }
-    // flags.x — bit 0 section enabled, bit 1 flipped, bit 2 clip box enabled.
-    this.clipFlags[12] = (section ? 1 : 0) | (section?.flipped ? 2 : 0) | (box ? 4 : 0);
+    // flags.x — bit 0 section enabled, bit 1 flipped, bit 2 + count bits: clip planes.
+    this.clipFlags[4] = (section ? 1 : 0) | (section?.flipped ? 2 : 0) | packClipPlanes(planes, s, 8);
     this.device.queue.writeBuffer(this.clipBuffer, 0, s);
     return true;
   }

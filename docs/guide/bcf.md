@@ -85,8 +85,27 @@ const viewpoint = createViewpoint({
   selectedGuids: selectedGuids, // IFC GlobalIds of selected entities
   hiddenGuids: hiddenGuids,     // IFC GlobalIds of hidden entities
   visibleGuids: visibleGuids,   // IFC GlobalIds for isolation mode (optional)
-  sectionPlane: activePlane,    // Single active clipping plane (optional)
+  sectionPlane: activePlane,    // The Section tool's cardinal cut (optional, needs `bounds`)
   snapshot: base64Image,        // Screenshot as base64 (optional)
+});
+```
+
+Exact planes — the viewer's clipping planes, or a face-picked section cut —
+go in `clippingPlanes` as a point on the plane plus the direction of the
+removed half-space, in viewer (Y-up) coordinates. They are written after the
+section plane's, and the list composes as the intersection of the kept
+half-spaces, which is how every BCF client reads several `<ClippingPlane>`
+elements:
+
+```typescript
+import { createViewpoint } from '@ifc-lite/bcf';
+
+const boxed = createViewpoint({
+  camera: currentCameraState,
+  clippingPlanes: [
+    { point: { x: 0, y: 3, z: 0 }, normal: { x: 0, y: 1, z: 0 } },  // remove everything above y = 3
+    { point: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: -1, z: 0 } }, // and below y = 0
+  ],
 });
 ```
 
@@ -109,7 +128,8 @@ import { extractViewpointState } from '@ifc-lite/bcf';
 // Convert BCF viewpoint back to viewer state
 const state = extractViewpointState(viewpoint);
 // state.camera - { position, target, up, fov, isOrthographic?, orthoScale? }
-// state.sectionPlane - clipping plane to apply (singular)
+// state.sectionPlane - the first clipping plane read as a cardinal Section-tool cut (needs `bounds`; lossy)
+// state.clippingPlanes - every clipping plane, exactly: { point, normal } in viewer coordinates
 // state.selectedGuids - entities to highlight
 // state.hiddenGuids - entities to hide
 // state.visibleGuids - entities for isolation mode

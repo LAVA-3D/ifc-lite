@@ -72,6 +72,8 @@ export {
   extractViewpointState,
 } from './viewpoint.js';
 export { translateViewpoint, viewpointFromWorld } from './viewpoint-frame.js';
+export type { ViewerClippingPlane } from './viewpoint-clipping.js';
+export { viewerClippingPlaneToBcf, bcfClippingPlaneToViewer } from './viewpoint-clipping.js';
 
 // 3D Overlay (viewer-agnostic marker positioning)
 export type {

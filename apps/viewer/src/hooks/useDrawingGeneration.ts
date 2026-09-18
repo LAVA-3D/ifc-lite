@@ -16,7 +16,7 @@ import type { IfcSourceBytes } from '@ifc-lite/parser';
  * - Section plane change detection with overlap protection
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Drawing2DGenerator,
   createSectionConfig,
@@ -37,6 +37,8 @@ import { type SymbolicDrawingLine } from '@/lib/overlay-parse/symbolic-drawing-l
 import type { SpatialHierarchy } from '@ifc-lite/data';
 import * as IfcWasm from '@ifc-lite/wasm';
 import { customPlaneCenter, useViewerStore } from '@/store';
+import { activeClipPlanes } from '@/store/clip-planes-active';
+import { clipMeshesToClipPlanes } from '@/lib/clip-planes/clip-meshes';
 import { notifyDrawing2DSectionConfig, consumeRestoredSectionConfig } from './useDrawing2DPersistence.js';
 import { buildModelViewIdFilter, selectModelMeshes } from '@/lib/type-view-visibility';
 import { isTypeVisible, type TypeVisibilityGate } from '@/store/typeVisibilityFilter';
@@ -192,6 +194,11 @@ export function useDrawingGeneration({
   }>());
 
   // Generate drawing when panel opens
+  // Clipping planes (docs/architecture/clipping-planes.md): a section of a boxed-in area only draws what is inside the box.
+  const clipPlaneList = useViewerStore((s) => s.clipPlanes);
+  const clipPlanesEnabled = useViewerStore((s) => s.clipPlanesEnabled);
+  const clipPlanes = useMemo(() => activeClipPlanes({ clipPlanes: clipPlaneList, clipPlanesEnabled }), [clipPlaneList, clipPlanesEnabled]);
+
   const computeDrawing = useCallback(async (isRegenerate = false, isCurrent: () => boolean = () => true) => {
     if (!geometryResult?.meshes || geometryResult.meshes.length === 0) {
       // Clear the drawing when no geometry is available (e.g., all models hidden)
@@ -543,6 +550,8 @@ export function useDrawingGeneration({
           mesh => isolatedSet.has(mesh.expressId)
         );
       }
+
+      if (clipPlanes.length > 0) meshesToProcess = clipMeshesToClipPlanes(meshesToProcess, clipPlanes);
 
       // If all meshes were filtered out by visibility, clear the drawing
       if (meshesToProcess.length === 0) {
@@ -897,6 +906,7 @@ export function useDrawingGeneration({
     combinedHiddenIds,
     combinedIsolatedIds,
     computedIsolatedIds,
+    clipPlanes,
     models,
     drawingRtcContext,
     drawingRtcContextKey,
@@ -1008,7 +1018,7 @@ export function useDrawingGeneration({
       sectionPlane.custom]);
     const inputs = [geometryResult, geometryResult?.meshes.length, ifcDataStore,
       displayOptions, typeVisibility, combinedHiddenIds, combinedIsolatedIds,
-      computedIsolatedIds, models, drawingRtcContextKey];
+      computedIsolatedIds, models, drawingRtcContextKey, clipPlanes];
     const changed = inputs.some((value, index) => value !== previousInputs.current[index]);
     const planeChanged = plane !== previousPlane.current;
     const activated = drawingActive && !wasActive.current;

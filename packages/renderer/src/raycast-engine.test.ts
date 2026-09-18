@@ -19,6 +19,7 @@
  * `Raycaster` and `BVH` are exercised unmodified.
  */
 
+import { clipBoxToPlanes } from './clip-planes.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 
@@ -358,10 +359,10 @@ describe('RaycastEngine.raycastScene', () => {
       geometryItemId: visible.geometryItemId, sourceTriangleIndex: visible.sourceTriangleIndex },
     { expressId: 8, modelIndex: 4, geometryItemId: 80, sourceTriangleIndex: 0 });
 
-    const cropVisible = engine.raycastScene(399, 301, undefined, { clipBox: {
+    const cropVisible = engine.raycastScene(399, 301, undefined, { clipPlanes: clipBoxToPlanes({
       min: [-2, -2, -12], max: [2, 2, -8], enabled: true,
-    } })!.intersection;
-    assert.equal(cropVisible.expressId, 8, 'the crop box also rejects the nearer hidden surface');
+    }) })!.intersection;
+    assert.equal(cropVisible.expressId, 8, 'the clip planes also reject the nearer hidden surface');
   });
 
   it('rejects clipped snap candidates while retaining the best visible candidate (#4555)', () => {

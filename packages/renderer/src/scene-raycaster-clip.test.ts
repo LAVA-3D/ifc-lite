@@ -9,6 +9,7 @@
  * (visible) one and assert the pick falls through to the visible surface.
  */
 
+import { clipBoxToPlanes } from './clip-planes.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 
@@ -69,13 +70,13 @@ describe('raycastTriangles clip awareness', () => {
     assert.strictEqual(cast(clip)?.expressId, NEAR);
   });
 
-  it('crop box excluding the near surface falls through to the far one', () => {
-    const clip: PickClipState = { clipBox: { min: [-2, -2, -12], max: [2, 2, -7], enabled: true } };
+  it('clip planes (a box) excluding the near surface fall through to the far one', () => {
+    const clip: PickClipState = { clipPlanes: clipBoxToPlanes({ min: [-2, -2, -12], max: [2, 2, -7], enabled: true }) };
     assert.strictEqual(cast(clip)?.expressId, FAR);
   });
 
-  it('disabled crop box does not clip', () => {
-    const clip: PickClipState = { clipBox: { min: [-2, -2, -12], max: [2, 2, -7], enabled: false } };
+  it('a disabled box yields no planes and does not clip', () => {
+    const clip: PickClipState = { clipPlanes: clipBoxToPlanes({ min: [-2, -2, -12], max: [2, 2, -7], enabled: false }) };
     assert.strictEqual(cast(clip)?.expressId, NEAR);
   });
 });
@@ -94,8 +95,8 @@ describe('raycastBoundingBoxes clip awareness (released-geometry path)', () => {
   it('section plane cutting away the near box returns the far one', () => {
     assert.strictEqual(castBox({ sectionPlane: { normal: [0, 0, 1], distance: -7, flipped: false } })?.expressId, FAR_B);
   });
-  it('crop box excluding the near box returns the far one', () => {
-    assert.strictEqual(castBox({ clipBox: { min: [-2, -2, -12], max: [2, 2, -7], enabled: true } })?.expressId, FAR_B);
+  it('clip planes excluding the near box return the far one', () => {
+    assert.strictEqual(castBox({ clipPlanes: clipBoxToPlanes({ min: [-2, -2, -12], max: [2, 2, -7], enabled: true }) })?.expressId, FAR_B);
   });
 
   it('partially clipped box reports its VISIBLE entry (at the cut), not its near face', () => {

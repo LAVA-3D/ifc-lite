@@ -54,6 +54,7 @@ import { uiTeardown } from './slices/uiSlice.teardown.js';
 import { hoverTeardown } from './slices/hoverSlice.js';
 import { cameraTeardown } from './slices/cameraSlice.js';
 import { sectionTeardown } from './slices/sectionSlice.teardown.js';
+import { clipPlanesTeardown } from './slices/clipPlanesSlice.js';
 import { dataTeardown } from './slices/dataSlice.teardown.js';
 import { modelTeardown } from './slices/modelSlice.teardown.js';
 import { mutationTeardown } from './slices/mutationSlice.teardown.js';
@@ -95,6 +96,7 @@ export const viewerTeardownRegistry: readonly AnySliceTeardown[] = createTeardow
   hoverTeardown,
   cameraTeardown,
   sectionTeardown,
+  clipPlanesTeardown,
   dataTeardown,
   modelTeardown,
   mutationTeardown,

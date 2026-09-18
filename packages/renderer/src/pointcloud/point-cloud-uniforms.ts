@@ -13,6 +13,7 @@
 import { POINT_UNIFORM_SIZE } from './point-pipeline.js';
 import type { PointCloudNode } from './point-cloud-node.js';
 import { isUsableModelMatrix } from './point-cloud-node.js';
+import { clipPlaneCount, packClipPlanes, type ClipPlane } from '../clip-planes.js';
 
 export type PointColorMode =
   | 'rgb'
@@ -78,6 +79,8 @@ export interface PointUniformInputs {
   sectionNormal: [number, number, number];
   sectionDist: number;
   sectionEnabled: boolean;
+  /** Resolved clip planes (normal into the removed side), intersection semantics. */
+  clipPlanes?: readonly ClipPlane[] | null;
   heightMin: number;
   heightMax: number;
   viewportW: number;
@@ -149,7 +152,8 @@ export function writePointCloudUniforms(
   uU32[48] = node.meta.expressId >>> 0;
   uU32[49] = inputs.sectionEnabled ? 1 : 0;
   uU32[50] = inputs.roundShape ? 1 : 0;
-  uU32[51] = 0;
+  // clipPlanes (f32 slots 68..99) — up to 8 half-spaces; flags.w = count.
+  uU32[51] = clipPlaneCount(packClipPlanes(inputs.clipPlanes, u, 68));
   // extras (u32 slots 52..55) — extras.x = previewStride, yzw reserved.
   uU32[52] = inputs.previewStride >>> 0;
   uU32[53] = 0;

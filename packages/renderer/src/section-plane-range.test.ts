@@ -176,6 +176,21 @@ describe('the storey override keeps its axis-aligned units (#2447)', () => {
         assert.strictEqual(mid.sectionPlaneData?.distance, 5);
     });
 
+    it('honours a range WIDER than the meshes, so the clip stays on the cap and the drawing', () => {
+        // The viewer's range (`coordinateInfo.shiftedBounds`) covers every
+        // type, the GPU only the visible ones. The old containment rule
+        // switched the clip to the mesh range [0, 10] here while the cap and
+        // the 2D drawing stayed on [-2, 14]: the hatched cut floated a storey
+        // above the clipped geometry.
+        const r = resolve({ axis: 'down', position: 25, min: -2, max: 14 });
+        assert.strictEqual(r.sectionPlaneData?.distance, 2);
+    });
+
+    it('still ignores a range that does not overlap the meshes at all', () => {
+        const r = resolve({ axis: 'down', position: 50, min: 100, max: 120 });
+        assert.strictEqual(r.sectionPlaneData?.distance, 5);
+    });
+
     it('honours it for a horizontal cut even when the building is rotated', () => {
         // `axis: 'down'` keeps normal [0,1,0] under a Y rotation, so a
         // storey elevation IS the plane distance and the override is meaningful.

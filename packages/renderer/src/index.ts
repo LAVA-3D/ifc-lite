@@ -53,6 +53,7 @@ export { SymbolicTextAtlas } from './symbolic-text-atlas.js';
 export { DEFAULT_CAP_STYLE, HATCH_PATTERN_IDS } from './section-cap-style.js';
 export type { SectionCapStyle, HatchPatternId } from './section-cap-style.js';
 export { planeBasis, nearestCardinalAxis } from './section-plane-basis.js';
+export { MAX_CLIP_PLANES, resolveClipPlanes, clipBoxToPlanes, pointClippedByPlanes } from './clip-planes.js';
 export type { PlaneBasis, Vec3Tuple } from './section-plane-basis.js';
 export type { Section2DOverlayOptions, Section2DOverlayCapStyle, CutPolygon2D, DrawingLine2D, LineOverlayChannel } from './section-2d-overlay.js';
 export { LINE_OVERLAY_CHANNELS } from './section-2d-overlay.js';
@@ -147,12 +148,11 @@ import type {
     PickOptions,
     PickResult,
     PickClipState,
-    ClipBox,
     Mesh,
     BatchedMesh,
 } from './types.js';
 import { VisualEnhancementResolver } from './visual-enhancement.js';
-import { packClipBox } from './clip-box.js';
+import { packClipPlanes, resolveClipPlanes, type ClipPlane } from './clip-planes.js';
 import type { CutPolygon2D, DrawingLine2D, LineOverlayChannel } from './section-2d-overlay.js';
 import type {
   SymbolicFillInput,
@@ -526,18 +526,17 @@ export class Renderer {
     private _loggedSectionBounds: boolean = false;
 
     // Pooled per-frame buffers to avoid GC pressure from per-batch Float32Array allocations
-    // A single 224-byte uniform buffer (56 floats) is reused for all batches/meshes within a frame
-    // (48 floats viewProj…flags + 8 floats clipBoxMin/clipBoxMax)
-    // 60 floats = the WGSL Uniforms struct incl. quantParams (see
-    // pipeline.getUniformBufferSize).
-    private readonly uniformScratch = new Float32Array(60);
+    // A single 336-byte uniform buffer (84 floats) is reused for all batches/meshes within a frame
+    // (48 floats viewProj…flags + 32 floats clipPlanes + 4 floats quantParams)
+    // = the WGSL Uniforms struct (see pipeline.getUniformBufferSize).
+    private readonly uniformScratch = new Float32Array(84);
     private readonly uniformScratchU32 = new Uint32Array(this.uniformScratch.buffer, 176, 4);
 
     // What the last render() actually clipped, so the GPU picker can mirror it and
     // section/crop-clipped geometry stays unpickable, not just invisible. Updated
     // every render; read by pick()/pickRect(). null = nothing clipped that frame.
     private _activePickSection: { normal: [number, number, number]; distance: number; flipped: boolean } | null = null;
-    private _activePickClipBox: ClipBox | null = null;
+    private _activePickClipPlanes: readonly ClipPlane[] | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -2024,13 +2023,11 @@ export class Renderer {
                     flipped: !!options.sectionPlane?.flipped,
                 }
                 : null;
-            this._activePickClipBox = options.clipBox?.enabled
-                ? {
-                    enabled: true,
-                    min: [...options.clipBox.min] as [number, number, number],
-                    max: [...options.clipBox.max] as [number, number, number],
-                }
-                : null;
+            // Explicit planes + the expanded convenience box, resolved once per frame
+            // and shared by every clip consumer below (meshes, templates, shadows,
+            // points, picks). Fresh array, so later option mutation can't leak in.
+            const frameClipPlanes = resolveClipPlanes(options.clipPlanes, options.clipBox);
+            this._activePickClipPlanes = frameClipPlanes.length > 0 ? frameClipPlanes : null;
 
             // Reuse pooled scratch buffer for per-mesh uniform writes
             const meshBuf = this.uniformScratch;
@@ -2066,11 +2063,11 @@ export class Renderer {
                         meshBuf[40] = 0; meshBuf[41] = 0; meshBuf[42] = 0; meshBuf[43] = 0;
                     }
 
-                    // Clip box (offset 48-55: min.xyz + pad, max.xyz + pad) → enable bit
-                    const clipBit = packClipBox(options.clipBox, meshBuf, 48);
+                    // Clip planes (offset 48-79: 8 x normal.xyz + distance) → enable bit + count
+                    const clipBit = packClipPlanes(frameClipPlanes, meshBuf, 48);
 
                     // Flags (offset 44-47 as u32)
-                    // flags.y packs: bit 0 = sectionEnabled, bit 1 = flipped, bit 2 = clipBoxEnabled
+                    // flags.y packs: bit 0 = sectionEnabled, bit 1 = flipped, bit 2 = clipPlanes, bits 8..15 = count
                     meshFlags[0] = isSelected ? 1 : 0;
                     meshFlags[1] =
                         (sectionPlaneData?.enabled ? 1 : 0) |
@@ -2173,9 +2170,7 @@ export class Renderer {
                                 flipped: options.sectionPlane?.flipped === true,
                             }
                             : null,
-                        box: options.clipBox?.enabled
-                            ? { min: options.clipBox.min, max: options.clipBox.max }
-                            : null,
+                        planes: frameClipPlanes.length > 0 ? frameClipPlanes : null,
                     });
 
                     // Shadow uniform: light matrix + sampling params. The kernel
@@ -2548,12 +2543,12 @@ export class Renderer {
                 } else {
                     tpl[40] = 0; tpl[41] = 0; tpl[42] = 0; tpl[43] = 0;
                 }
-                // Clip box (offset 48-55: min.xyz + pad, max.xyz + pad) → enable bit
-                const tplClipBit = packClipBox(options.clipBox, tpl, 48);
+                // Clip planes (offset 48-79: 8 x normal.xyz + distance) → enable bit + count
+                const tplClipBit = packClipPlanes(frameClipPlanes, tpl, 48);
                 // flags layout (main shader):
                 //   x = isSelected (0/1)
                 //   y = section/clip bitfield:
-                //       bit 0 = sectionEnabled, bit 1 = flipped, bit 2 = clipBoxEnabled
+                //       bit 0 = sectionEnabled, bit 1 = flipped, bit 2 = clipPlanes, bits 8..15 = count
                 //   z = edgeEnabled (0/1)
                 //   w = edgeIntensityMilli
                 tplFlags[0] = 0;
@@ -2588,10 +2583,10 @@ export class Renderer {
                     // Quantized dequantization params (issue #1682 phase 6);
                     // zeroed for f32 batches (their pipelines ignore them).
                     const qz = batch.quantized;
-                    tpl[56] = qz ? qz.min[0] : 0;
-                    tpl[57] = qz ? qz.min[1] : 0;
-                    tpl[58] = qz ? qz.min[2] : 0;
-                    tpl[59] = qz ? qz.step : 0;
+                    tpl[80] = qz ? qz.min[0] : 0;
+                    tpl[81] = qz ? qz.min[1] : 0;
+                    tpl[82] = qz ? qz.min[2] : 0;
+                    tpl[83] = qz ? qz.step : 0;
 
                     device.queue.writeBuffer(batch.uniformBuffer, 0, tpl);
 
@@ -3079,6 +3074,7 @@ export class Renderer {
                     sectionPlane: sectionPlaneData
                         ? { ...sectionPlaneData, flipped: options.sectionPlane?.flipped === true }
                         : null,
+                    clipPlanes: frameClipPlanes,
                     viewport: { width: this.canvas.width, height: this.canvas.height },
                 });
             }
@@ -3247,7 +3243,7 @@ export class Renderer {
      * same fragments and clipped-away geometry can't be selected.
      */
     private activePickClip(): PickClipState {
-        return { sectionPlane: this._activePickSection, clipBox: this._activePickClipBox };
+        return { sectionPlane: this._activePickSection, clipPlanes: this._activePickClipPlanes };
     }
 
     /**
@@ -3274,7 +3270,7 @@ export class Renderer {
 
     /** Whether the last rendered frame clipped surfaces (section, terrain or box). */
     hasActiveClipping(): boolean {
-        return this._activePickSection !== null || this._activePickClipBox !== null;
+        return this._activePickSection !== null || this._activePickClipPlanes !== null;
     }
 
     /** Exact visible-surface raycast in CSS canvas coordinates. */

@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { clipBoxToPlanes } from './clip-planes.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 
@@ -242,9 +243,9 @@ describe('selectBoundingBoxesInRect (#1904)', () => {
     assert.deepStrictEqual(hits, new Set());
   });
 
-  it('excludes an entity the crop box removes, matching what is visible', () => {
+  it('excludes an entity the clip planes remove, matching what is visible', () => {
     const boxes = new Map([[1, box(0, 0, 0, 0.2, 0.2, 0)]]);
-    const clip = { clipBox: { min: [10, 10, 10] as [number, number, number], max: [20, 20, 20] as [number, number, number], enabled: true } };
+    const clip = { clipPlanes: clipBoxToPlanes({ min: [10, 10, 10], max: [20, 20, 20], enabled: true }) };
     const hits = selectBoundingBoxesInRect(
       boxes, IDENTITY, { x0: 0, y0: 0, x1: W, y1: H }, W, H, undefined, undefined, clip,
     );

@@ -15,6 +15,7 @@ import { createUISlice, type UISlice } from './slices/uiSlice.js';
 import { createHoverSlice, type HoverSlice } from './slices/hoverSlice.js';
 import { createCameraSlice, DEFAULT_CONTROLS_MODE, type CameraSlice } from './slices/cameraSlice.js';
 import { createSectionSlice, type SectionSlice, clearLastSectionMode } from './slices/sectionSlice.js';
+import { createClipPlanesSlice, type ClipPlanesSlice } from './slices/clipPlanesSlice.js';
 import { registerSectionVisibility } from './section-active.js';
 export { customPlaneCenter, loadLastSectionMode } from './slices/sectionSlice.js';
 export type { LastSectionMode } from './slices/sectionSlice.js';
@@ -144,6 +145,7 @@ export type ViewerState = AppearanceSlice & LoadingSlice &
   HoverSlice &
   CameraSlice &
   SectionSlice &
+  ClipPlanesSlice &
   MeasurementSlice &
   DataSlice &
   ModelSlice &
@@ -239,6 +241,7 @@ const createViewerStore = () => create<ViewerState>()(withVisibilityOwnershipInv
   ...createHoverSlice(...args),
   ...createCameraSlice(...args),
   ...createSectionSlice(...args),
+  ...createClipPlanesSlice(...args),
   ...createMeasurementSlice(...args),
   ...createDataSlice(...args),
   ...createModelSlice(...args),

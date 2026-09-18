@@ -15,9 +15,8 @@ export const mainShaderSource = `
           metallicRoughness: vec2<f32>, // x = metallic, y = roughness
           _padding1: vec2<f32>,
           sectionPlane: vec4<f32>,      // xyz = plane normal, w = plane distance
-          flags: vec4<u32>,             // x = isSelected, y = section/clip bits, z = edgeEnabled, w = edgeIntensityMilli
-          clipBoxMin: vec4<f32>,        // xyz = clip-box min corner (world), w = pad
-          clipBoxMax: vec4<f32>,        // xyz = clip-box max corner (world), w = pad
+          flags: vec4<u32>,             // x = isSelected, y = section/clip bits (bits 8..15 = clip plane count), z = edgeEnabled, w = edgeIntensityMilli
+          clipPlanes: array<vec4<f32>, 8>, // xyz = normal into the removed side, w = distance (clip-planes.ts)
           // Quantized-vertex dequantization (issue #1682 phase 6):
           // xyz = lattice-aligned quantMin (batch-origin-relative), w = step.
           // Only read by vs_main_quantized; zero elsewhere.
@@ -360,11 +359,12 @@ export const mainShaderSource = `
               discard;
             }
           }
-          // Clip box (section / crop box): discard fragments OUTSIDE the AABB.
-          // flags.y bit 2 = clip-box enabled.
-          if ((uniforms.flags.y & 4u) != 0u) {
-            let p = input.worldPos;
-            if (any(p < uniforms.clipBoxMin.xyz) || any(p > uniforms.clipBoxMax.xyz)) {
+          // Clipping planes: discard fragments on the removed side of ANY plane.
+          // flags.y bits 8..15 = plane count (0 when nothing clips).
+          let clipPlaneCount = (uniforms.flags.y >> 8u) & 0xffu;
+          for (var ci = 0u; ci < clipPlaneCount; ci = ci + 1u) {
+            let cp = uniforms.clipPlanes[ci];
+            if (dot(input.worldPos, cp.xyz) - cp.w > 0.0) {
               discard;
             }
           }
